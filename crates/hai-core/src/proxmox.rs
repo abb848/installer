@@ -410,7 +410,11 @@ pub async fn list_storage(session: &ProxmoxSession, node: &str) -> Result<Vec<Pr
 pub async fn get_storage_name(session: &ProxmoxSession, node: &str) -> Result<String> {
     let storage_list = list_storage(session, node).await?;
     for storage in storage_list {
-        if storage.active && storage.content.iter().any(|content| content == "import") {
+        // ESXi advertises `import` but is a source-only backend with no path, so uploads to it fail.
+        if storage.active
+            && storage.storage_type != "esxi"
+            && storage.content.iter().any(|content| content == "import")
+        {
             return Ok(storage.name);
         }
     }
@@ -1779,6 +1783,14 @@ mod tests {
                                 "active": 0
                             },
                             {
+                                "storage": "esxi-import",
+                                "type": "esxi",
+                                "content": "import",
+                                "avail": 0,
+                                "total": 0,
+                                "active": 1
+                            },
+                            {
                                 "storage": "local-import",
                                 "type": "dir",
                                 "content": "iso,import",
@@ -1808,8 +1820,8 @@ mod tests {
 
             let result = get_storage_name(&session, "pve").await;
 
-            // "local" lacks import, "offline-import" is inactive, so the first
-            // active import-capable storage wins.
+            // "local" lacks import, "offline-import" is inactive and "esxi-import"
+            // cannot receive uploads, so the first eligible storage wins.
             assert_eq!(result.unwrap(), "local-import");
 
             storage_mock.assert_async().await;
@@ -1843,6 +1855,14 @@ mod tests {
                                 "avail": 100000000000,
                                 "total": 500000000000,
                                 "active": 0
+                            },
+                            {
+                                "storage": "esxi-import",
+                                "type": "esxi",
+                                "content": "import",
+                                "avail": 0,
+                                "total": 0,
+                                "active": 1
                             }
                         ]
                     }"#,

@@ -51,6 +51,24 @@ pub struct FlashProgress {
     pub message: String,
 }
 
+impl FlashProgress {
+    /// Build a progress event, deriving the percentage from the byte counts.
+    pub fn new(stage: FlashStage, bytes_processed: u64, total_bytes: u64, message: &str) -> Self {
+        let progress = if total_bytes > 0 {
+            ((u128::from(bytes_processed.min(total_bytes)) * 100) / u128::from(total_bytes)) as u8
+        } else {
+            0
+        };
+        Self {
+            stage,
+            progress,
+            bytes_processed,
+            total_bytes,
+            message: message.to_string(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum FlashStage {

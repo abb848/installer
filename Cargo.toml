@@ -43,12 +43,16 @@ urlencoding = "2"
 
 # Testing
 tempfile = "3"
-serial_test = "3"
+serial_test = "4"
 mockito = "1"
 
 # macOS specific
 plist = "1"
 security-framework = "3"
+
+# Linux specific
+zbus = { version = "5", default-features = false, features = ["tokio"] }
+libc = "0.2"
 
 # Tauri
 tauri = { version = "2", features = [] }

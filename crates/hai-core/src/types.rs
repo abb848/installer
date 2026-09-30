@@ -32,7 +32,7 @@ pub enum DeviceType {
     UsbDrive,
     Ssd,
     Hdd,
-    NvMe,
+    Nvme,
     Unknown,
 }
 
@@ -377,9 +377,9 @@ mod tests {
         let json = serde_json::to_string(&device_type).unwrap();
         assert_eq!(json, "\"usb_drive\"");
 
-        let device_type = DeviceType::NvMe;
+        let device_type = DeviceType::Nvme;
         let json = serde_json::to_string(&device_type).unwrap();
-        assert_eq!(json, "\"nv_me\"");
+        assert_eq!(json, "\"nvme\"");
     }
 
     #[test]
@@ -389,7 +389,7 @@ mod tests {
             DeviceType::UsbDrive,
             DeviceType::Ssd,
             DeviceType::Hdd,
-            DeviceType::NvMe,
+            DeviceType::Nvme,
             DeviceType::Unknown,
         ];
 

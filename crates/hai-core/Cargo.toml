@@ -29,6 +29,7 @@ urlencoding = { workspace = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 plist = { workspace = true }
 security-framework = { workspace = true }
+rustix = { workspace = true }
 
 # Linux specific
 [target.'cfg(target_os = "linux")'.dependencies]

@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- TCC checks the responsible process, so the elevated authopen helper
+	     still needs this application's removable-volumes access. -->
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Home Assistant Installer needs access to removable volumes so it can write the Home Assistant image to the SD card or USB drive you select.</string>
+</dict>
+</plist>

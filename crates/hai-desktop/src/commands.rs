@@ -222,6 +222,10 @@ pub async fn flash_image(
         err @ hai_core::Error::DiskServiceUnavailable(_) => err.to_string(),
         // A disconnect doesn't require a prefix
         err @ hai_core::Error::DriveDisconnected => err.to_string(),
+        // Self-explanatory messages; a "Write failed:" prefix would bury them.
+        err @ hai_core::Error::ImageTooLarge { .. } => err.to_string(),
+        err @ hai_core::Error::Cancelled => err.to_string(),
+        hai_core::Error::PermissionDenied(msg) => msg,
         other => format!("Write failed: {}", other),
     })?;
 

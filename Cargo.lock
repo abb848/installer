@@ -1651,6 +1651,7 @@ dependencies = [
  "mockito",
  "plist",
  "reqwest",
+ "rustix",
  "security-framework",
  "serde",
  "serde_json",

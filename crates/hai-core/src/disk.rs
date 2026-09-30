@@ -19,6 +19,13 @@ mod imp;
 #[path = "disk/windows/mod.rs"]
 mod imp;
 
+// Pure logic behind the macOS write path, compiled under `test` on every
+// platform so the Linux-only backend test job covers it without shipping it
+// in non-macOS builds.
+#[cfg(any(target_os = "macos", test))]
+#[path = "disk/macos/logic.rs"]
+mod macos_logic;
+
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 compile_error!("hai-core supports only Linux, macOS and Windows");
 

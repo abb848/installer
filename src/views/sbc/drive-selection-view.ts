@@ -5,6 +5,18 @@ import { wizardState } from "../../state/wizard-state.js";
 import "@home-assistant/webawesome/dist/components/button/button.js";
 import "../../components/drive-card.js";
 
+/** Drives smaller than this (1 GB) are not offered as flash targets. */
+export const MIN_DRIVE_SIZE_BYTES = 1_000_000_000;
+
+/**
+ * Enumeration now returns every disk, internal ones included, so this is the
+ * gate for what the SBC flow offers: a drive must be removable and at least
+ * {@link MIN_DRIVE_SIZE_BYTES}.
+ */
+export function isEligibleFlashTarget(drive: BlockDevice): boolean {
+  return drive.removable && drive.size >= MIN_DRIVE_SIZE_BYTES;
+}
+
 @customElement("drive-selection-view")
 export class DriveSelectionView extends LitElement {
   static styles = css`
@@ -195,8 +207,7 @@ export class DriveSelectionView extends LitElement {
 
     try {
       const drives = await listBlockDevices();
-      // Filter to only show removable drives
-      this._drives = drives.filter((drive) => drive.removable);
+      this._drives = drives.filter(isEligibleFlashTarget);
     } catch (err) {
       this._error =
         err instanceof Error ? err.message : "Failed to load drives";

@@ -150,11 +150,11 @@ pub(super) fn determine_device_type(info: &DiskUtilInfo) -> DeviceType {
     let media = info.media_type.as_deref().unwrap_or("");
 
     // Check for SD card
-    if media.to_lowercase().contains("sd")
+    if mentions_sd_card(media)
         || info
             .media_name
-            .as_ref()
-            .map(|n| n.to_lowercase().contains("sd"))
+            .as_deref()
+            .map(mentions_sd_card)
             .unwrap_or(false)
     {
         return DeviceType::SdCard;
@@ -309,6 +309,43 @@ mod tests {
             media_type: None,
         };
         assert_eq!(determine_device_type(&info), DeviceType::UsbDrive);
+    }
+
+    #[test]
+    fn test_determine_device_type_portable_ssd_is_not_sd_card() {
+        // "SSD" contains "sd" as a substring; only whole-word "SD" counts.
+        let info = DiskUtilInfo {
+            ejectable: true,
+            removable: true,
+            removable_media: true,
+            internal: false,
+            solid_state: true,
+            media_name: Some("Samsung Portable SSD T7".to_string()),
+            io_registry_entry_name: None,
+            device_node: None,
+            size: 500_000_000_000,
+            bus_protocol: Some("USB".to_string()),
+            media_type: Some("SSD".to_string()),
+        };
+        assert_eq!(determine_device_type(&info), DeviceType::UsbDrive);
+    }
+
+    #[test]
+    fn test_determine_device_type_sdxc_is_sd_card() {
+        let info = DiskUtilInfo {
+            ejectable: true,
+            removable: true,
+            removable_media: true,
+            internal: false,
+            solid_state: true,
+            media_name: None,
+            io_registry_entry_name: None,
+            device_node: None,
+            size: 128_000_000_000,
+            bus_protocol: Some("USB".to_string()),
+            media_type: Some("SDXC".to_string()),
+        };
+        assert_eq!(determine_device_type(&info), DeviceType::SdCard);
     }
 
     #[test]

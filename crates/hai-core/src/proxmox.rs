@@ -21,8 +21,8 @@
 
 use crate::error::{Error, Result};
 use crate::types::{
-    FlashProgress, FlashStage, ProxmoxCredentials, ProxmoxNode, ProxmoxSession, ProxmoxStorage,
-    ProxmoxVmConfig, ProxmoxVmResult,
+    FlashProgress, FlashStage, HaosImage, HaosRelease, ImageFormat, ProxmoxCredentials,
+    ProxmoxNode, ProxmoxSession, ProxmoxStorage, ProxmoxVmConfig, ProxmoxVmResult,
 };
 use crate::ProgressCallback;
 
@@ -1014,11 +1014,13 @@ pub async fn create_vm<P: ProgressCallback>(
         .get("ova")
         .ok_or_else(|| Error::ProxmoxApi("No HAOS version found for OVA".to_string()))?;
 
-    // Build the download URL for the qcow2.xz image
-    let download_url = format!(
-        "https://github.com/home-assistant/operating-system/releases/download/{}/haos_ova-{}.qcow2.xz",
-        haos_version, haos_version
-    );
+    // Look up the OVA image in the release to get its download URL.
+    // Use the OVA's own version rather than "latest", which may differ.
+    let release: HaosRelease = crate::download::get_haos_release(haos_version).await?;
+    let image: &HaosImage =
+        crate::download::find_image_for_board(&release, "ova", ImageFormat::Qcow2).ok_or_else(
+            || Error::DownloadFailed(format!("No OVA image in HAOS release {}", haos_version)),
+        )?;
 
     //Get the proxmox storage name for install before downloading the image and wasting bandwidth
     let storage_name = get_storage_name(session, &config.node).await?;
@@ -1037,7 +1039,8 @@ pub async fn create_vm<P: ProgressCallback>(
     let compressed_path = cache_dir.join(&compressed_filename);
 
     // Download the image
-    crate::download::download_image(&download_url, &compressed_path, progress_callback).await?;
+    crate::download::download_image(&image.download_url, &compressed_path, progress_callback)
+        .await?;
 
     // Step 3: Extract the compressed image
     progress_callback.on_progress(FlashProgress {

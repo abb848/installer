@@ -407,21 +407,73 @@ pub async fn list_storage(session: &ProxmoxSession, node: &str) -> Result<Vec<Pr
 ///
 /// Returns an actionable error when no such storage exists, since `import`
 /// is not enabled on a default Proxmox install.
-pub async fn get_storage_name(session: &ProxmoxSession, node: &str) -> Result<String> {
+pub async fn get_storage_name(
+    session: &ProxmoxSession,
+    node: &str,
+    required_bytes: u64,
+) -> Result<String> {
     let storage_list = list_storage(session, node).await?;
+    select_import_storage(&storage_list, required_bytes)
+}
+
+/// Pick the first active storage that accepts `import` content and has room for the upload.
+fn select_import_storage(storage_list: &[ProxmoxStorage], required_bytes: u64) -> Result<String> {
+    let mut too_small = Vec::new();
+
     for storage in storage_list {
         // ESXi advertises `import` but is a source-only backend with no path, so uploads to it fail.
         if storage.active
             && storage.storage_type != "esxi"
             && storage.content.iter().any(|content| content == "import")
         {
-            return Ok(storage.name);
+            if storage.available >= required_bytes {
+                return Ok(storage.name.clone());
+            }
+            too_small.push(storage.name.as_str());
         }
     }
+
+    if !too_small.is_empty() {
+        return Err(Error::ProxmoxApi(format!(
+            "Not enough free space for the {} MB image on import storage: {}. Free up space or enable 'import' on another storage.",
+            required_bytes / 1_000_000,
+            too_small.join(", ")
+        )));
+    }
+
     Err(Error::ProxmoxApi(
         "No active storage with 'import' content type found. Enable 'import' on an active directory storage in PVE."
             .to_string(),
     ))
+}
+
+/// Fail early if the storage chosen for the VM disk is missing, inactive, or can't hold disks.
+fn check_disk_storage(storage_list: &[ProxmoxStorage], disk_storage: &str) -> Result<()> {
+    let storage = storage_list
+        .iter()
+        .find(|storage| storage.name == disk_storage)
+        .ok_or_else(|| {
+            Error::ProxmoxApi(format!(
+                "Storage '{}' was not found on this node.",
+                disk_storage
+            ))
+        })?;
+
+    if !storage.active {
+        return Err(Error::ProxmoxApi(format!(
+            "Storage '{}' is not active.",
+            disk_storage
+        )));
+    }
+
+    if !storage.content.iter().any(|content| content == "images") {
+        return Err(Error::ProxmoxApi(format!(
+            "Storage '{}' cannot hold VM disks. Enable the 'Disk image' content type on it in PVE.",
+            disk_storage
+        )));
+    }
+
+    Ok(())
 }
 
 /// List every VM and container ID in use across the cluster.
@@ -1077,8 +1129,11 @@ pub async fn create_vm<P: ProgressCallback>(
             || Error::DownloadFailed(format!("No OVA image in HAOS release {}", haos_version)),
         )?;
 
-    //Get the proxmox storage name for install before downloading the image and wasting bandwidth
-    let storage_name = get_storage_name(session, &config.node).await?;
+    // Fetch storage once and run every storage check against it, before downloading anything
+    let storage_list = list_storage(session, &config.node).await?;
+    // Only the compressed size is known before downloading; the extracted upload is larger.
+    select_import_storage(&storage_list, image.size)?;
+    check_disk_storage(&storage_list, &config.storage)?;
 
     // Check the VM ID is free before downloading, rather than failing at VM creation
     ensure_vm_id_free(session, config.vm_id).await?;
@@ -1113,6 +1168,12 @@ pub async fn create_vm<P: ProgressCallback>(
     let extracted_path = cache_dir.join(&extracted_filename);
 
     crate::download::extract_xz(&compressed_path, &extracted_path, progress_callback).await?;
+
+    // Re-check upload space with the exact extracted size. This can be removed if Proxmox
+    // reports the size error correctly, otherwise it may only fail at the 30 minute timeout.
+    let extracted_size = tokio::fs::metadata(&extracted_path).await?.len();
+    let storage_list = list_storage(session, &config.node).await?;
+    let storage_name = select_import_storage(&storage_list, extracted_size)?;
 
     // Step 4: Upload the extracted image to Proxmox storage, fetched dynamically with import flag
     let image_filename = upload_image_to_proxmox(
@@ -1262,7 +1323,7 @@ mod tests {
         };
         // The mock fixture must expose an import-capable storage, otherwise the
         // whole Proxmox flow is unreachable without a live server.
-        let storage_name = get_storage_name(&session, "pve").await.unwrap();
+        let storage_name = get_storage_name(&session, "pve", 0).await.unwrap();
         assert_eq!(storage_name, "local");
         std::env::remove_var("HA_INSTALLER_MOCK");
     }
@@ -1432,6 +1493,85 @@ mod tests {
         };
         assert_eq!(storage.name, "local");
         assert!(storage.active);
+    }
+
+    fn storage(name: &str, active: bool, content: &[&str]) -> ProxmoxStorage {
+        ProxmoxStorage {
+            name: name.to_string(),
+            storage_type: "dir".to_string(),
+            content: content.iter().map(|c| c.to_string()).collect(),
+            available: 100_000_000_000,
+            total: 500_000_000_000,
+            active,
+        }
+    }
+
+    #[test]
+    fn test_check_disk_storage_accepts_active_images_storage() {
+        let storage_list = vec![
+            storage("local", true, &["iso", "import"]),
+            storage("local-lvm", true, &["images", "rootdir"]),
+        ];
+        assert!(check_disk_storage(&storage_list, "local-lvm").is_ok());
+    }
+
+    #[test]
+    fn test_check_disk_storage_rejects_missing_storage() {
+        let storage_list = vec![storage("local-lvm", true, &["images"])];
+        match check_disk_storage(&storage_list, "ceph-pool") {
+            Err(Error::ProxmoxApi(msg)) => assert!(msg.contains("not found"), "{}", msg),
+            other => panic!("Expected not-found error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_check_disk_storage_rejects_inactive_storage() {
+        let storage_list = vec![storage("local-lvm", false, &["images"])];
+        match check_disk_storage(&storage_list, "local-lvm") {
+            Err(Error::ProxmoxApi(msg)) => assert!(msg.contains("not active"), "{}", msg),
+            other => panic!("Expected inactive error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_check_disk_storage_rejects_storage_without_images() {
+        // The import storage is a common wrong pick: it's active but can't hold VM disks.
+        let storage_list = vec![storage("local", true, &["iso", "import"])];
+        match check_disk_storage(&storage_list, "local") {
+            Err(Error::ProxmoxApi(msg)) => assert!(msg.contains("Disk image"), "{}", msg),
+            other => panic!("Expected missing-images error, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_select_import_storage_skips_storage_without_enough_space() {
+        let storage_list = vec![
+            ProxmoxStorage {
+                available: 500_000_000,
+                ..storage("small-import", true, &["import"])
+            },
+            ProxmoxStorage {
+                available: 50_000_000_000,
+                ..storage("big-import", true, &["import"])
+            },
+        ];
+        let result = select_import_storage(&storage_list, 1_000_000_000);
+        assert_eq!(result.unwrap(), "big-import");
+    }
+
+    #[test]
+    fn test_select_import_storage_reports_full_import_storage() {
+        let storage_list = vec![ProxmoxStorage {
+            available: 500_000_000,
+            ..storage("small-import", true, &["import"])
+        }];
+        match select_import_storage(&storage_list, 1_000_000_000) {
+            Err(Error::ProxmoxApi(msg)) => {
+                assert!(msg.contains("Not enough free space"), "{}", msg);
+                assert!(msg.contains("small-import"), "{}", msg);
+            }
+            other => panic!("Expected not-enough-space error, got {:?}", other),
+        }
     }
 
     // =========================================================================
@@ -1878,7 +2018,7 @@ mod tests {
                 csrf_token: "test-csrf".to_string(),
             };
 
-            let result = get_storage_name(&session, "pve").await;
+            let result = get_storage_name(&session, "pve", 0).await;
 
             // "local" lacks import, "offline-import" is inactive and "esxi-import"
             // cannot receive uploads, so the first eligible storage wins.
@@ -1936,7 +2076,7 @@ mod tests {
                 csrf_token: "test-csrf".to_string(),
             };
 
-            let result = get_storage_name(&session, "pve").await;
+            let result = get_storage_name(&session, "pve", 0).await;
 
             if let Err(Error::ProxmoxApi(msg)) = result {
                 assert!(msg.contains("import"), "unexpected message: {}", msg);
@@ -1966,7 +2106,7 @@ mod tests {
                 csrf_token: "test-csrf".to_string(),
             };
 
-            let result = get_storage_name(&session, "pve").await;
+            let result = get_storage_name(&session, "pve", 0).await;
             assert!(result.is_err());
 
             storage_mock.assert_async().await;

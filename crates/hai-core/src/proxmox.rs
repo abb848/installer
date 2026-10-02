@@ -424,6 +424,61 @@ pub async fn get_storage_name(session: &ProxmoxSession, node: &str) -> Result<St
     ))
 }
 
+/// List every VM and container ID in use across the cluster.
+pub async fn list_vm_ids(session: &ProxmoxSession) -> Result<Vec<u32>> {
+    let client = create_client(30)?;
+
+    // `type=vm` returns both QEMU VMs and LXC containers, which share one ID space.
+    let url = format!(
+        "{}/api2/json/cluster/resources?type=vm",
+        session.server_url.trim_end_matches('/')
+    );
+
+    let response = client
+        .get(&url)
+        .header("Cookie", format!("PVEAuthCookie={}", session.ticket))
+        .send()
+        .await
+        .map_err(|e| Error::ProxmoxApi(format!("Failed to list VMs: {}", e)))?;
+
+    if !response.status().is_success() {
+        return Err(Error::ProxmoxApi(format!(
+            "Failed to list VMs: {}",
+            response.status()
+        )));
+    }
+
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| Error::ProxmoxApi(format!("Failed to parse VM list: {}", e)))?;
+
+    let data = json
+        .get("data")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| Error::ProxmoxApi("Invalid response: missing 'data' array".to_string()))?;
+
+    let vm_ids: Vec<u32> = data
+        .iter()
+        .filter_map(|resource| resource.get("vmid")?.as_u64())
+        .map(|id| id as u32)
+        .collect();
+
+    Ok(vm_ids)
+}
+
+/// Fail early if `vm_id` is already taken by a VM or container.
+pub async fn ensure_vm_id_free(session: &ProxmoxSession, vm_id: u32) -> Result<()> {
+    let used_ids = list_vm_ids(session).await?;
+    if used_ids.contains(&vm_id) {
+        return Err(Error::ProxmoxApi(format!(
+            "VM ID {} is already in use by another VM or container. Choose a different ID.",
+            vm_id
+        )));
+    }
+    Ok(())
+}
+
 /// Get the next available VM ID on the Proxmox server.
 pub async fn get_next_vm_id(session: &ProxmoxSession) -> Result<u32> {
     #[cfg(feature = "mock")]
@@ -1024,6 +1079,9 @@ pub async fn create_vm<P: ProgressCallback>(
 
     //Get the proxmox storage name for install before downloading the image and wasting bandwidth
     let storage_name = get_storage_name(session, &config.node).await?;
+
+    // Check the VM ID is free before downloading, rather than failing at VM creation
+    ensure_vm_id_free(session, config.vm_id).await?;
 
     // Step 2: Download the compressed image locally
     progress_callback.on_progress(FlashProgress {
@@ -1912,6 +1970,143 @@ mod tests {
             assert!(result.is_err());
 
             storage_mock.assert_async().await;
+        }
+
+        #[tokio::test]
+        #[serial]
+        async fn test_list_vm_ids_includes_vms_and_containers() {
+            std::env::remove_var("HA_INSTALLER_MOCK");
+            let mut server = Server::new_async().await;
+
+            // `type=vm` is what makes Proxmox include containers alongside VMs.
+            let resources_mock = server
+                .mock("GET", "/api2/json/cluster/resources")
+                .match_query(Matcher::UrlEncoded("type".to_string(), "vm".to_string()))
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(
+                    r#"{
+                        "data": [
+                            {"id": "qemu/100", "type": "qemu", "vmid": 100, "node": "pve"},
+                            {"id": "lxc/101", "type": "lxc", "vmid": 101, "node": "pve2"},
+                            {"id": "qemu/broken", "type": "qemu", "node": "pve"}
+                        ]
+                    }"#,
+                )
+                .create_async()
+                .await;
+
+            let session = ProxmoxSession {
+                server_url: server.url(),
+                ticket: "test-ticket".to_string(),
+                csrf_token: "test-csrf".to_string(),
+            };
+
+            let ids = list_vm_ids(&session).await.unwrap();
+
+            // The entry without a vmid is skipped rather than failing the whole call.
+            assert_eq!(ids, vec![100, 101]);
+
+            resources_mock.assert_async().await;
+        }
+
+        #[tokio::test]
+        #[serial]
+        async fn test_list_vm_ids_server_error() {
+            std::env::remove_var("HA_INSTALLER_MOCK");
+            let mut server = Server::new_async().await;
+
+            let resources_mock = server
+                .mock("GET", "/api2/json/cluster/resources")
+                .match_query(Matcher::UrlEncoded("type".to_string(), "vm".to_string()))
+                .with_status(500)
+                .with_body("Internal Server Error")
+                .create_async()
+                .await;
+
+            let session = ProxmoxSession {
+                server_url: server.url(),
+                ticket: "test-ticket".to_string(),
+                csrf_token: "test-csrf".to_string(),
+            };
+
+            let result = list_vm_ids(&session).await;
+            assert!(result.is_err());
+
+            resources_mock.assert_async().await;
+        }
+
+        #[tokio::test]
+        #[serial]
+        async fn test_ensure_vm_id_free_rejects_id_used_by_container() {
+            std::env::remove_var("HA_INSTALLER_MOCK");
+            let mut server = Server::new_async().await;
+
+            let resources_mock = server
+                .mock("GET", "/api2/json/cluster/resources")
+                .match_query(Matcher::UrlEncoded("type".to_string(), "vm".to_string()))
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(
+                    r#"{
+                        "data": [
+                            {"id": "qemu/100", "type": "qemu", "vmid": 100, "node": "pve"},
+                            {"id": "lxc/101", "type": "lxc", "vmid": 101, "node": "pve"}
+                        ]
+                    }"#,
+                )
+                .create_async()
+                .await;
+
+            let session = ProxmoxSession {
+                server_url: server.url(),
+                ticket: "test-ticket".to_string(),
+                csrf_token: "test-csrf".to_string(),
+            };
+
+            let result = ensure_vm_id_free(&session, 101).await;
+
+            if let Err(Error::ProxmoxApi(msg)) = result {
+                assert!(msg.contains("101"), "unexpected message: {}", msg);
+            } else {
+                panic!("Expected ProxmoxApi error when the VM ID is taken");
+            }
+
+            resources_mock.assert_async().await;
+        }
+
+        #[tokio::test]
+        #[serial]
+        async fn test_ensure_vm_id_free_accepts_unused_id() {
+            std::env::remove_var("HA_INSTALLER_MOCK");
+            let mut server = Server::new_async().await;
+
+            let resources_mock = server
+                .mock("GET", "/api2/json/cluster/resources")
+                .match_query(Matcher::UrlEncoded("type".to_string(), "vm".to_string()))
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(
+                    r#"{
+                        "data": [
+                            {"id": "qemu/100", "type": "qemu", "vmid": 100, "node": "pve"},
+                            {"id": "lxc/101", "type": "lxc", "vmid": 101, "node": "pve"}
+                        ]
+                    }"#,
+                )
+                .create_async()
+                .await;
+
+            let session = ProxmoxSession {
+                server_url: server.url(),
+                ticket: "test-ticket".to_string(),
+                csrf_token: "test-csrf".to_string(),
+            };
+
+            let result = ensure_vm_id_free(&session, 102).await;
+            assert!(result.is_ok(), "unexpected error: {:?}", result.err());
+
+            resources_mock.assert_async().await;
         }
 
         #[tokio::test]

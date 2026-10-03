@@ -469,7 +469,7 @@ async fn uploadable_import_storages(
 
     if allowed.is_empty() && !denied.is_empty() {
         return Err(Error::ProxmoxApi(format!(
-            "Your Proxmox user isn't allowed to upload to any import storage (needs Datastore.AllocateTemplate and Datastore.Audit on: {}).",
+            "Your Proxmox user cannot both upload to and read from any import storage (needs Datastore.AllocateTemplate plus one of Datastore.Allocate, Datastore.AllocateSpace, or Datastore.Audit on: {}).",
             denied.join(", ")
         )));
     }

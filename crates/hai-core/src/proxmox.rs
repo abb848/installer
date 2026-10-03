@@ -439,7 +439,7 @@ fn is_import_candidate(storage: &ProxmoxStorage) -> bool {
         && storage.content.iter().any(|content| content == "import")
 }
 
-/// Keep only the import storages the logged-in user is allowed to upload to.
+/// Keep only the import storages the logged-in user is allowed to upload to and import from.
 async fn uploadable_import_storages(
     session: &ProxmoxSession,
     storage_list: &[ProxmoxStorage],
@@ -449,10 +449,18 @@ async fn uploadable_import_storages(
 
     for storage in storage_list.iter().filter(|s| is_import_candidate(s)) {
         let path = format!("/storage/{}", storage.name);
-        if fetch_privileges(session, &path)
-            .await?
-            .contains("Datastore.AllocateTemplate")
-        {
+        let privileges = fetch_privileges(session, &path).await?;
+        let can_upload = privileges.contains("Datastore.AllocateTemplate");
+        // VM creation reads the uploaded image, which needs one of these (Storage.pm check_volume_access).
+        let can_read = [
+            "Datastore.Allocate",
+            "Datastore.AllocateSpace",
+            "Datastore.Audit",
+        ]
+        .iter()
+        .any(|privilege| privileges.contains(*privilege));
+
+        if can_upload && can_read {
             allowed.push(storage.clone());
         } else {
             denied.push(storage.name.as_str());
@@ -461,7 +469,7 @@ async fn uploadable_import_storages(
 
     if allowed.is_empty() && !denied.is_empty() {
         return Err(Error::ProxmoxApi(format!(
-            "Your Proxmox user isn't allowed to upload to any import storage (needs Datastore.AllocateTemplate on: {}).",
+            "Your Proxmox user isn't allowed to upload to any import storage (needs Datastore.AllocateTemplate and Datastore.Audit on: {}).",
             denied.join(", ")
         )));
     }
@@ -2492,16 +2500,23 @@ mod tests {
 
             let denied_mock =
                 mock_privileges(&mut server, "/storage/shared-import", &["Datastore.Audit"]).await;
+            let upload_only_mock = mock_privileges(
+                &mut server,
+                "/storage/upload-only",
+                &["Datastore.AllocateTemplate"],
+            )
+            .await;
             let allowed_mock = mock_privileges(
                 &mut server,
                 "/storage/local",
-                &["Datastore.AllocateTemplate"],
+                &["Datastore.AllocateTemplate", "Datastore.Audit"],
             )
             .await;
 
             // local-lvm can't take uploads, so its permissions are never asked for.
             let storage_list = vec![
                 storage("shared-import", true, &["import"]),
+                storage("upload-only", true, &["import"]),
                 storage("local", true, &["iso", "import"]),
                 storage("local-lvm", true, &["images"]),
             ];
@@ -2513,6 +2528,7 @@ mod tests {
             assert_eq!(names, vec!["local"]);
 
             denied_mock.assert_async().await;
+            upload_only_mock.assert_async().await;
             allowed_mock.assert_async().await;
         }
 
@@ -2566,7 +2582,7 @@ mod tests {
                 mock_privileges(
                     &mut server,
                     "/storage/local",
-                    &["Datastore.AllocateTemplate"],
+                    &["Datastore.AllocateTemplate", "Datastore.Audit"],
                 )
                 .await,
             ];

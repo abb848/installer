@@ -469,8 +469,13 @@ async fn uploadable_import_storages(
     Ok(allowed)
 }
 
-/// Fail early if the storage chosen for the VM disk is missing, inactive, or can't hold disks.
-fn check_disk_storage(storage_list: &[ProxmoxStorage], disk_storage: &str) -> Result<()> {
+/// Fail early if the storage chosen for the VM disk is missing, inactive, can't hold disks,
+/// or doesn't have room for the disk.
+fn check_disk_storage(
+    storage_list: &[ProxmoxStorage],
+    disk_storage: &str,
+    disk_size_gb: u32,
+) -> Result<()> {
     let storage = storage_list
         .iter()
         .find(|storage| storage.name == disk_storage)
@@ -492,6 +497,17 @@ fn check_disk_storage(storage_list: &[ProxmoxStorage], disk_storage: &str) -> Re
         return Err(Error::ProxmoxApi(format!(
             "Storage '{}' cannot hold VM disks. Enable the 'Disk image' content type on it in PVE.",
             disk_storage
+        )));
+    }
+
+    // Proxmox disk sizes like "32G" are GiB.
+    let required_bytes = u64::from(disk_size_gb) * 1024 * 1024 * 1024;
+    if storage.available < required_bytes {
+        return Err(Error::ProxmoxApi(format!(
+            "Not enough free space on '{}' for the {} GB disk ({} GB free).",
+            disk_storage,
+            disk_size_gb,
+            storage.available / (1024 * 1024 * 1024)
         )));
     }
 
@@ -689,7 +705,7 @@ async fn pre_install_checks(
     // Fetch storage once and run every storage check against it.
     let storage_list = list_storage(session, &config.node).await?;
 
-    check_disk_storage(&storage_list, &config.storage)?;
+    check_disk_storage(&storage_list, &config.storage, config.disk_size_gb)?;
     let disk_path = format!("/storage/{}", config.storage);
     ensure_privileges(
         &fetch_privileges(session, &disk_path).await?,
@@ -1693,13 +1709,29 @@ mod tests {
             storage("local", true, &["iso", "import"]),
             storage("local-lvm", true, &["images", "rootdir"]),
         ];
-        assert!(check_disk_storage(&storage_list, "local-lvm").is_ok());
+        assert!(check_disk_storage(&storage_list, "local-lvm", 32).is_ok());
+    }
+
+    #[test]
+    fn test_check_disk_storage_rejects_storage_without_enough_space() {
+        let storage_list = vec![ProxmoxStorage {
+            available: 20 * 1024 * 1024 * 1024,
+            ..storage("local-lvm", true, &["images"])
+        }];
+        match check_disk_storage(&storage_list, "local-lvm", 32) {
+            Err(Error::ProxmoxApi(msg)) => {
+                assert!(msg.contains("Not enough free space"), "{}", msg);
+                assert!(msg.contains("32 GB"), "{}", msg);
+                assert!(msg.contains("20 GB free"), "{}", msg);
+            }
+            other => panic!("Expected not-enough-space error, got {:?}", other),
+        }
     }
 
     #[test]
     fn test_check_disk_storage_rejects_missing_storage() {
         let storage_list = vec![storage("local-lvm", true, &["images"])];
-        match check_disk_storage(&storage_list, "ceph-pool") {
+        match check_disk_storage(&storage_list, "ceph-pool", 32) {
             Err(Error::ProxmoxApi(msg)) => assert!(msg.contains("not found"), "{}", msg),
             other => panic!("Expected not-found error, got {:?}", other),
         }
@@ -1708,7 +1740,7 @@ mod tests {
     #[test]
     fn test_check_disk_storage_rejects_inactive_storage() {
         let storage_list = vec![storage("local-lvm", false, &["images"])];
-        match check_disk_storage(&storage_list, "local-lvm") {
+        match check_disk_storage(&storage_list, "local-lvm", 32) {
             Err(Error::ProxmoxApi(msg)) => assert!(msg.contains("not active"), "{}", msg),
             other => panic!("Expected inactive error, got {:?}", other),
         }
@@ -1718,7 +1750,7 @@ mod tests {
     fn test_check_disk_storage_rejects_storage_without_images() {
         // The import storage is a common wrong pick: it's active but can't hold VM disks.
         let storage_list = vec![storage("local", true, &["iso", "import"])];
-        match check_disk_storage(&storage_list, "local") {
+        match check_disk_storage(&storage_list, "local", 32) {
             Err(Error::ProxmoxApi(msg)) => assert!(msg.contains("Disk image"), "{}", msg),
             other => panic!("Expected missing-images error, got {:?}", other),
         }

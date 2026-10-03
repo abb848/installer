@@ -25,6 +25,7 @@ use crate::types::{
     ProxmoxNode, ProxmoxSession, ProxmoxStorage, ProxmoxVmConfig, ProxmoxVmResult,
 };
 use crate::ProgressCallback;
+use std::collections::HashSet;
 
 /// Minimum required Proxmox VE version for disk image import via API.
 /// Version 8.4.1 added support for uploading qcow2/raw/img/vmdk files with content=import.
@@ -421,11 +422,7 @@ fn select_import_storage(storage_list: &[ProxmoxStorage], required_bytes: u64) -
     let mut too_small = Vec::new();
 
     for storage in storage_list {
-        // ESXi advertises `import` but is a source-only backend with no path, so uploads to it fail.
-        if storage.active
-            && storage.storage_type != "esxi"
-            && storage.content.iter().any(|content| content == "import")
-        {
+        if is_import_candidate(storage) {
             if storage.available >= required_bytes {
                 return Ok(storage.name.clone());
             }
@@ -445,6 +442,44 @@ fn select_import_storage(storage_list: &[ProxmoxStorage], required_bytes: u64) -
         "No active storage with 'import' content type found. Enable 'import' on an active directory storage in PVE."
             .to_string(),
     ))
+}
+
+/// Whether the image could be uploaded to this storage, ignoring free space and permissions.
+fn is_import_candidate(storage: &ProxmoxStorage) -> bool {
+    // ESXi advertises `import` but is a source-only backend with no path, so uploads to it fail.
+    storage.active
+        && storage.storage_type != "esxi"
+        && storage.content.iter().any(|content| content == "import")
+}
+
+/// Keep only the import storages the logged-in user is allowed to upload to.
+async fn uploadable_import_storages(
+    session: &ProxmoxSession,
+    storage_list: &[ProxmoxStorage],
+) -> Result<Vec<ProxmoxStorage>> {
+    let mut allowed = Vec::new();
+    let mut denied = Vec::new();
+
+    for storage in storage_list.iter().filter(|s| is_import_candidate(s)) {
+        let path = format!("/storage/{}", storage.name);
+        if fetch_privileges(session, &path)
+            .await?
+            .contains("Datastore.AllocateTemplate")
+        {
+            allowed.push(storage.clone());
+        } else {
+            denied.push(storage.name.as_str());
+        }
+    }
+
+    if allowed.is_empty() && !denied.is_empty() {
+        return Err(Error::ProxmoxApi(format!(
+            "Your Proxmox user isn't allowed to upload to any import storage (needs Datastore.AllocateTemplate on: {}).",
+            denied.join(", ")
+        )));
+    }
+
+    Ok(allowed)
 }
 
 /// Fail early if the storage chosen for the VM disk is missing, inactive, or can't hold disks.
@@ -535,16 +570,28 @@ fn check_node_online(nodes: &[ProxmoxNode], node: &str) -> Result<()> {
     Ok(())
 }
 
-/// Fail early if the logged-in user isn't allowed to create a VM with this ID.
-async fn ensure_user_can_create_vm(session: &ProxmoxSession, vm_id: u32) -> Result<()> {
-    let client = create_client(30)?;
-    let path = format!("/vms/{}", vm_id);
+/// Network bridge the VM's network card is attached to.
+const VM_BRIDGE: &str = "vmbr0";
 
-    // Asking about one path returns the effective privileges there, including inherited ones.
+/// Privileges Proxmox checks on `/vms/{id}` for the options `create_vm_with_disk` sends.
+const VM_CREATE_PRIVILEGES: &[&str] = &[
+    "VM.Allocate",
+    "VM.Config.CPU",
+    "VM.Config.Memory",
+    "VM.Config.Options",
+    "VM.Config.HWType",
+    "VM.Config.Network",
+    "VM.Config.Disk",
+];
+
+/// Privileges the logged-in user has on `path`, including inherited ones.
+async fn fetch_privileges(session: &ProxmoxSession, path: &str) -> Result<HashSet<String>> {
+    let client = create_client(30)?;
+
     let url = format!(
         "{}/api2/json/access/permissions?path={}",
         session.server_url.trim_end_matches('/'),
-        urlencoding::encode(&path)
+        urlencoding::encode(path)
     );
 
     let response = client
@@ -566,20 +613,56 @@ async fn ensure_user_can_create_vm(session: &ProxmoxSession, vm_id: u32) -> Resu
         .await
         .map_err(|e| Error::ProxmoxApi(format!("Failed to parse permissions: {}", e)))?;
 
-    let can_allocate = json
+    Ok(json
         .get("data")
-        .and_then(|data| data.get(&path))
-        .and_then(|privileges| privileges.get("VM.Allocate"))
-        .is_some();
+        .and_then(|data| data.get(path))
+        .and_then(|privileges| privileges.as_object())
+        .map(|privileges| privileges.keys().cloned().collect())
+        .unwrap_or_default())
+}
 
-    if !can_allocate {
-        return Err(Error::ProxmoxApi(format!(
-            "Your Proxmox user isn't allowed to create VMs (needs VM.Allocate on {}).",
-            path
-        )));
+/// Fail with the list of missing privileges if `granted` lacks any of `required`.
+fn ensure_privileges(granted: &HashSet<String>, path: &str, required: &[&str]) -> Result<()> {
+    let missing: Vec<&str> = required
+        .iter()
+        .copied()
+        .filter(|privilege| !granted.contains(*privilege))
+        .collect();
+
+    if missing.is_empty() {
+        return Ok(());
     }
 
-    Ok(())
+    Err(Error::ProxmoxApi(format!(
+        "Your Proxmox user is missing {} on {}.",
+        missing.join(", "),
+        path
+    )))
+}
+
+/// Fail early if the logged-in user isn't allowed to create, configure, and start this VM.
+async fn ensure_user_can_create_vm(
+    session: &ProxmoxSession,
+    config: &ProxmoxVmConfig,
+) -> Result<()> {
+    let vm_path = format!("/vms/{}", config.vm_id);
+    let mut required = VM_CREATE_PRIVILEGES.to_vec();
+    if config.auto_start {
+        required.push("VM.PowerMgmt");
+    }
+    ensure_privileges(
+        &fetch_privileges(session, &vm_path).await?,
+        &vm_path,
+        &required,
+    )?;
+
+    // Plain bridges are checked under the built-in `localnetwork` SDN zone.
+    let bridge_path = format!("/sdn/zones/localnetwork/{}", VM_BRIDGE);
+    ensure_privileges(
+        &fetch_privileges(session, &bridge_path).await?,
+        &bridge_path,
+        &["SDN.Use"],
+    )
 }
 
 /// Everything that can be checked before the download starts.
@@ -591,13 +674,22 @@ async fn pre_install_checks(
     let nodes = list_nodes(session).await?;
     check_node_online(&nodes, &config.node)?;
 
-    ensure_user_can_create_vm(session, config.vm_id).await?;
+    ensure_user_can_create_vm(session, config).await?;
 
     // Fetch storage once and run every storage check against it.
     let storage_list = list_storage(session, &config.node).await?;
-    // Only the compressed size is known before downloading; the extracted upload is larger.
-    select_import_storage(&storage_list, download_bytes)?;
+
     check_disk_storage(&storage_list, &config.storage)?;
+    let disk_path = format!("/storage/{}", config.storage);
+    ensure_privileges(
+        &fetch_privileges(session, &disk_path).await?,
+        &disk_path,
+        &["Datastore.AllocateSpace"],
+    )?;
+
+    let upload_candidates = uploadable_import_storages(session, &storage_list).await?;
+    // Only the compressed size is known before downloading; the extracted upload is larger.
+    select_import_storage(&upload_candidates, download_bytes)?;
 
     ensure_vm_id_free(session, config.vm_id).await?;
 
@@ -614,7 +706,8 @@ async fn recheck_upload_space(
     // fail at the 30 minute timeout.
     let extracted_size = tokio::fs::metadata(extracted_path).await?.len();
     let storage_list = list_storage(session, node).await?;
-    select_import_storage(&storage_list, extracted_size)
+    let upload_candidates = uploadable_import_storages(session, &storage_list).await?;
+    select_import_storage(&upload_candidates, extracted_size)
 }
 
 /// Get the next available VM ID on the Proxmox server.
@@ -949,7 +1042,7 @@ async fn create_vm_with_disk(
             ("ostype", "l26".to_string()), // Linux 2.6/3.x/4.x/5.x/6.x kernel
             ("efidisk0", efidisk0_spec),  // EFI disk for UEFI
             ("scsi0", scsi0_spec),        // Main disk with import
-            ("net0", "virtio,bridge=vmbr0".to_string()), // VirtIO network
+            ("net0", format!("virtio,bridge={}", VM_BRIDGE)), // VirtIO network
             ("agent", "enabled=1".to_string()), // QEMU guest agent
             ("boot", "order=scsi0".to_string()), // Boot from main disk
         ])
@@ -1650,6 +1743,25 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_ensure_privileges_lists_only_missing_privileges() {
+        let granted: HashSet<String> = ["VM.Allocate", "VM.Audit"]
+            .iter()
+            .map(|p| p.to_string())
+            .collect();
+
+        assert!(ensure_privileges(&granted, "/vms/100", &["VM.Allocate"]).is_ok());
+
+        match ensure_privileges(&granted, "/vms/100", &["VM.Allocate", "VM.Config.CPU"]) {
+            Err(Error::ProxmoxApi(msg)) => {
+                assert!(msg.contains("VM.Config.CPU"), "{}", msg);
+                assert!(msg.contains("/vms/100"), "{}", msg);
+                assert!(!msg.contains("VM.Allocate"), "{}", msg);
+            }
+            other => panic!("Expected missing-privilege error, got {:?}", other),
+        }
+    }
+
     fn node(name: &str, status: &str) -> ProxmoxNode {
         ProxmoxNode {
             name: name.to_string(),
@@ -2299,28 +2411,56 @@ mod tests {
             }
         }
 
+        fn vm_config(auto_start: bool) -> ProxmoxVmConfig {
+            ProxmoxVmConfig {
+                vm_id: 100,
+                name: "homeassistant".to_string(),
+                node: "pve".to_string(),
+                storage: "local-lvm".to_string(),
+                cpu_cores: 2,
+                memory_mb: 4096,
+                disk_size_gb: 32,
+                auto_start,
+            }
+        }
+
+        /// Mock `/access/permissions` for one path, in the shape Proxmox returns.
+        async fn mock_privileges(
+            server: &mut mockito::ServerGuard,
+            path: &str,
+            privileges: &[&str],
+        ) -> mockito::Mock {
+            let granted: serde_json::Map<String, serde_json::Value> = privileges
+                .iter()
+                .map(|privilege| (privilege.to_string(), serde_json::json!(1)))
+                .collect();
+            server
+                .mock("GET", "/api2/json/access/permissions")
+                .match_query(Matcher::UrlEncoded("path".to_string(), path.to_string()))
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(serde_json::json!({ "data": { path: granted } }).to_string())
+                .create_async()
+                .await
+        }
+
         #[tokio::test]
         #[serial]
         async fn test_ensure_user_can_create_vm_allowed() {
             std::env::remove_var("HA_INSTALLER_MOCK");
             let mut server = Server::new_async().await;
 
-            let permissions_mock = server
-                .mock("GET", "/api2/json/access/permissions")
-                .match_query(Matcher::UrlEncoded(
-                    "path".to_string(),
-                    "/vms/100".to_string(),
-                ))
-                .with_status(200)
-                .with_header("content-type", "application/json")
-                .with_body(r#"{"data": {"/vms/100": {"VM.Allocate": 1, "VM.Audit": 1}}}"#)
-                .create_async()
-                .await;
+            let mut vm_privileges = VM_CREATE_PRIVILEGES.to_vec();
+            vm_privileges.push("VM.PowerMgmt");
+            let vm_mock = mock_privileges(&mut server, "/vms/100", &vm_privileges).await;
+            let bridge_mock =
+                mock_privileges(&mut server, "/sdn/zones/localnetwork/vmbr0", &["SDN.Use"]).await;
 
-            let result = ensure_user_can_create_vm(&test_session(&server), 100).await;
+            let result = ensure_user_can_create_vm(&test_session(&server), &vm_config(true)).await;
             assert!(result.is_ok(), "unexpected error: {:?}", result.err());
 
-            permissions_mock.assert_async().await;
+            vm_mock.assert_async().await;
+            bridge_mock.assert_async().await;
         }
 
         #[tokio::test]
@@ -2330,24 +2470,111 @@ mod tests {
             let mut server = Server::new_async().await;
 
             // A read-only user can log in fine but only has audit rights.
-            let permissions_mock = server
-                .mock("GET", "/api2/json/access/permissions")
-                .match_query(Matcher::UrlEncoded(
-                    "path".to_string(),
-                    "/vms/100".to_string(),
-                ))
-                .with_status(200)
-                .with_header("content-type", "application/json")
-                .with_body(r#"{"data": {"/vms/100": {"VM.Audit": 1}}}"#)
-                .create_async()
-                .await;
+            let vm_mock = mock_privileges(&mut server, "/vms/100", &["VM.Audit"]).await;
 
-            match ensure_user_can_create_vm(&test_session(&server), 100).await {
-                Err(Error::ProxmoxApi(msg)) => assert!(msg.contains("VM.Allocate"), "{}", msg),
+            match ensure_user_can_create_vm(&test_session(&server), &vm_config(true)).await {
+                Err(Error::ProxmoxApi(msg)) => {
+                    assert!(msg.contains("VM.Allocate"), "{}", msg);
+                    assert!(msg.contains("VM.PowerMgmt"), "{}", msg);
+                    assert!(!msg.contains("VM.Audit"), "{}", msg);
+                }
                 other => panic!("Expected permission error, got {:?}", other),
             }
 
-            permissions_mock.assert_async().await;
+            vm_mock.assert_async().await;
+        }
+
+        #[tokio::test]
+        #[serial]
+        async fn test_ensure_user_can_create_vm_needs_power_only_for_auto_start() {
+            std::env::remove_var("HA_INSTALLER_MOCK");
+            let mut server = Server::new_async().await;
+
+            let vm_mock = mock_privileges(&mut server, "/vms/100", VM_CREATE_PRIVILEGES).await;
+            let bridge_mock =
+                mock_privileges(&mut server, "/sdn/zones/localnetwork/vmbr0", &["SDN.Use"]).await;
+
+            let result = ensure_user_can_create_vm(&test_session(&server), &vm_config(false)).await;
+            assert!(result.is_ok(), "unexpected error: {:?}", result.err());
+
+            vm_mock.assert_async().await;
+            bridge_mock.assert_async().await;
+        }
+
+        #[tokio::test]
+        #[serial]
+        async fn test_ensure_user_can_create_vm_needs_bridge_access() {
+            std::env::remove_var("HA_INSTALLER_MOCK");
+            let mut server = Server::new_async().await;
+
+            let vm_mock = mock_privileges(&mut server, "/vms/100", VM_CREATE_PRIVILEGES).await;
+            let bridge_mock =
+                mock_privileges(&mut server, "/sdn/zones/localnetwork/vmbr0", &[]).await;
+
+            match ensure_user_can_create_vm(&test_session(&server), &vm_config(false)).await {
+                Err(Error::ProxmoxApi(msg)) => {
+                    assert!(msg.contains("SDN.Use"), "{}", msg);
+                    assert!(msg.contains("vmbr0"), "{}", msg);
+                }
+                other => panic!("Expected bridge permission error, got {:?}", other),
+            }
+
+            vm_mock.assert_async().await;
+            bridge_mock.assert_async().await;
+        }
+
+        #[tokio::test]
+        #[serial]
+        async fn test_uploadable_import_storages_skips_storage_without_upload_permission() {
+            std::env::remove_var("HA_INSTALLER_MOCK");
+            let mut server = Server::new_async().await;
+
+            let denied_mock =
+                mock_privileges(&mut server, "/storage/shared-import", &["Datastore.Audit"]).await;
+            let allowed_mock = mock_privileges(
+                &mut server,
+                "/storage/local",
+                &["Datastore.AllocateTemplate"],
+            )
+            .await;
+
+            // local-lvm can't take uploads, so its permissions are never asked for.
+            let storage_list = vec![
+                storage("shared-import", true, &["import"]),
+                storage("local", true, &["iso", "import"]),
+                storage("local-lvm", true, &["images"]),
+            ];
+
+            let result = uploadable_import_storages(&test_session(&server), &storage_list)
+                .await
+                .unwrap();
+            let names: Vec<&str> = result.iter().map(|s| s.name.as_str()).collect();
+            assert_eq!(names, vec!["local"]);
+
+            denied_mock.assert_async().await;
+            allowed_mock.assert_async().await;
+        }
+
+        #[tokio::test]
+        #[serial]
+        async fn test_uploadable_import_storages_reports_when_none_allowed() {
+            std::env::remove_var("HA_INSTALLER_MOCK");
+            let mut server = Server::new_async().await;
+
+            let denied_mock =
+                mock_privileges(&mut server, "/storage/local", &["Datastore.Audit"]).await;
+
+            let storage_list = vec![storage("local", true, &["iso", "import"])];
+
+            match uploadable_import_storages(&test_session(&server), &storage_list).await {
+                Err(Error::ProxmoxApi(msg)) => {
+                    assert!(msg.contains("Datastore.AllocateTemplate"), "{}", msg);
+                    assert!(msg.contains("local"), "{}", msg);
+                }
+                other => panic!("Expected upload permission error, got {:?}", other),
+            }
+
+            denied_mock.assert_async().await;
         }
 
         #[tokio::test]
@@ -2364,17 +2591,24 @@ mod tests {
                 .create_async()
                 .await;
 
-            let permissions_mock = server
-                .mock("GET", "/api2/json/access/permissions")
-                .match_query(Matcher::UrlEncoded(
-                    "path".to_string(),
-                    "/vms/100".to_string(),
-                ))
-                .with_status(200)
-                .with_header("content-type", "application/json")
-                .with_body(r#"{"data": {"/vms/100": {"VM.Allocate": 1}}}"#)
-                .create_async()
-                .await;
+            let mut vm_privileges = VM_CREATE_PRIVILEGES.to_vec();
+            vm_privileges.push("VM.PowerMgmt");
+            let permission_mocks = vec![
+                mock_privileges(&mut server, "/vms/100", &vm_privileges).await,
+                mock_privileges(&mut server, "/sdn/zones/localnetwork/vmbr0", &["SDN.Use"]).await,
+                mock_privileges(
+                    &mut server,
+                    "/storage/local-lvm",
+                    &["Datastore.AllocateSpace"],
+                )
+                .await,
+                mock_privileges(
+                    &mut server,
+                    "/storage/local",
+                    &["Datastore.AllocateTemplate"],
+                )
+                .await,
+            ];
 
             let storage_mock = server
                 .mock("GET", "/api2/json/nodes/pve/storage")
@@ -2417,7 +2651,9 @@ mod tests {
             assert!(result.is_ok(), "unexpected error: {:?}", result.err());
 
             nodes_mock.assert_async().await;
-            permissions_mock.assert_async().await;
+            for mock in permission_mocks {
+                mock.assert_async().await;
+            }
             storage_mock.assert_async().await;
             nextid_mock.assert_async().await;
         }

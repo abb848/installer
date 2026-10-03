@@ -668,6 +668,13 @@ async fn ensure_user_can_create_vm(
     )
 }
 
+/// Estimate the extracted qcow2 size from the `.xz` download size, which is all we know up front.
+fn estimated_extracted_size(compressed_bytes: u64) -> u64 {
+    // Measured 2026-10: HAOS 18.3 1.90x, 17.3 1.98x, 16.3 2.73x. 2.75x covers all of them so the
+    // storage isn't left completely full; the exact size is rechecked after extraction.
+    compressed_bytes.saturating_mul(11) / 4 // 2.75x
+}
+
 /// Everything that can be checked before the download starts.
 async fn pre_install_checks(
     session: &ProxmoxSession,
@@ -691,8 +698,7 @@ async fn pre_install_checks(
     )?;
 
     let upload_candidates = uploadable_import_storages(session, &storage_list).await?;
-    // Only the compressed size is known before downloading; the extracted upload is larger.
-    select_import_storage(&upload_candidates, download_bytes)?;
+    select_import_storage(&upload_candidates, estimated_extracted_size(download_bytes))?;
 
     ensure_vm_id_free(session, config.vm_id).await?;
 
@@ -1754,6 +1760,19 @@ mod tests {
             Err(Error::ProxmoxApi(msg)) => assert!(msg.contains("import"), "{}", msg),
             other => panic!("Expected no-import-storage error, got {:?}", other),
         }
+    }
+
+    #[test]
+    fn test_estimated_extracted_size_rejects_import_storage_that_only_fits_the_download() {
+        // 510 MB download (HAOS 18.3) with 600 MB free: fits the .xz, not the ~970 MB qcow2.
+        let storage_list = vec![ProxmoxStorage {
+            available: 600_000_000,
+            ..storage("local", true, &["import"])
+        }];
+        assert!(select_import_storage(&storage_list, 510_000_000).is_ok());
+        assert!(
+            select_import_storage(&storage_list, estimated_extracted_size(510_000_000)).is_err()
+        );
     }
 
     #[test]

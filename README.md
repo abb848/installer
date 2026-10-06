@@ -12,7 +12,7 @@ A cross-platform desktop application for installing Home Assistant OS on various
 
 ## Installation
 
-Download the latest release for your platform from the [Releases](https://github.com/home-assistant/hai/releases) page.
+Download the latest release for your platform from the [Releases](https://github.com/home-assistant/installer/releases) page.
 
 ## Development
 
@@ -26,8 +26,8 @@ Download the latest release for your platform from the [Releases](https://github
 
 ```bash
 # Clone the repository
-git clone https://github.com/home-assistant/hai.git
-cd hai
+git clone https://github.com/home-assistant/installer.git
+cd installer
 
 # Install dependencies
 npm install
@@ -46,12 +46,12 @@ npm run test          # Run unit tests
 npm run test:e2e      # Run E2E tests
 ```
 
-### Mock Mode
+### Mock Backend
 
-For testing without real hardware:
+For testing without real hardware, a network connection, or a Proxmox/UTM host, build the app with the mock backend. It is compiled in only with this feature flag, so release builds never contain it:
 
 ```bash
-HA_INSTALLER_MOCK=true npm run tauri dev
+npm run tauri dev -- --features mock
 ```
 
 ## Tech Stack

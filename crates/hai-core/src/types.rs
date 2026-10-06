@@ -155,6 +155,27 @@ pub struct FlashRequest {
     pub board: String,
     /// Whether to verify after writing
     pub verify: bool,
+    /// What the device at `device_id` looked like when the user selected it
+    pub expected_device: ExpectedDevice,
+}
+
+/// Identity of the selected drive, re-checked right before writing.
+///
+/// `device_id` is a path the OS can reassign to another device, for example
+/// while the image downloads. `None` means the field was unknown.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ExpectedDevice {
+    pub size: Option<u64>,
+    pub model: Option<String>,
+    pub vendor: Option<String>,
+}
+
+impl ExpectedDevice {
+    /// Whether `device` still looks like the selected drive. Every device
+    /// reports a size, so an unknown expected size never matches.
+    pub fn matches(&self, device: &BlockDevice) -> bool {
+        self.size == Some(device.size) && self.model == device.model && self.vendor == device.vendor
+    }
 }
 
 /// HAOS release information from GitHub
@@ -164,6 +185,15 @@ pub struct HaosRelease {
     pub version: String,
     /// List of available images
     pub images: Vec<HaosImage>,
+}
+
+impl HaosRelease {
+    /// The image for `board` in `format`, if the release ships one.
+    pub fn image_for(&self, board: &str, format: ImageFormat) -> Option<&HaosImage> {
+        self.images
+            .iter()
+            .find(|img| img.board == board && img.format == format)
+    }
 }
 
 /// Disk format of a HAOS image
@@ -192,8 +222,6 @@ pub struct HaosImage {
     pub download_url: String,
     /// File size in bytes
     pub size: u64,
-    /// SHA256 checksum (hex string)
-    pub sha256: String,
 }
 
 /// GitHub release asset from API
@@ -202,8 +230,6 @@ pub struct GitHubAsset {
     pub name: String,
     pub size: u64,
     pub browser_download_url: String,
-    /// Digest in format "sha256:hexstring"
-    pub digest: Option<String>,
 }
 
 /// GitHub release from API
@@ -360,6 +386,28 @@ pub struct UtmStatus {
     pub version: Option<String>,
     /// Path to UTM application
     pub path: Option<String>,
+}
+
+// ============================================================================
+// Host / VM status types
+// ============================================================================
+
+/// Host system information (CPU cores and memory)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemInfo {
+    /// Number of logical CPU cores.
+    pub cpu_cores: usize,
+    /// Total memory in megabytes.
+    pub memory_mb: u64,
+}
+
+/// Status of a provisioned VM
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VmStatusInfo {
+    /// VM run status (e.g. "started", "unknown").
+    pub status: String,
+    /// The VM's IP address, if known.
+    pub ip_address: Option<String>,
 }
 
 #[cfg(test)]
@@ -586,14 +634,12 @@ mod tests {
                     format: ImageFormat::Raw,
                     download_url: "https://example.com/haos-rpi5-16.3.img.xz".to_string(),
                     size: 500000000,
-                    sha256: "abc123def456".to_string(),
                 },
                 HaosImage {
                     board: "generic-x86-64".to_string(),
                     format: ImageFormat::Raw,
                     download_url: "https://example.com/haos-generic-x86-16.3.img.xz".to_string(),
                     size: 600000000,
-                    sha256: "def789abc012".to_string(),
                 },
             ],
         };
@@ -608,7 +654,6 @@ mod tests {
             assert_eq!(original.board, deserialized.board);
             assert_eq!(original.download_url, deserialized.download_url);
             assert_eq!(original.size, deserialized.size);
-            assert_eq!(original.sha256, deserialized.sha256);
         }
     }
 
@@ -634,6 +679,7 @@ mod tests {
             device_id: "/dev/sda".to_string(),
             board: "rpi5-64".to_string(),
             verify: true,
+            expected_device: ExpectedDevice::default(),
         };
 
         let json = serde_json::to_string(&request).unwrap();
@@ -650,6 +696,7 @@ mod tests {
             device_id: "disk2".to_string(),
             board: "green".to_string(),
             verify: false,
+            expected_device: ExpectedDevice::default(),
         };
 
         let json = serde_json::to_string(&request).unwrap();
@@ -848,22 +895,6 @@ mod tests {
 
     // HaosImage edge cases
     #[test]
-    fn test_haos_image_empty_sha256() {
-        let image = HaosImage {
-            board: "rpi5-64".to_string(),
-            format: ImageFormat::Raw,
-            download_url: "https://example.com/image.xz".to_string(),
-            size: 500_000_000,
-            sha256: "".to_string(),
-        };
-        let json = serde_json::to_string(&image).unwrap();
-        let parsed: HaosImage = serde_json::from_str(&json).unwrap();
-        assert!(parsed.sha256.is_empty());
-        assert_eq!(parsed.board, "rpi5-64");
-        assert_eq!(parsed.size, 500_000_000);
-    }
-
-    #[test]
     fn test_haos_image_format_serialization() {
         assert_eq!(serde_json::to_string(&ImageFormat::Raw).unwrap(), "\"raw\"");
         assert_eq!(
@@ -872,7 +903,7 @@ mod tests {
         );
 
         // A missing format defaults to raw
-        let json = r#"{"board":"green","download_url":"u","size":1,"sha256":""}"#;
+        let json = r#"{"board":"green","download_url":"u","size":1}"#;
         let parsed: HaosImage = serde_json::from_str(json).unwrap();
         assert_eq!(parsed.format, ImageFormat::Raw);
     }
@@ -991,5 +1022,82 @@ mod tests {
         let parsed: UtmVmResult = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.name, "Home Assistant");
         assert!(parsed.path.is_none());
+    }
+
+    #[test]
+    fn test_image_for_found() {
+        let release = HaosRelease {
+            version: "14.2".to_string(),
+            images: vec![
+                HaosImage {
+                    board: "rpi5-64".to_string(),
+                    format: ImageFormat::Raw,
+                    download_url: "https://example.com/rpi5.img.xz".to_string(),
+                    size: 100,
+                },
+                HaosImage {
+                    board: "green".to_string(),
+                    format: ImageFormat::Raw,
+                    download_url: "https://example.com/green.img.xz".to_string(),
+                    size: 200,
+                },
+            ],
+        };
+
+        let found = release.image_for("green", ImageFormat::Raw);
+        assert!(found.is_some());
+        assert_eq!(found.unwrap().board, "green");
+        assert_eq!(found.unwrap().size, 200);
+    }
+
+    #[test]
+    fn test_image_for_not_found() {
+        let release = HaosRelease {
+            version: "14.2".to_string(),
+            images: vec![HaosImage {
+                board: "rpi5-64".to_string(),
+                format: ImageFormat::Raw,
+                download_url: "https://example.com/rpi5.img.xz".to_string(),
+                size: 100,
+            }],
+        };
+
+        let found = release.image_for("nonexistent", ImageFormat::Raw);
+        assert!(found.is_none());
+    }
+
+    #[test]
+    fn test_image_for_picks_requested_format() {
+        // generic-aarch64 ships both a raw image and a qcow2 under the same board name.
+        // Put the qcow2 first so a board-only lookup would pick the wrong one.
+        let release = HaosRelease {
+            version: "14.2".to_string(),
+            images: vec![
+                HaosImage {
+                    board: "generic-aarch64".to_string(),
+                    format: ImageFormat::Qcow2,
+                    download_url: "https://example.com/aarch64.qcow2.xz".to_string(),
+                    size: 300,
+                },
+                HaosImage {
+                    board: "generic-aarch64".to_string(),
+                    format: ImageFormat::Raw,
+                    download_url: "https://example.com/aarch64.img.xz".to_string(),
+                    size: 200,
+                },
+            ],
+        };
+
+        let raw = release
+            .image_for("generic-aarch64", ImageFormat::Raw)
+            .unwrap();
+        assert_eq!(raw.download_url, "https://example.com/aarch64.img.xz");
+
+        let qcow2 = release
+            .image_for("generic-aarch64", ImageFormat::Qcow2)
+            .unwrap();
+        assert_eq!(qcow2.download_url, "https://example.com/aarch64.qcow2.xz");
+
+        assert!(release.image_for("rpi5-64", ImageFormat::Qcow2).is_none());
     }
 }

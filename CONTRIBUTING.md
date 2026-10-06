@@ -15,8 +15,8 @@ and instructions for contributing.
 
 ```bash
 # Clone the repository
-git clone https://github.com/home-assistant/hai.git
-cd hai
+git clone https://github.com/home-assistant/installer.git
+cd installer
 
 # Install dependencies
 npm install
@@ -34,8 +34,8 @@ npm test
 # Unit tests only
 npm run test:unit
 
-# E2E tests (with mock mode)
-HA_INSTALLER_MOCK=true npm run test:e2e
+# E2E tests
+npm run test:e2e
 
 # Rust tests
 cargo test --workspace
@@ -92,7 +92,6 @@ When contributing UI changes, remember:
 
 ## Getting Help
 
-- [GitHub Discussions](https://github.com/home-assistant/hai/discussions)
 - [Home Assistant Discord](https://discord.gg/home-assistant)
 - [Community Forum](https://community.home-assistant.io/)
 

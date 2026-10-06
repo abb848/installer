@@ -6,11 +6,11 @@
 use crate::error::{Error, Result};
 #[cfg(target_os = "macos")]
 use crate::types::{FlashProgress, FlashStage};
-use crate::types::{UtmStatus, UtmVmConfig, UtmVmResult};
-use crate::ProgressCallback;
+use crate::types::{UtmStatus, UtmVmConfig, UtmVmResult, VmStatusInfo};
+use crate::{Backend, ProgressCallback, UtmBackend};
 
 /// Check if UTM is installed and get its status
-pub async fn check_utm_status() -> Result<UtmStatus> {
+async fn check_utm_status() -> Result<UtmStatus> {
     #[cfg(target_os = "macos")]
     {
         macos::check_utm_status().await
@@ -25,7 +25,7 @@ pub async fn check_utm_status() -> Result<UtmStatus> {
 }
 
 /// Create a Home Assistant VM using UTM
-pub async fn create_vm<P: ProgressCallback>(
+async fn create_vm<P: ProgressCallback>(
     config: &UtmVmConfig,
     progress_callback: &P,
 ) -> Result<UtmVmResult> {
@@ -44,6 +44,22 @@ pub async fn create_vm<P: ProgressCallback>(
     }
 }
 
+/// Get the status of a UTM VM
+fn vm_status(vm_id: &str) -> Result<VmStatusInfo> {
+    #[cfg(target_os = "macos")]
+    {
+        macos::vm_status(vm_id)
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = vm_id;
+        Err(Error::UnsupportedPlatform(
+            "UTM is only available on macOS".to_string(),
+        ))
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
     use super::*;
@@ -51,18 +67,15 @@ mod macos {
 
     const UTM_APP_PATH: &str = "/Applications/UTM.app";
 
-    pub async fn check_utm_status() -> Result<UtmStatus> {
-        #[cfg(feature = "mock")]
-        {
-            if crate::is_mock_enabled() {
-                return Ok(UtmStatus {
-                    installed: true,
-                    version: Some("4.0.0".to_string()),
-                    path: Some(UTM_APP_PATH.to_string()),
-                });
-            }
-        }
+    pub(super) fn vm_status(_vm_id: &str) -> Result<VmStatusInfo> {
+        // TODO: Implement via utmctl
+        Ok(VmStatusInfo {
+            status: "unknown".to_string(),
+            ip_address: None,
+        })
+    }
 
+    pub(super) async fn check_utm_status() -> Result<UtmStatus> {
         // Check if UTM.app exists
         let utm_path = std::path::Path::new(UTM_APP_PATH);
         if !utm_path.exists() {
@@ -150,48 +163,10 @@ end tell"#,
         Ok(())
     }
 
-    pub async fn create_vm<P: ProgressCallback>(
+    pub(super) async fn create_vm<P: ProgressCallback>(
         config: &UtmVmConfig,
         progress_callback: &P,
     ) -> Result<UtmVmResult> {
-        #[cfg(feature = "mock")]
-        {
-            if crate::is_mock_enabled() {
-                // Simulate VM creation progress
-                let stages = [
-                    (10, "Downloading HAOS image..."),
-                    (30, "Extracting image..."),
-                    (50, "Creating UTM VM..."),
-                    (70, "Configuring VM settings..."),
-                    (90, "Starting VM..."),
-                    (100, "Complete"),
-                ];
-
-                for (progress, message) in stages {
-                    progress_callback.on_progress(FlashProgress {
-                        stage: if progress < 100 {
-                            FlashStage::Downloading
-                        } else {
-                            FlashStage::Complete
-                        },
-                        progress,
-                        bytes_processed: 0,
-                        total_bytes: 0,
-                        message: message.to_string(),
-                    });
-                    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-                }
-
-                return Ok(UtmVmResult {
-                    name: config.name.clone(),
-                    path: Some(format!(
-                        "~/Library/Containers/com.utmapp.UTM/Data/Documents/{}.utm",
-                        config.name
-                    )),
-                });
-            }
-        }
-
         // Verify UTM is installed
         let status = check_utm_status().await?;
         if !status.installed {
@@ -285,42 +260,30 @@ end tell"#,
     }
 }
 
+impl UtmBackend for Backend {
+    async fn check_utm_status(&self) -> Result<UtmStatus> {
+        check_utm_status().await
+    }
+
+    async fn create_vm<P: ProgressCallback>(
+        &self,
+        config: &UtmVmConfig,
+        progress_callback: &P,
+    ) -> Result<UtmVmResult> {
+        create_vm(config, progress_callback).await
+    }
+
+    fn vm_status(&self, vm_id: &str) -> Result<VmStatusInfo> {
+        vm_status(vm_id)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serial_test::serial;
 
     #[tokio::test]
-    #[serial]
-    #[cfg(target_os = "macos")]
-    async fn test_check_utm_status_mock() {
-        std::env::set_var("HA_INSTALLER_MOCK", "1");
-        let status = check_utm_status().await.unwrap();
-        assert!(status.installed);
-        assert!(status.version.is_some());
-        std::env::remove_var("HA_INSTALLER_MOCK");
-    }
-
-    #[tokio::test]
-    #[serial]
-    #[cfg(target_os = "macos")]
-    async fn test_create_vm_mock() {
-        std::env::set_var("HA_INSTALLER_MOCK", "1");
-        let config = UtmVmConfig {
-            name: "Test VM".to_string(),
-            image_path: "/tmp/test.qcow2".to_string(),
-            cpu_cores: 2,
-            memory_mb: 2048,
-            disk_size_gb: 32,
-            auto_start: false,
-        };
-        let result = create_vm(&config, &crate::NoOpProgress).await.unwrap();
-        assert_eq!(result.name, "Test VM");
-        std::env::remove_var("HA_INSTALLER_MOCK");
-    }
-
-    #[tokio::test]
-    #[serial]
+    #[serial_test::serial]
     #[cfg(not(target_os = "macos"))]
     async fn test_check_utm_status_not_available_on_non_macos() {
         let result = check_utm_status().await;
@@ -334,7 +297,7 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial]
+    #[serial_test::serial]
     #[cfg(not(target_os = "macos"))]
     async fn test_create_vm_not_available_on_non_macos() {
         let config = UtmVmConfig {
@@ -392,9 +355,6 @@ mod tests {
         #[tokio::test]
         #[serial_test::serial]
         async fn test_check_utm_status_not_installed() {
-            // Temporarily disable mock mode to test the real path
-            std::env::remove_var("HA_INSTALLER_MOCK");
-
             // Since UTM is unlikely to be installed at the exact path we check,
             // or if it is, we can still verify the logic works
             let status = check_utm_status().await.unwrap();
@@ -413,9 +373,6 @@ mod tests {
         #[tokio::test]
         #[serial_test::serial]
         async fn test_create_vm_non_mock_utm_not_installed() {
-            // Disable mock mode
-            std::env::remove_var("HA_INSTALLER_MOCK");
-
             let config = UtmVmConfig {
                 name: "Test VM".to_string(),
                 image_path: "/tmp/test.qcow2".to_string(),
@@ -445,9 +402,6 @@ mod tests {
         #[tokio::test]
         #[serial_test::serial]
         async fn test_create_vm_non_mock_image_not_found() {
-            // Disable mock mode
-            std::env::remove_var("HA_INSTALLER_MOCK");
-
             // Create a temporary directory for testing
             let temp_dir = std::env::temp_dir();
             let non_existent_image = temp_dir.join("non_existent_image.qcow2");
@@ -594,9 +548,6 @@ mod tests {
         #[tokio::test]
         #[serial_test::serial]
         async fn test_create_vm_with_existing_image_file() {
-            // Disable mock mode
-            std::env::remove_var("HA_INSTALLER_MOCK");
-
             // Create a temporary image file
             use std::io::Write;
             let temp_dir = std::env::temp_dir();

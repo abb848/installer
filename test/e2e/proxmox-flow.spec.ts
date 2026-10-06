@@ -54,7 +54,9 @@ test.describe("Proxmox Installation Flow", () => {
     );
   });
 
-  test("step 1: clicking next with empty form shows error", async ({ page }) => {
+  test("step 1: clicking next with empty form shows error", async ({
+    page,
+  }) => {
     const connectView = page.locator("proxmox-connect-view");
     const nextButton = page
       .locator("wizard-shell")
@@ -72,7 +74,9 @@ test.describe("Proxmox Installation Flow", () => {
     await expect(connectView).toBeVisible();
   });
 
-  test("step 1: clicking next with invalid URL shows error", async ({ page }) => {
+  test("step 1: clicking next with invalid URL shows error", async ({
+    page,
+  }) => {
     const connectView = page.locator("proxmox-connect-view");
 
     // Fill with invalid URL (http instead of https)
@@ -215,7 +219,9 @@ test.describe("Proxmox Installation Flow", () => {
   test("step 2: can navigate back to step 1", async ({ page }) => {
     await navigateToProxmoxStep2(page);
 
-    const backButton = page.locator("wizard-shell").locator(".header wa-button");
+    const backButton = page
+      .locator("wizard-shell")
+      .locator(".header wa-button");
     await expect(backButton).toHaveJSProperty("disabled", false);
     await backButton.click();
 
@@ -270,7 +276,9 @@ test.describe("Proxmox Installation Flow", () => {
   test("step 3: can navigate back to step 2", async ({ page }) => {
     await navigateToProxmoxStep3(page);
 
-    const backButton = page.locator("wizard-shell").locator(".header wa-button");
+    const backButton = page
+      .locator("wizard-shell")
+      .locator(".header wa-button");
     await expect(backButton).toHaveJSProperty("disabled", false);
     await backButton.click();
 
@@ -318,7 +326,9 @@ test.describe("Proxmox Installation Flow", () => {
     await expect(wizardShell.locator(".footer")).not.toBeVisible();
   });
 
-  test("step 4: back button is hidden during installation", async ({ page }) => {
+  test("step 4: back button is hidden during installation", async ({
+    page,
+  }) => {
     await navigateToProxmoxStep4(page);
 
     const wizardShell = page.locator("wizard-shell");
@@ -414,7 +424,10 @@ test.describe("Proxmox Installation Flow", () => {
     await connectView.locator("#username").fill("root@pam");
     await connectView.locator("#password").fill("test");
 
-    await page.locator("wizard-shell").locator(".footer-right wa-button").click();
+    await page
+      .locator("wizard-shell")
+      .locator(".footer-right wa-button")
+      .click();
 
     // Step 2: Configure (wait for Next to enable once node/storage defaults load)
     await expect(page.locator("proxmox-configure-view")).toBeVisible();
@@ -426,7 +439,10 @@ test.describe("Proxmox Installation Flow", () => {
 
     // Step 3: Confirm - click Install (no confirmation dialog for Proxmox)
     await expect(page.locator("proxmox-confirm-view")).toBeVisible();
-    await page.locator("wizard-shell").locator(".footer-right wa-button").click();
+    await page
+      .locator("wizard-shell")
+      .locator(".footer-right wa-button")
+      .click();
 
     // Step 4: Progress (proceeds directly, no dialog)
     await expect(page.locator("proxmox-progress-view")).toBeVisible();
@@ -437,7 +453,10 @@ test.describe("Proxmox Installation Flow", () => {
     });
 
     // Return to welcome
-    await page.locator("wizard-shell").locator(".footer-right wa-button").click();
+    await page
+      .locator("wizard-shell")
+      .locator(".footer-right wa-button")
+      .click();
     await expect(page.locator("welcome-view")).toBeVisible();
   });
 });

@@ -7,10 +7,10 @@ use crate::error::{Error, Result};
 #[cfg(target_os = "macos")]
 use crate::types::{FlashProgress, FlashStage};
 use crate::types::{UtmStatus, UtmVmConfig, UtmVmResult, VmStatusInfo};
-use crate::ProgressCallback;
+use crate::{Backend, ProgressCallback, UtmBackend};
 
 /// Check if UTM is installed and get its status
-pub async fn check_utm_status() -> Result<UtmStatus> {
+async fn check_utm_status() -> Result<UtmStatus> {
     #[cfg(target_os = "macos")]
     {
         macos::check_utm_status().await
@@ -25,7 +25,7 @@ pub async fn check_utm_status() -> Result<UtmStatus> {
 }
 
 /// Create a Home Assistant VM using UTM
-pub async fn create_vm<P: ProgressCallback>(
+async fn create_vm<P: ProgressCallback>(
     config: &UtmVmConfig,
     progress_callback: &P,
 ) -> Result<UtmVmResult> {
@@ -45,7 +45,7 @@ pub async fn create_vm<P: ProgressCallback>(
 }
 
 /// Get the status of a UTM VM
-pub fn vm_status(vm_id: &str) -> Result<VmStatusInfo> {
+fn vm_status(vm_id: &str) -> Result<VmStatusInfo> {
     #[cfg(target_os = "macos")]
     {
         macos::vm_status(vm_id)
@@ -67,7 +67,7 @@ mod macos {
 
     const UTM_APP_PATH: &str = "/Applications/UTM.app";
 
-    pub fn vm_status(_vm_id: &str) -> Result<VmStatusInfo> {
+    pub(super) fn vm_status(_vm_id: &str) -> Result<VmStatusInfo> {
         // TODO: Implement via utmctl
         Ok(VmStatusInfo {
             status: "unknown".to_string(),
@@ -75,7 +75,7 @@ mod macos {
         })
     }
 
-    pub async fn check_utm_status() -> Result<UtmStatus> {
+    pub(super) async fn check_utm_status() -> Result<UtmStatus> {
         #[cfg(feature = "mock")]
         {
             if crate::is_mock_enabled() {
@@ -174,7 +174,7 @@ end tell"#,
         Ok(())
     }
 
-    pub async fn create_vm<P: ProgressCallback>(
+    pub(super) async fn create_vm<P: ProgressCallback>(
         config: &UtmVmConfig,
         progress_callback: &P,
     ) -> Result<UtmVmResult> {
@@ -306,6 +306,24 @@ end tell"#,
                 config.name
             )),
         })
+    }
+}
+
+impl UtmBackend for Backend {
+    async fn check_utm_status(&self) -> Result<UtmStatus> {
+        check_utm_status().await
+    }
+
+    async fn create_vm<P: ProgressCallback>(
+        &self,
+        config: &UtmVmConfig,
+        progress_callback: &P,
+    ) -> Result<UtmVmResult> {
+        create_vm(config, progress_callback).await
+    }
+
+    fn vm_status(&self, vm_id: &str) -> Result<VmStatusInfo> {
+        vm_status(vm_id)
     }
 }
 

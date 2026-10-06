@@ -24,7 +24,7 @@ use crate::types::{
     FlashProgress, FlashStage, ProxmoxCredentials, ProxmoxNode, ProxmoxSession, ProxmoxStorage,
     ProxmoxVmConfig, ProxmoxVmResult,
 };
-use crate::ProgressCallback;
+use crate::{Backend, ProgressCallback, ProxmoxBackend};
 
 /// Minimum required Proxmox VE version for disk image import via API.
 /// Version 8.4.1 added support for uploading qcow2/raw/img/vmdk files with content=import.
@@ -67,7 +67,7 @@ fn version_meets_minimum(version: (u32, u32, u32), minimum: (u32, u32, u32)) -> 
 ///
 /// This function also verifies the Proxmox version is at least 8.4.1,
 /// which is required for disk image import via the API.
-pub async fn authenticate(credentials: &ProxmoxCredentials) -> Result<ProxmoxSession> {
+async fn authenticate(credentials: &ProxmoxCredentials) -> Result<ProxmoxSession> {
     #[cfg(feature = "mock")]
     {
         if crate::is_mock_enabled() {
@@ -213,7 +213,7 @@ pub async fn authenticate(credentials: &ProxmoxCredentials) -> Result<ProxmoxSes
 }
 
 /// List available nodes on the Proxmox cluster
-pub async fn list_nodes(session: &ProxmoxSession) -> Result<Vec<ProxmoxNode>> {
+async fn list_nodes(session: &ProxmoxSession) -> Result<Vec<ProxmoxNode>> {
     #[cfg(feature = "mock")]
     {
         if crate::is_mock_enabled() {
@@ -312,7 +312,7 @@ pub async fn list_nodes(session: &ProxmoxSession) -> Result<Vec<ProxmoxNode>> {
 }
 
 /// List available storage on a node
-pub async fn list_storage(session: &ProxmoxSession, node: &str) -> Result<Vec<ProxmoxStorage>> {
+async fn list_storage(session: &ProxmoxSession, node: &str) -> Result<Vec<ProxmoxStorage>> {
     #[cfg(feature = "mock")]
     {
         if crate::is_mock_enabled() {
@@ -407,7 +407,7 @@ pub async fn list_storage(session: &ProxmoxSession, node: &str) -> Result<Vec<Pr
 ///
 /// Returns an actionable error when no such storage exists, since `import`
 /// is not enabled on a default Proxmox install.
-pub async fn get_storage_name(session: &ProxmoxSession, node: &str) -> Result<String> {
+async fn get_storage_name(session: &ProxmoxSession, node: &str) -> Result<String> {
     let storage_list = list_storage(session, node).await?;
     for storage in storage_list {
         // ESXi advertises `import` but is a source-only backend with no path, so uploads to it fail.
@@ -425,7 +425,7 @@ pub async fn get_storage_name(session: &ProxmoxSession, node: &str) -> Result<St
 }
 
 /// Get the next available VM ID on the Proxmox server.
-pub async fn get_next_vm_id(session: &ProxmoxSession) -> Result<u32> {
+async fn get_next_vm_id(session: &ProxmoxSession) -> Result<u32> {
     #[cfg(feature = "mock")]
     {
         if crate::is_mock_enabled() {
@@ -955,7 +955,7 @@ async fn wait_for_vm_ip(session: &ProxmoxSession, node: &str, vm_id: u32) -> Opt
 }
 
 /// Create a Home Assistant VM on Proxmox
-pub async fn create_vm<P: ProgressCallback>(
+async fn create_vm<P: ProgressCallback>(
     session: &ProxmoxSession,
     config: &ProxmoxVmConfig,
     progress_callback: &P,
@@ -1141,6 +1141,37 @@ pub async fn create_vm<P: ProgressCallback>(
         node: config.node.clone(),
         ip_address,
     })
+}
+
+impl ProxmoxBackend for Backend {
+    async fn authenticate(&self, credentials: &ProxmoxCredentials) -> Result<ProxmoxSession> {
+        authenticate(credentials).await
+    }
+
+    async fn list_nodes(&self, session: &ProxmoxSession) -> Result<Vec<ProxmoxNode>> {
+        list_nodes(session).await
+    }
+
+    async fn list_storage(
+        &self,
+        session: &ProxmoxSession,
+        node: &str,
+    ) -> Result<Vec<ProxmoxStorage>> {
+        list_storage(session, node).await
+    }
+
+    async fn get_next_vm_id(&self, session: &ProxmoxSession) -> Result<u32> {
+        get_next_vm_id(session).await
+    }
+
+    async fn create_vm<P: ProgressCallback>(
+        &self,
+        session: &ProxmoxSession,
+        config: &ProxmoxVmConfig,
+        progress_callback: &P,
+    ) -> Result<ProxmoxVmResult> {
+        create_vm(session, config, progress_callback).await
+    }
 }
 
 #[cfg(test)]

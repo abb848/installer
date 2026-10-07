@@ -15,8 +15,11 @@ pub async fn write_image<P: ProgressCallback>(
     let disk_number = parse_disk_number(device_id)?;
 
     // Clear-Disk is destructive, so make sure the device can be opened for
-    // writing (e.g. we are running as Administrator) before wiping it.
-    open_device_for_write(device_id)?;
+    // writing (e.g. we are running as Administrator) and its media accepts
+    // writes before wiping it.
+    let probe = open_device_for_write(device_id)?;
+    ensure_media_writable(&probe)?;
+    drop(probe);
 
     clean_disk(disk_number)?;
 
@@ -97,16 +100,57 @@ fn open_device_for_write(device_path: &str) -> Result<File> {
         .write(true)
         .open(device_path)
         .map_err(|e| {
-            if e.kind() == std::io::ErrorKind::PermissionDenied {
+            // Before the permission check, so a locked card never gets the
+            // advice to run as Administrator.
+            if is_write_protected(&e) {
+                Error::WriteProtected
+            } else if e.kind() == std::io::ErrorKind::PermissionDenied {
                 Error::PermissionDenied(
                     "Administrator access required. Please run as Administrator.".to_string(),
                 )
-            } else if is_drive_disconnected(&e) {
-                Error::DriveDisconnected
             } else {
-                Error::Io(e)
+                device_io_error(e)
             }
         })
+}
+
+/// Ask the disk driver whether the media accepts writes. A write handle opens
+/// fine on an SD card with its lock switch on; only a write, or this ioctl,
+/// tells. A disconnect is reported right away; any other failure, like a
+/// driver without this ioctl, is left for the write itself to report.
+fn ensure_media_writable(device: &File) -> Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::System::Ioctl::IOCTL_DISK_IS_WRITABLE;
+    use windows_sys::Win32::System::IO::DeviceIoControl;
+
+    let mut returned = 0u32;
+    // SAFETY: the handle stays valid for the duration of the call, since
+    // `device` owns it, and this ioctl takes no input or output buffers.
+    let ok = unsafe {
+        DeviceIoControl(
+            device.as_raw_handle(),
+            IOCTL_DISK_IS_WRITABLE,
+            std::ptr::null(),
+            0,
+            std::ptr::null_mut(),
+            0,
+            &mut returned,
+            std::ptr::null_mut(),
+        )
+    };
+    if ok != 0 {
+        return Ok(());
+    }
+
+    let err = std::io::Error::last_os_error();
+    if is_write_protected(&err) {
+        Err(Error::WriteProtected)
+    } else if is_drive_disconnected(&err) {
+        // Gone already; Clear-Disk would only fail with a less useful error
+        Err(Error::DriveDisconnected)
+    } else {
+        Ok(())
+    }
 }
 
 fn write_to_device(
@@ -129,13 +173,8 @@ fn write_to_device(
             break;
         }
 
-        dest.write_all(&buffer[..bytes_read]).map_err(|e| {
-            if is_drive_disconnected(&e) {
-                Error::DriveDisconnected
-            } else {
-                Error::Io(e)
-            }
-        })?;
+        dest.write_all(&buffer[..bytes_read])
+            .map_err(device_io_error)?;
 
         bytes_written += bytes_read as u64;
 
@@ -151,13 +190,7 @@ fn write_to_device(
         }
     }
 
-    dest.sync_all().map_err(|e| {
-        if is_drive_disconnected(&e) {
-            Error::DriveDisconnected
-        } else {
-            Error::Io(e)
-        }
-    })?;
+    dest.sync_all().map_err(device_io_error)?;
 
     // Send final progress
     let _ = progress_tx.send(FlashProgress::new(
@@ -177,13 +210,7 @@ fn verify_write(
     progress_tx: &mpsc::Sender<FlashProgress>,
 ) -> Result<()> {
     let mut source = File::open(image_path)?;
-    let mut dest = File::open(device_path).map_err(|e| {
-        if is_drive_disconnected(&e) {
-            Error::DriveDisconnected
-        } else {
-            Error::Io(e)
-        }
-    })?;
+    let mut dest = File::open(device_path).map_err(device_io_error)?;
 
     let mut source_buffer = vec![0u8; WRITE_BUFFER_SIZE];
     let mut dest_buffer = vec![0u8; WRITE_BUFFER_SIZE];
@@ -197,13 +224,7 @@ fn verify_write(
         }
 
         dest.read_exact(&mut dest_buffer[..source_read])
-            .map_err(|e| {
-                if is_drive_disconnected(&e) {
-                    Error::DriveDisconnected
-                } else {
-                    Error::Io(e)
-                }
-            })?;
+            .map_err(device_io_error)?;
 
         if source_buffer[..source_read] != dest_buffer[..source_read] {
             return Err(Error::VerificationFailed(
@@ -272,6 +293,14 @@ fn clean_disk(disk_number: u32) -> Result<()> {
 mod tests {
     use super::*;
     use serial_test::serial;
+
+    #[test]
+    fn test_ensure_media_writable_lets_a_non_disk_through() {
+        // A regular file doesn't support the disk ioctl; that is not a
+        // reason to refuse, only write protection is.
+        let file = tempfile::NamedTempFile::new().unwrap();
+        assert!(ensure_media_writable(file.as_file()).is_ok());
+    }
 
     #[test]
     fn test_parse_disk_number_valid() {

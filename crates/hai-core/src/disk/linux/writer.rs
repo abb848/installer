@@ -81,13 +81,7 @@ fn write_and_verify(
         // Tag verify-phase failures as VerificationFailed so the caller can
         // label them "Verification failed" rather than "Write failed".
         let verified = (|| {
-            device.seek(SeekFrom::Start(0)).map_err(|e| {
-                if is_drive_disconnected(&e) {
-                    Error::DriveDisconnected
-                } else {
-                    Error::Io(e)
-                }
-            })?;
+            device.seek(SeekFrom::Start(0)).map_err(device_io_error)?;
             verify_write(image_path, &mut device, total_size, &progress_tx)
         })();
 
@@ -118,13 +112,8 @@ fn write_to_device(
             break;
         }
 
-        dest.write_all(&buffer[..bytes_read]).map_err(|e| {
-            if is_drive_disconnected(&e) {
-                Error::DriveDisconnected
-            } else {
-                Error::Io(e)
-            }
-        })?;
+        dest.write_all(&buffer[..bytes_read])
+            .map_err(device_io_error)?;
 
         bytes_written += bytes_read as u64;
 
@@ -140,13 +129,7 @@ fn write_to_device(
         }
     }
 
-    dest.sync_all().map_err(|e| {
-        if is_drive_disconnected(&e) {
-            Error::DriveDisconnected
-        } else {
-            Error::Io(e)
-        }
-    })?;
+    dest.sync_all().map_err(device_io_error)?;
 
     // Send final progress
     let _ = progress_tx.send(FlashProgress::new(
@@ -179,13 +162,7 @@ fn verify_write(
         }
 
         dest.read_exact(&mut dest_buffer[..source_read])
-            .map_err(|e| {
-                if is_drive_disconnected(&e) {
-                    Error::DriveDisconnected
-                } else {
-                    Error::Io(e)
-                }
-            })?;
+            .map_err(device_io_error)?;
 
         if source_buffer[..source_read] != dest_buffer[..source_read] {
             return Err(Error::VerificationFailed(
@@ -339,6 +316,13 @@ fn map_udisks_error(err: zbus::Error, context: &str) -> Error {
         {
             return Error::DeviceBusy(context.to_string());
         }
+        // A locked card fails right at the open, as EROFS in the message.
+        if message
+            .as_deref()
+            .is_some_and(|m| m.contains("Read-only file system"))
+        {
+            return Error::WriteProtected;
+        }
         return Error::Io(std::io::Error::other(format!(
             "udisks2 error while {context}: {err}"
         )));
@@ -441,6 +425,16 @@ mod tests {
         assert!(
             matches!(mapped, Error::PermissionDenied(msg) if msg == "Not authorized to open the device")
         );
+    }
+
+    #[test]
+    fn test_map_udisks_error_read_only_is_write_protected() {
+        let err = method_error(
+            "org.freedesktop.UDisks2.Error.Failed",
+            Some("Error opening device /dev/sdb: Read-only file system"),
+        );
+        let mapped = map_udisks_error(err, "opening the device");
+        assert!(matches!(mapped, Error::WriteProtected), "{mapped:?}");
     }
 
     #[test]

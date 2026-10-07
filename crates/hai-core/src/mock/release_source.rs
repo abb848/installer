@@ -3,21 +3,10 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::types::{DeviceManifest, FlashStage, HaosImage, HaosRelease, ImageFormat, UpdateInfo};
+use crate::types::{DeviceManifest, FlashStage, HaosImage, HaosRelease, ImageFormat};
 use crate::{ProgressCallback, ReleaseSource, Result};
 
 use super::{simulate, simulate_indeterminate, touch_placeholder, BackendMock};
-
-fn mock_update_info() -> UpdateInfo {
-    UpdateInfo {
-        update_available: false,
-        current_version: env!("CARGO_PKG_VERSION").to_string(),
-        latest_version: env!("CARGO_PKG_VERSION").to_string(),
-        download_url: Some("https://github.com/home-assistant/installer/releases".to_string()),
-        release_notes_url: Some("https://github.com/home-assistant/installer/releases".to_string()),
-        is_beta: false,
-    }
-}
 
 fn mock_haos_release() -> HaosRelease {
     HaosRelease {
@@ -130,10 +119,6 @@ impl ReleaseSource for BackendMock {
         )
         .await;
         touch_placeholder(dest_path)
-    }
-
-    async fn check_for_updates(&self) -> Result<UpdateInfo> {
-        Ok(mock_update_info())
     }
 
     /// Keeps placeholder files out of the user's real image cache.

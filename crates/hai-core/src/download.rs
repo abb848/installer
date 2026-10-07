@@ -6,7 +6,7 @@
 use crate::error::{Error, Result};
 use crate::types::{
     DeviceManifest, FlashProgress, FlashStage, GitHubRelease, HaosImage, HaosRelease, ImageFormat,
-    StableVersionInfo, UpdateInfo,
+    StableVersionInfo,
 };
 use crate::{Backend, ProgressCallback, ReleaseSource};
 use directories::ProjectDirs;
@@ -43,19 +43,6 @@ async fn get_device_manifest() -> Result<DeviceManifest> {
     // For now, return the manifest bundled with the installer
     // TODO: Implement actual network fetch
     Ok(crate::manifest::bundled_manifest())
-}
-
-/// Check whether a newer installer release is available
-async fn check_for_updates() -> Result<UpdateInfo> {
-    // TODO: Implement an actual update check
-    Ok(UpdateInfo {
-        update_available: false,
-        current_version: env!("CARGO_PKG_VERSION").to_string(),
-        latest_version: env!("CARGO_PKG_VERSION").to_string(),
-        download_url: Some("https://github.com/home-assistant/installer/releases".to_string()),
-        release_notes_url: Some("https://github.com/home-assistant/installer/releases".to_string()),
-        is_beta: false,
-    })
 }
 
 /// Check if cache should be skipped via environment variable
@@ -495,10 +482,6 @@ impl ReleaseSource for Backend {
         progress_callback: &P,
     ) -> Result<()> {
         extract_xz(archive_path, dest_path, progress_callback).await
-    }
-
-    async fn check_for_updates(&self) -> Result<UpdateInfo> {
-        check_for_updates().await
     }
 
     fn cache_dir(&self) -> Result<PathBuf> {

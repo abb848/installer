@@ -35,6 +35,9 @@ pub enum Error {
     #[error("UTM error: {0}")]
     Utm(String),
 
+    #[error("UTM operation outcome is unknown: {0}")]
+    UtmOperationUncertain(String),
+
     #[error("Drive disconnected")]
     DriveDisconnected,
 

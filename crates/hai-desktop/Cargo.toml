@@ -42,3 +42,4 @@ plist = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt", "macros"] }
 serial_test = { workspace = true }
+tempfile = { workspace = true }

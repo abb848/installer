@@ -11,10 +11,11 @@ mod flash_state;
 use tauri::Manager;
 
 use commands::{
-    check_ha_ready, check_ha_updated, check_utm_status, create_utm_vm, download_utm_image,
-    flash_image, get_haos_release, get_manifest, get_system_info, get_utm_vm_status,
-    list_block_devices, proxmox_connect, proxmox_create_vm, proxmox_get_next_vm_id,
-    proxmox_list_nodes, proxmox_list_storage, resize_utm_vm_disk, start_utm_vm,
+    check_ha_ready, check_ha_updated, check_utm_status, create_utm_vm, discard_utm_image,
+    download_utm_image, flash_image, get_haos_release, get_manifest, get_system_info,
+    get_utm_vm_status, list_block_devices, proxmox_connect, proxmox_create_vm,
+    proxmox_get_next_vm_id, proxmox_list_nodes, proxmox_list_storage, resize_utm_vm_disk,
+    start_utm_vm,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -33,6 +34,15 @@ pub fn run() {
 
     builder
         .manage(flash_state::FlashState::default())
+        .manage(commands::PendingUtmImages::default())
+        .setup(|_| {
+            if let Ok(cache) = hai_core::ReleaseSource::cache_dir(&backend::Backend) {
+                if let Err(error) = hai_core::download::prune_cached_images(&cache) {
+                    eprintln!("Could not prune cached images: {error}");
+                }
+            }
+            Ok(())
+        })
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             list_block_devices,
@@ -43,6 +53,7 @@ pub fn run() {
             // UTM commands (hai-core reports UTM as unsupported off macOS)
             check_utm_status,
             download_utm_image,
+            discard_utm_image,
             create_utm_vm,
             start_utm_vm,
             resize_utm_vm_disk,

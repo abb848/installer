@@ -3,6 +3,7 @@ import { customElement, state } from "lit/decorators.js";
 import { wizardState, type WizardState } from "../../state/wizard-state.js";
 import {
   downloadUtmImage,
+  discardUtmImage,
   createUtmVm,
   resizeUtmVmDisk,
   startUtmVm,
@@ -444,20 +445,16 @@ export class UtmProgressView extends LitElement {
     const cpuCores = selections.cpuCores ?? DEFAULT_CPU_CORES;
     const memoryMb = selections.memoryMb ?? DEFAULT_MEMORY_MB;
     const diskSizeGb = selections.diskSizeGb ?? DEFAULT_DISK_SIZE_GB;
+    let imagePath: string | undefined;
 
     try {
       // Every step below is skipped when an earlier attempt already completed
       // it. Running the whole pipeline again after a late failure would create
       // a second VM with the same name and orphan the first one.
-      let imagePath = selections.utmImagePath;
-      if (!imagePath) {
-        imagePath = await this._downloadImage(signal);
-        throwIfCancelled(signal);
-        wizardState.setSelection("utmImagePath", imagePath);
-      }
-
       let vmId = selections.vmId;
       if (!vmId) {
+        imagePath = await this._downloadImage(signal);
+        throwIfCancelled(signal);
         this._startStage("creating");
 
         const config: UtmVmConfig = {
@@ -544,6 +541,13 @@ export class UtmProgressView extends LitElement {
       if (this._abortController === controller) {
         this._isInstalling = false;
         this._abortController = undefined;
+      }
+      if (imagePath) {
+        try {
+          await discardUtmImage(imagePath);
+        } catch (error) {
+          console.warn("Could not release temporary UTM image", error);
+        }
       }
     }
   }

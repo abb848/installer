@@ -254,6 +254,12 @@ export async function checkUtmStatus(): Promise<UtmStatus> {
   return invoke<UtmStatus>("check_utm_status");
 }
 
+/** Release a temporary image which was not consumed by VM creation. */
+export async function discardUtmImage(imagePath: string): Promise<void> {
+  if (MOCK_ALLOWED && isBrowserOnly()) return;
+  await invoke("discard_utm_image", { imagePath });
+}
+
 /**
  * Download the HAOS qcow2 image for UTM.
  * @param onProgress Callback for progress updates

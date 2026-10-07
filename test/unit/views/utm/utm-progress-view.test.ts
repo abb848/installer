@@ -59,7 +59,6 @@ describe("utm-progress-view", () => {
     // Seed the state a completed attempt would leave behind, so the pipeline
     // skips straight to the polling stages, and answer every check at once:
     // without cancellation it would finish well within the wait below
-    wizardState.setSelection("utmImagePath", "/tmp/haos.qcow2");
     wizardState.setSelection("vmId", "existing-vm");
     wizardState.setSelection("utmDiskResized", true);
     mockTauriIpc((cmd) => {
@@ -94,7 +93,6 @@ describe("utm-progress-view", () => {
 
   it("resumes a retried install instead of creating a second VM", async () => {
     // What a failed attempt leaves behind once the VM exists
-    wizardState.setSelection("utmImagePath", "/tmp/haos.qcow2");
     wizardState.setSelection("vmId", "existing-vm");
 
     const el = mount();
@@ -107,24 +105,16 @@ describe("utm-progress-view", () => {
     expect(el.hasError).to.be.false;
   });
 
-  it("skips the download when a previous attempt already fetched the image", async () => {
-    wizardState.setSelection("utmImagePath", "/tmp/haos.qcow2");
-
-    const el = mount();
-    await el.updateComplete;
-
-    // Straight to creating the VM rather than downloading all over again
-    expect(el.shadowRoot!.textContent).to.contain("Creating virtual machine");
-  });
-
   it("retries a failed disk resize instead of starting an undersized VM", async () => {
-    wizardState.setSelection("utmImagePath", "/tmp/haos.qcow2");
-
     const calls: string[] = [];
     let resizeAttempts = 0;
     mockTauriIpc((cmd) => {
       calls.push(cmd);
       switch (cmd) {
+        case "download_utm_image":
+          return "/tmp/owned.qcow2";
+        case "discard_utm_image":
+          return undefined;
         case "create_utm_vm":
           return "new-vm";
         case "resize_utm_vm_disk":
@@ -159,14 +149,20 @@ describe("utm-progress-view", () => {
     expect(selections.utmDiskResized).to.be.true;
     // The retry resized the existing VM rather than creating another one
     expect(calls.filter((c) => c === "create_utm_vm")).to.have.length(1);
+    expect(calls.filter((c) => c === "download_utm_image")).to.have.length(1);
+    expect(calls.filter((c) => c === "discard_utm_image")).to.have.length(1);
     expect(resizeAttempts).to.equal(2);
   });
 
   it("shows Automation settings advice from a Tauri string rejection", async () => {
-    wizardState.setSelection("utmImagePath", "/tmp/haos.qcow2");
     const message =
       "UTM error: Home Assistant Installer is not allowed to control UTM. Open System Settings > Privacy & Security > Automation, enable UTM under Home Assistant Installer, then try again.";
-    mockTauriIpc(() => Promise.reject(message));
+    mockTauriIpc((cmd) => {
+      if (cmd === "download_utm_image") return "/tmp/haos.qcow2";
+      if (cmd === "create_utm_vm") return Promise.reject(message);
+      if (cmd === "discard_utm_image") return undefined;
+      throw new Error(`Unexpected IPC command: ${cmd}`);
+    });
 
     const el = mount();
     await oneEvent(el, "install-error");
@@ -181,8 +177,12 @@ describe("utm-progress-view", () => {
 
   for (const rejection of [undefined, {}, "", "   "]) {
     it(`shows a fallback for an unusable rejection: ${JSON.stringify(rejection)}`, async () => {
-      wizardState.setSelection("utmImagePath", "/tmp/haos.qcow2");
-      mockTauriIpc(() => Promise.reject(rejection));
+      mockTauriIpc((cmd) => {
+        if (cmd === "download_utm_image") return "/tmp/haos.qcow2";
+        if (cmd === "create_utm_vm") return Promise.reject(rejection);
+        if (cmd === "discard_utm_image") return undefined;
+        throw new Error(`Unexpected IPC command: ${cmd}`);
+      });
 
       const el = mount();
       await oneEvent(el, "install-error");
@@ -196,7 +196,6 @@ describe("utm-progress-view", () => {
 
   it("asks the VM for its address again on a retry", async () => {
     // A previous attempt found the VM at an address it no longer has
-    wizardState.setSelection("utmImagePath", "/tmp/haos.qcow2");
     wizardState.setSelection("vmId", "existing-vm");
     wizardState.setSelection("utmDiskResized", true);
     wizardState.setSelection("ipAddress", "192.168.1.50");
@@ -221,5 +220,79 @@ describe("utm-progress-view", () => {
       "192.168.1.100"
     );
     expect(checkedHosts).to.not.include("192.168.1.50");
+  });
+
+  it("releases a download which finishes after cancellation", async () => {
+    let finishDownload!: (value: string) => void;
+    const released: string[] = [];
+    mockTauriIpc((cmd, args) => {
+      if (cmd === "download_utm_image") {
+        return new Promise<string>((resolve) => {
+          finishDownload = resolve;
+        });
+      }
+      if (cmd === "discard_utm_image") {
+        released.push((args as { imagePath: string }).imagePath);
+        return;
+      }
+      throw new Error(`Unexpected IPC command: ${cmd}`);
+    });
+    const el = mount();
+    el.remove();
+    finishDownload("/tmp/cancelled.qcow2");
+    await aTimeout(20);
+    expect(released).to.deep.equal(["/tmp/cancelled.qcow2"]);
+    expect(wizardState.getState().selections.vmId).to.be.undefined;
+  });
+
+  it("shows the retained-source warning from a string import rejection", async () => {
+    const warning =
+      "UTM may still be importing the image: timed out. Source retained at " +
+      "/tmp/hai-download-retained. Check UTM before retrying. Remove the " +
+      "source directory manually only after confirming UTM has finished or " +
+      "stopped importing.";
+    mockTauriIpc((cmd) => {
+      if (cmd === "download_utm_image")
+        return "/tmp/hai-download-retained/disk.qcow2";
+      if (cmd === "create_utm_vm") return Promise.reject(warning);
+      if (cmd === "discard_utm_image") return undefined;
+      throw new Error(`Unexpected IPC command: ${cmd}`);
+    });
+
+    const el = mount();
+    await oneEvent(el, "install-error");
+    await el.updateComplete;
+
+    expect(el.hasError).to.be.true;
+    expect(el.shadowRoot!.textContent).to.contain(warning);
+    expect(wizardState.getState().selections.vmId).to.be.undefined;
+  });
+
+  it("releases a failed import and downloads a fresh image on retry", async () => {
+    let downloads = 0;
+    const released: string[] = [];
+    mockTauriIpc((cmd, args) => {
+      if (cmd === "download_utm_image")
+        return `/tmp/attempt-${++downloads}.qcow2`;
+      if (cmd === "create_utm_vm") throw new Error("import failed");
+      if (cmd === "discard_utm_image") {
+        released.push((args as { imagePath: string }).imagePath);
+        throw new Error("cleanup failed");
+      }
+      throw new Error(`Unexpected IPC command: ${cmd}`);
+    });
+    const el = mount();
+    await oneEvent(el, "install-error");
+    await aTimeout(20);
+    const failedAgain = oneEvent(el, "install-error");
+    el.retry();
+    await failedAgain;
+    await aTimeout(20);
+    expect(released).to.deep.equal([
+      "/tmp/attempt-1.qcow2",
+      "/tmp/attempt-2.qcow2",
+    ]);
+    await el.updateComplete;
+    expect(el.shadowRoot!.textContent).to.contain("import failed");
   });
 });

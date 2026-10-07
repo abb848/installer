@@ -38,7 +38,6 @@ export interface WizardSelections {
   ipAddress?: string;
 
   /** UTM install progress, so a retry resumes instead of starting over. */
-  utmImagePath?: string;
   vmId?: string;
   /** Set once the disk of the VM in `vmId` has been resized. */
   utmDiskResized?: boolean;

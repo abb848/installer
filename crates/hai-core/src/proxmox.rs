@@ -731,6 +731,16 @@ async fn wait_for_task(
     upid: &str,
     timeout_secs: u64,
 ) -> Result<()> {
+    wait_for_task_completion(session, node, upid, timeout_secs, &mut false).await
+}
+
+async fn wait_for_task_completion(
+    session: &ProxmoxSession,
+    node: &str,
+    upid: &str,
+    timeout_secs: u64,
+    stopped: &mut bool,
+) -> Result<()> {
     let url = format!(
         "{}/api2/json/nodes/{}/tasks/{}/status",
         session.server_url.trim_end_matches('/'),
@@ -781,6 +791,7 @@ async fn wait_for_task(
         let status = data.get("status").and_then(|v| v.as_str()).unwrap_or("");
 
         if status == "stopped" {
+            *stopped = true;
             // Task is complete, check if it succeeded
             let exitstatus = data
                 .get("exitstatus")
@@ -971,6 +982,7 @@ async fn create_vm_with_disk(
     config: &ProxmoxVmConfig,
     image_filename: &str,
     storage_name: &str,
+    source_unused: &mut bool,
 ) -> Result<()> {
     let url = format!(
         "{}/api2/json/nodes/{}/qemu",
@@ -1018,6 +1030,9 @@ async fn create_vm_with_disk(
     let response_text = response.text().await.unwrap_or_default();
 
     if !status.is_success() {
+        // A client rejection cannot have started an import. Server errors or
+        // a timeout can hide a task which is still running, so retain those.
+        *source_unused = status.is_client_error() && status != reqwest::StatusCode::REQUEST_TIMEOUT;
         return Err(Error::ProxmoxApi(format!(
             "Failed to create VM ({}): {}",
             status, response_text
@@ -1029,12 +1044,83 @@ async fn create_vm_with_disk(
         .map_err(|e| Error::ProxmoxApi(format!("Failed to parse VM creation response: {}", e)))?;
 
     // VM creation returns a task UPID since it involves disk import
-    if let Some(upid) = json.get("data").and_then(|v| v.as_str()) {
-        // Wait for the VM creation task to complete
-        wait_for_task(session, &config.node, upid, 600).await?;
-    }
+    let upid = json
+        .get("data")
+        .and_then(|v| v.as_str())
+        .filter(|upid| !upid.is_empty())
+        .ok_or_else(|| Error::ProxmoxApi("VM creation response missing task UPID".to_string()))?;
+    // Deleting the source is only safe after confirmed import completion.
+    wait_for_task_completion(session, &config.node, upid, 600, source_unused).await?;
 
     Ok(())
+}
+
+async fn delete_import_image(
+    session: &ProxmoxSession,
+    node: &str,
+    storage: &str,
+    filename: &str,
+) -> Result<()> {
+    let volume = format!("{storage}:import/{filename}");
+    let url = format!(
+        "{}/api2/json/nodes/{}/storage/{}/content/{}",
+        session.server_url.trim_end_matches('/'),
+        urlencoding::encode(node),
+        urlencoding::encode(storage),
+        urlencoding::encode(&volume)
+    );
+    let response = create_client(60)?
+        .delete(url)
+        .header("Cookie", format!("PVEAuthCookie={}", session.ticket))
+        .header("CSRFPreventionToken", &session.csrf_token)
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(Error::ProxmoxApi(format!(
+            "Could not delete import volume {volume}: HTTP {}",
+            response.status()
+        )));
+    }
+    let json: serde_json::Value = response.json().await?;
+    let upid = json
+        .get("data")
+        .and_then(|value| value.as_str())
+        .filter(|upid| !upid.is_empty())
+        .ok_or_else(|| {
+            Error::ProxmoxApi("Import deletion response missing task UPID".to_string())
+        })?;
+    wait_for_task(session, node, upid, 120).await?;
+    Ok(())
+}
+
+async fn import_and_cleanup_image(
+    session: &ProxmoxSession,
+    config: &ProxmoxVmConfig,
+    image_filename: &str,
+    storage_name: &str,
+) -> Result<()> {
+    let mut source_unused = false;
+    let result = create_vm_with_disk(
+        session,
+        config,
+        image_filename,
+        storage_name,
+        &mut source_unused,
+    )
+    .await;
+    // The request was rejected or the import task has stopped. Cleanup is
+    // best effort and must never replace the original installation result.
+    if source_unused {
+        if let Err(error) =
+            delete_import_image(session, &config.node, storage_name, image_filename).await
+        {
+            eprintln!(
+                "Temporary import cleanup for VM {} failed: {error}",
+                config.vm_id
+            );
+        }
+    }
+    result
 }
 
 /// Start a VM.
@@ -1250,8 +1336,9 @@ async fn create_vm<P: ProgressCallback>(
     });
 
     let cache_dir = crate::download::get_cache_dir()?;
-    let compressed_filename = format!("haos_ova-{}.qcow2.xz", haos_version);
-    let compressed_path = cache_dir.join(&compressed_filename);
+    let temporary_image =
+        crate::download::TemporaryImage::new(&cache_dir, crate::ImageFormat::Qcow2)?;
+    let compressed_path = temporary_image.archive_path();
 
     // Download the image
     crate::download::download_image(&image.download_url, &compressed_path, progress_callback)
@@ -1266,10 +1353,11 @@ async fn create_vm<P: ProgressCallback>(
         message: "Extracting image...".to_string(),
     });
 
-    let extracted_filename = format!("haos_ova-{}.qcow2", haos_version);
-    let extracted_path = cache_dir.join(&extracted_filename);
+    let extracted_path = temporary_image.path();
 
-    crate::download::extract_xz(&compressed_path, &extracted_path, progress_callback).await?;
+    crate::ReleaseSource::extract_temporary_image(&Backend, &temporary_image, progress_callback)
+        .await?;
+    temporary_image.cache_archive(&cache_dir, "ova", haos_version);
 
     let storage_name = recheck_before_upload(session, config, &extracted_path).await?;
 
@@ -1282,6 +1370,7 @@ async fn create_vm<P: ProgressCallback>(
         &storage_name,
     )
     .await?;
+    drop(temporary_image);
 
     // Step 5: Create the VM with disk import
     progress_callback.on_progress(FlashProgress {
@@ -1292,7 +1381,7 @@ async fn create_vm<P: ProgressCallback>(
         message: "Creating virtual machine...".to_string(),
     });
 
-    create_vm_with_disk(session, config, &image_filename, &storage_name).await?;
+    import_and_cleanup_image(session, config, &image_filename, &storage_name).await?;
 
     // Step 6: Start the VM if requested
     if config.auto_start {
@@ -3060,8 +3149,14 @@ mod tests {
                 auto_start: false,
             };
 
-            let result =
-                create_vm_with_disk(&session, &config, "test-image.qcow2", "local-import").await;
+            let result = create_vm_with_disk(
+                &session,
+                &config,
+                "test-image.qcow2",
+                "local-import",
+                &mut false,
+            )
+            .await;
             assert!(result.is_ok());
 
             vm_create_mock.assert_async().await;
@@ -3097,10 +3192,173 @@ mod tests {
                 auto_start: false,
             };
 
-            let result = create_vm_with_disk(&session, &config, "test-image.qcow2", "local").await;
+            let result =
+                create_vm_with_disk(&session, &config, "test-image.qcow2", "local", &mut false)
+                    .await;
             assert!(result.is_err());
 
             vm_create_mock.assert_async().await;
+        }
+
+        #[tokio::test]
+        async fn delete_import_image_requires_a_task_upid() {
+            for response in ["{}", r#"{"data":null}"#, r#"{"data":""}"#, r#"{"data":42}"#] {
+                let mut server = Server::new_async().await;
+                let delete = server
+                    .mock("DELETE", "/api2/json/nodes/pve/storage/local-import/content/local-import%3Aimport%2Fhai-image-unique.qcow2")
+                    .with_body(response)
+                    .create_async()
+                    .await;
+                let task = server
+                    .mock("GET", Matcher::Any)
+                    .expect(0)
+                    .create_async()
+                    .await;
+                let session = ProxmoxSession {
+                    server_url: server.url(),
+                    ticket: "test-ticket".into(),
+                    csrf_token: "test-csrf".into(),
+                };
+                let error =
+                    delete_import_image(&session, "pve", "local-import", "hai-image-unique.qcow2")
+                        .await
+                        .unwrap_err();
+                assert!(error
+                    .to_string()
+                    .contains("Import deletion response missing task UPID"));
+                delete.assert_async().await;
+                task.assert_async().await;
+            }
+        }
+
+        #[tokio::test]
+        async fn import_cleanup_waits_for_completion_and_preserves_install_result() {
+            use std::sync::{
+                atomic::{AtomicBool, Ordering},
+                Arc,
+            };
+            for cleanup_status in [200, 403, 500] {
+                let mut server = Server::new_async().await;
+                let completed = Arc::new(AtomicBool::new(false));
+                let task_completed = completed.clone();
+                let create = server
+                    .mock("POST", "/api2/json/nodes/pve/qemu")
+                    .with_body(r#"{"data":"import-task"}"#)
+                    .create_async()
+                    .await;
+                let task = server
+                    .mock("GET", "/api2/json/nodes/pve/tasks/import-task/status")
+                    .with_chunked_body(move |writer| {
+                        task_completed.store(true, Ordering::SeqCst);
+                        writer.write_all(br#"{"data":{"status":"stopped","exitstatus":"OK"}}"#)
+                    })
+                    .create_async()
+                    .await;
+                let delete = server.mock("DELETE", "/api2/json/nodes/pve/storage/local-import/content/local-import%3Aimport%2Fhai-image-unique.qcow2")
+                    .match_header("cookie", "PVEAuthCookie=test-ticket")
+                    .match_header("CSRFPreventionToken", "test-csrf")
+                    .with_status(cleanup_status)
+                    .with_chunked_body(move |writer| {
+                        assert!(completed.load(Ordering::SeqCst), "deleted before import completion");
+                        writer.write_all(br#"{"data":"delete-task"}"#)
+                    }).create_async().await;
+                let cleanup_task = server
+                    .mock("GET", "/api2/json/nodes/pve/tasks/delete-task/status")
+                    .with_body(r#"{"data":{"status":"stopped","exitstatus":"OK"}}"#)
+                    .expect(if cleanup_status == 200 { 1 } else { 0 })
+                    .create_async()
+                    .await;
+                let session = ProxmoxSession {
+                    server_url: server.url(),
+                    ticket: "test-ticket".into(),
+                    csrf_token: "test-csrf".into(),
+                };
+                let config = ProxmoxVmConfig {
+                    vm_id: 100,
+                    name: "test-vm".into(),
+                    node: "pve".into(),
+                    storage: "local-lvm".into(),
+                    cpu_cores: 2,
+                    memory_mb: 2048,
+                    disk_size_gb: 32,
+                    auto_start: false,
+                };
+                import_and_cleanup_image(
+                    &session,
+                    &config,
+                    "hai-image-unique.qcow2",
+                    "local-import",
+                )
+                .await
+                .unwrap();
+                create.assert_async().await;
+                task.assert_async().await;
+                delete.assert_async().await;
+                cleanup_task.assert_async().await;
+            }
+        }
+
+        #[tokio::test]
+        async fn failed_import_cleanup_requires_a_known_terminal_outcome() {
+            for (create_status, response, task_status, task_body, deletes) in [
+                (200, r#"{"data":null}"#, 200, "{}", 0),
+                (200, r#"{"data":""}"#, 200, "{}", 0),
+                (200, r#"{"data":"import-task"}"#, 503, "unavailable", 0),
+                (403, "denied", 200, "{}", 1),
+                (500, "unknown", 200, "{}", 0),
+                (408, "timeout", 200, "{}", 0),
+                (
+                    200,
+                    r#"{"data":"import-task"}"#,
+                    200,
+                    r#"{"data":{"status":"stopped","exitstatus":"disk full"}}"#,
+                    1,
+                ),
+            ] {
+                let mut server = Server::new_async().await;
+                server
+                    .mock("POST", "/api2/json/nodes/pve/qemu")
+                    .with_status(create_status)
+                    .with_body(response)
+                    .create_async()
+                    .await;
+                server
+                    .mock("GET", "/api2/json/nodes/pve/tasks/import-task/status")
+                    .with_status(task_status)
+                    .with_body(task_body)
+                    .create_async()
+                    .await;
+                let delete = server
+                    .mock("DELETE", Matcher::Any)
+                    .with_status(500)
+                    .expect(deletes)
+                    .create_async()
+                    .await;
+                let session = ProxmoxSession {
+                    server_url: server.url(),
+                    ticket: "test-ticket".into(),
+                    csrf_token: "test-csrf".into(),
+                };
+                let config = ProxmoxVmConfig {
+                    vm_id: 100,
+                    name: "test-vm".into(),
+                    node: "pve".into(),
+                    storage: "local-lvm".into(),
+                    cpu_cores: 2,
+                    memory_mb: 2048,
+                    disk_size_gb: 32,
+                    auto_start: false,
+                };
+                assert!(import_and_cleanup_image(
+                    &session,
+                    &config,
+                    "hai-image-unique.qcow2",
+                    "local-import"
+                )
+                .await
+                .is_err());
+                delete.assert_async().await;
+            }
         }
 
         #[tokio::test]

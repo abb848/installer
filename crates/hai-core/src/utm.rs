@@ -9,6 +9,27 @@ use crate::types::{FlashProgress, FlashStage};
 use crate::types::{UtmStatus, UtmVmConfig, UtmVmResult, VmStatusInfo};
 use crate::{Backend, ProgressCallback, UtmBackend};
 
+#[cfg(any(target_os = "macos", all(test, unix)))]
+fn applescript_output(output: std::process::Output) -> Result<String> {
+    if output.status.success() {
+        return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
+    }
+    let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    let code = message
+        .rsplit_once('(')
+        .and_then(|(_, code)| code.strip_suffix(')'))
+        .and_then(|code| code.parse::<i32>().ok());
+    // Timeout, missing reply, and a lost application connection do not prove
+    // that the command stopped. Neither does a terminated osascript process.
+    if output.status.code().is_none()
+        || matches!(code, None | Some(-1711 | -1712 | -1718 | -609 | -600))
+    {
+        Err(Error::UtmOperationUncertain(message))
+    } else {
+        Err(applescript_error(&message))
+    }
+}
+
 /// Check if UTM is installed and get its status
 async fn check_utm_status() -> Result<UtmStatus> {
     #[cfg(target_os = "macos")]
@@ -184,18 +205,18 @@ mod macos {
 
     /// Run an AppleScript and return the output
     pub(super) fn run_applescript(script: &str) -> Result<String> {
-        let output = Command::new("osascript")
+        let child = Command::new("osascript")
             .arg("-e")
             .arg(script)
-            .output()
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
             .map_err(|e| Error::Utm(format!("Failed to execute AppleScript: {}", e)))?;
-
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-        } else {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(applescript_error(&stderr))
-        }
+        let output = child.wait_with_output().map_err(|error| {
+            Error::UtmOperationUncertain(format!("Failed to wait for AppleScript: {error}"))
+        })?;
+        applescript_output(output)
     }
 
     /// Start a VM by its ID
@@ -208,7 +229,12 @@ end tell"#,
             vm_id
         );
 
-        run_applescript(&script)?;
+        run_applescript(&script).map_err(|error| match error {
+            // Starting never reads the import source. A lost reply here must
+            // not retain an image whose creation already completed.
+            Error::UtmOperationUncertain(message) => Error::Utm(message),
+            error => error,
+        })?;
         Ok(())
     }
 
@@ -369,6 +395,59 @@ mod tests {
             };
             assert_eq!(message, stderr.trim());
         }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn applescript_distinguishes_rejection_from_unknown_completion() {
+        use std::os::unix::process::ExitStatusExt;
+        for (status, stderr, uncertain) in [
+            (
+                256,
+                "User canceled out of wait loop for reply. (-1711)",
+                true,
+            ),
+            (256, "UTM got an error: AppleEvent timed out. (-1712)", true),
+            (256, "Reply has not yet arrived. (-1718)", true),
+            (256, "Connection is invalid. (-609)", true),
+            (256, "Application is not running. (-600)", true),
+            (9, "", true),
+            (256, "Unexpected process failure", true),
+            (256, "Not authorized to send Apple events. (-1743)", false),
+            (256, "Keine Berechtigung fuer Apple-Events. (-1743)", false),
+            (
+                256,
+                "UTM got an error: Invalid configuration. (-10000)",
+                false,
+            ),
+            (256, "syntax error: Expected end of line. (-2741)", false),
+        ] {
+            let error = applescript_output(std::process::Output {
+                status: std::process::ExitStatus::from_raw(status),
+                stdout: Vec::new(),
+                stderr: stderr.as_bytes().to_vec(),
+            })
+            .unwrap_err();
+            if stderr.ends_with("(-1743)") {
+                assert!(error
+                    .to_string()
+                    .contains("System Settings > Privacy & Security > Automation"));
+            }
+            assert_eq!(
+                matches!(error, Error::UtmOperationUncertain(_)),
+                uncertain,
+                "{stderr}"
+            );
+        }
+        assert_eq!(
+            applescript_output(std::process::Output {
+                status: std::process::ExitStatus::from_raw(0),
+                stdout: b"vm-id\n".to_vec(),
+                stderr: Vec::new(),
+            })
+            .unwrap(),
+            "vm-id"
+        );
     }
 
     #[tokio::test]

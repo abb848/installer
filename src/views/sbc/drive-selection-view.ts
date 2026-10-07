@@ -372,8 +372,8 @@ export class DriveSelectionView extends LitElement {
 
     if (this._drives.length === 0) {
       const emptyText = this._isMiniPCFlow()
-        ? "Connect your drive via USB adapter and click refresh."
-        : "Insert an SD card or USB drive and click refresh.";
+        ? "Connect your drive using a USB adapter and select Refresh."
+        : "Insert an SD card or USB drive and select Refresh.";
 
       return html`
         <div class="empty-state">

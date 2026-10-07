@@ -32,8 +32,8 @@ test.describe("UTM Installation Flow", () => {
   test("shows step indicator with all steps", async ({ page }) => {
     const stepIndicator = page.locator("step-indicator");
     await expect(stepIndicator).toBeVisible();
-    // Should show: Check Requirements, Configure VM, Confirm, Install, Done
-    await expect(stepIndicator).toContainText("Check Requirements");
+    // Should show: Check requirements, Configure VM, Confirm, Install, Done
+    await expect(stepIndicator).toContainText("Check requirements");
     await expect(stepIndicator).toContainText("Configure VM");
     await expect(stepIndicator).toContainText("Confirm");
     await expect(stepIndicator).toContainText("Install");

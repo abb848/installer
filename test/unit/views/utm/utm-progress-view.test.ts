@@ -162,6 +162,38 @@ describe("utm-progress-view", () => {
     expect(resizeAttempts).to.equal(2);
   });
 
+  it("shows Automation settings advice from a Tauri string rejection", async () => {
+    wizardState.setSelection("utmImagePath", "/tmp/haos.qcow2");
+    const message =
+      "UTM error: Home Assistant Installer is not allowed to control UTM. Open System Settings > Privacy & Security > Automation, enable UTM under Home Assistant Installer, then try again.";
+    mockTauriIpc(() => Promise.reject(message));
+
+    const el = mount();
+    await oneEvent(el, "install-error");
+    await el.updateComplete;
+
+    expect(el.hasError).to.be.true;
+    expect(
+      el.shadowRoot!.querySelector(".error-message")!.textContent
+    ).to.equal(message);
+    expect(wizardState.getState().selections.vmId).to.be.undefined;
+  });
+
+  for (const rejection of [undefined, {}, "", "   "]) {
+    it(`shows a fallback for an unusable rejection: ${JSON.stringify(rejection)}`, async () => {
+      wizardState.setSelection("utmImagePath", "/tmp/haos.qcow2");
+      mockTauriIpc(() => Promise.reject(rejection));
+
+      const el = mount();
+      await oneEvent(el, "install-error");
+      await el.updateComplete;
+
+      expect(el.shadowRoot!.textContent).to.contain(
+        "Failed to create virtual machine"
+      );
+    });
+  }
+
   it("asks the VM for its address again on a retry", async () => {
     // A previous attempt found the VM at an address it no longer has
     wizardState.setSelection("utmImagePath", "/tmp/haos.qcow2");

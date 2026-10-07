@@ -41,6 +41,7 @@
       "icons/icon.ico"
     ],
     "macOS": {
+      "entitlements": "macos/Entitlements.plist",
       "infoPlist": "macos/Info.plist"
     }
   }

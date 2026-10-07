@@ -530,7 +530,9 @@ export class UtmProgressView extends LitElement {
       this._error =
         error instanceof Error
           ? error.message
-          : "Failed to create virtual machine";
+          : typeof error === "string" && error.trim()
+            ? error
+            : "Failed to create virtual machine";
       this.dispatchEvent(
         new CustomEvent("install-error", {
           bubbles: true,

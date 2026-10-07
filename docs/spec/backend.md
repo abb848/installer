@@ -145,6 +145,16 @@ pub async fn extract_image(
 
 ### Disk Flashing
 
+The desktop app accepts only one flash at a time, rejecting another request
+before fetching release information or downloading an image. An owned task keeps
+the guard until download, extraction, writing, verification, and cleanup finish,
+even if the IPC caller disconnects. Disconnecting does not cancel the flash;
+job cancellation and window-close protection are tracked separately in #143.
+
+The single-instance plugin restores and focuses the existing window on another
+launch. This is not an exclusive lock against other disk-writing applications.
+Windows device sharing and volume locking remain separate work in #132.
+
 ```rust
 // crates/hai-core/src/flash.rs
 

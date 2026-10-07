@@ -21,6 +21,10 @@ mod imp;
 #[path = "disk/windows/mod.rs"]
 mod imp;
 
+#[cfg(any(target_os = "windows", test))]
+#[path = "disk/windows/elevation.rs"]
+mod windows_elevation;
+
 // Pure logic behind the macOS write path, compiled under `test` on every
 // platform so the Linux-only backend test job covers it without shipping it
 // in non-macOS builds.
@@ -172,6 +176,14 @@ async fn write_image<P: ProgressCallback>(
 }
 
 impl DeviceBackend for Backend {
+    fn check_write_privileges(&self) -> Result<()> {
+        #[cfg(target_os = "windows")]
+        return windows_elevation::check_write_privileges();
+
+        #[cfg(not(target_os = "windows"))]
+        Ok(())
+    }
+
     async fn list_devices(&self) -> Result<Vec<BlockDevice>> {
         list_devices().await
     }
@@ -190,6 +202,12 @@ impl DeviceBackend for Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn write_privileges_are_authorized_later_off_windows() {
+        Backend.check_write_privileges().unwrap();
+    }
 
     #[test]
     #[cfg(any(target_os = "linux", target_os = "macos"))]

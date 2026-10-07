@@ -82,6 +82,12 @@ pub trait ReleaseSource {
 /// Neither checks that the target is safe to overwrite, that is the caller's
 /// responsibility.
 pub trait DeviceBackend {
+    /// Check process privileges before preparing an image, without opening a drive.
+    /// Defaults to success for backends that authorize access during `write_image`.
+    fn check_write_privileges(&self) -> Result<()> {
+        Ok(())
+    }
+
     /// List all block devices on the system.
     async fn list_devices(&self) -> Result<Vec<BlockDevice>>;
 

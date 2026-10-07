@@ -144,6 +144,10 @@ where
 {
     let start_time = std::time::Instant::now();
 
+    backend
+        .check_write_privileges()
+        .map_err(|e| e.to_string())?;
+
     // Send initial progress
     callback.on_progress(FlashProgress {
         stage: FlashStage::Downloading,
@@ -658,6 +662,116 @@ mod tests {
         let devices = [flash_target("/dev/sdb", true)];
         let unknown = ExpectedDevice::default();
         assert!(find_flash_target(&devices, "/dev/sdb", &unknown).is_err());
+    }
+
+    struct PreflightBackend {
+        check: fn() -> hai_core::Result<()>,
+    }
+
+    impl DeviceBackend for PreflightBackend {
+        fn check_write_privileges(&self) -> hai_core::Result<()> {
+            (self.check)()
+        }
+
+        async fn list_devices(&self) -> hai_core::Result<Vec<BlockDevice>> {
+            panic!("must not enumerate devices");
+        }
+
+        async fn write_image<P: ProgressCallback>(
+            &self,
+            _: &std::path::Path,
+            _: &str,
+            _: bool,
+            _: &P,
+        ) -> hai_core::Result<()> {
+            panic!("must not write a drive");
+        }
+    }
+
+    impl ReleaseSource for PreflightBackend {
+        async fn get_device_manifest(&self) -> hai_core::Result<DeviceManifest> {
+            panic!("must not fetch a manifest");
+        }
+
+        async fn get_haos_release(&self, _: &str) -> hai_core::Result<HaosRelease> {
+            panic!("must not fetch a release by version");
+        }
+
+        async fn get_latest_haos_release_for_board(
+            &self,
+            _: &str,
+        ) -> hai_core::Result<HaosRelease> {
+            Err(hai_core::Error::InvalidConfig(
+                "release lookup reached".into(),
+            ))
+        }
+
+        async fn download_image<P: ProgressCallback>(
+            &self,
+            _: &str,
+            _: &std::path::Path,
+            _: &P,
+        ) -> hai_core::Result<()> {
+            panic!("must not download an image");
+        }
+
+        async fn extract_xz<P: ProgressCallback>(
+            &self,
+            _: &std::path::Path,
+            _: &std::path::Path,
+            _: &P,
+        ) -> hai_core::Result<()> {
+            panic!("must not extract an image");
+        }
+
+        fn cache_dir(&self) -> hai_core::Result<std::path::PathBuf> {
+            panic!("must not create a cache directory");
+        }
+    }
+
+    struct NoProgressExpected;
+
+    impl ProgressCallback for NoProgressExpected {
+        fn on_progress(&self, _: FlashProgress) {
+            panic!("must not report progress before privilege preflight succeeds");
+        }
+    }
+
+    #[tokio::test]
+    async fn privilege_failures_abort_before_progress_or_release_lookup() {
+        fn not_elevated() -> hai_core::Result<()> {
+            Err(hai_core::Error::PermissionDenied(
+                "Run as administrator".into(),
+            ))
+        }
+        fn query_failed() -> hai_core::Result<()> {
+            Err(hai_core::Error::Io(std::io::Error::other(
+                "token query failed",
+            )))
+        }
+        async fn attempt(
+            check: fn() -> hai_core::Result<()>,
+            callback: &impl ProgressCallback,
+        ) -> Result<FlashResult, String> {
+            let request = FlashRequest {
+                device_id: "unused-device".into(),
+                board: "rpi5-64".into(),
+                verify: true,
+                expected_device: ExpectedDevice::default(),
+            };
+            run_flash(&PreflightBackend { check }, &request, callback).await
+        }
+
+        for check in [not_elevated, query_failed] {
+            let err = attempt(check, &NoProgressExpected).await.unwrap_err();
+            assert_eq!(err, check().unwrap_err().to_string());
+        }
+
+        // An authorized attempt reaches release lookup without real network I/O.
+        let retry = attempt(|| Ok(()), &hai_core::NoOpProgress)
+            .await
+            .unwrap_err();
+        assert!(retry.contains("release lookup reached"), "{retry}");
     }
 }
 

@@ -33,6 +33,9 @@ export default {
     esbuildPlugin({
       ts: true,
       tsconfig: "./tsconfig.test.json",
+      // Vite sets this; the unit tests run through esbuild instead, and use
+      // the same browser mock as the dev server.
+      define: { "import.meta.env.DEV": "true" },
     }),
   ],
   testFramework: {

@@ -18,8 +18,16 @@ import type {
 } from "./types.js";
 
 /**
- * Check if we're running in a browser without Tauri (e.g., Playwright tests)
+ * Whether to answer with mock data because there's no Tauri backend, as in
+ * the Vite dev server that the E2E tests drive.
+ *
+ * Only in development builds: the mock reports a successful flash without
+ * writing anything, so a production build must never fall back to it. The
+ * check sits at each call site rather than in here, so production builds see
+ * `if (false)` and Vite drops the mock branches and the fixture data.
  */
+const MOCK_ALLOWED = import.meta.env.DEV;
+
 function isBrowserOnly(): boolean {
   return typeof window !== "undefined" && !("__TAURI__" in window);
 }
@@ -35,7 +43,7 @@ import {
  * List available block devices (SD cards, USB drives, etc.)
  */
 export async function listBlockDevices(): Promise<BlockDevice[]> {
-  if (isBrowserOnly()) {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
     return MOCK_BLOCK_DEVICES;
   }
   return invoke<BlockDevice[]>("list_block_devices");
@@ -50,7 +58,7 @@ export async function flashImage(
   request: FlashRequest,
   onProgress: (progress: FlashProgress) => void
 ): Promise<FlashResult> {
-  if (isBrowserOnly()) {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
     // Simulate flash progress in browser-only mode
     return simulateFlashProgress(onProgress);
   }
@@ -180,7 +188,7 @@ async function simulateFlashProgress(
  * Get the device manifest.
  */
 export async function getManifest(): Promise<DeviceManifest> {
-  if (isBrowserOnly()) {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
     return MOCK_MANIFEST;
   }
   return invoke<DeviceManifest>("get_manifest");
@@ -204,7 +212,7 @@ export function formatBytes(bytes: number): string {
  * @param version Optional specific version to fetch (defaults to latest stable)
  */
 export async function getHaosRelease(version?: string): Promise<HaosRelease> {
-  if (isBrowserOnly()) {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
     return MOCK_HAOS_RELEASE;
   }
   return invoke<HaosRelease>("get_haos_release", { version });
@@ -218,7 +226,7 @@ export async function getHaosRelease(version?: string): Promise<HaosRelease> {
  * Get system information (CPU cores and memory) for VM configuration limits.
  */
 export async function getSystemInfo(): Promise<SystemInfo> {
-  if (isBrowserOnly()) {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
     return {
       cpu_cores: 10,
       memory_mb: 32768, // 32 GB
@@ -235,7 +243,7 @@ export async function getSystemInfo(): Promise<SystemInfo> {
  * Check if UTM is installed and get its status.
  */
 export async function checkUtmStatus(): Promise<UtmStatus> {
-  if (isBrowserOnly()) {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
     // Mock: UTM is installed
     return {
       installed: true,
@@ -254,7 +262,7 @@ export async function checkUtmStatus(): Promise<UtmStatus> {
 export async function downloadUtmImage(
   onProgress: (progress: FlashProgress) => void
 ): Promise<string> {
-  if (isBrowserOnly()) {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
     // Simulate download progress in browser-only mode
     return simulateUtmDownload(onProgress);
   }
@@ -334,7 +342,7 @@ async function simulateUtmDownload(
  * @returns The VM ID if successful
  */
 export async function createUtmVm(config: UtmVmConfig): Promise<string> {
-  if (isBrowserOnly()) {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
     // Simulate VM creation
     await new Promise((resolve) => setTimeout(resolve, 2000));
     return "mock-vm-id-12345";
@@ -347,7 +355,7 @@ export async function createUtmVm(config: UtmVmConfig): Promise<string> {
  * @param vmId The VM ID to start
  */
 export async function startUtmVm(vmId: string): Promise<void> {
-  if (isBrowserOnly()) {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
     await new Promise((resolve) => setTimeout(resolve, 500));
     return;
   }
@@ -363,7 +371,7 @@ export async function resizeUtmVmDisk(
   vmId: string,
   sizeGb: number
 ): Promise<void> {
-  if (isBrowserOnly()) {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
     await new Promise((resolve) => setTimeout(resolve, 200));
     return;
   }
@@ -384,7 +392,7 @@ export interface VmStatusInfo {
  * @returns VM status and IP address
  */
 export async function getUtmVmStatus(vmId: string): Promise<VmStatusInfo> {
-  if (isBrowserOnly()) {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
     return {
       status: "started",
       ip_address: "192.168.1.100",
@@ -399,7 +407,7 @@ export async function getUtmVmStatus(vmId: string): Promise<VmStatusInfo> {
  * @returns True if the webserver is reachable on port 80
  */
 export async function checkHaReady(ipAddress: string): Promise<boolean> {
-  if (isBrowserOnly()) {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
     return true;
   }
   return invoke<boolean>("check_ha_ready", { ipAddress });
@@ -411,7 +419,7 @@ export async function checkHaReady(ipAddress: string): Promise<boolean> {
  * @returns True if manifest.json returns 200 OK
  */
 export async function checkHaUpdated(ipAddress: string): Promise<boolean> {
-  if (isBrowserOnly()) {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
     return true;
   }
   return invoke<boolean>("check_ha_updated", { ipAddress });
@@ -432,7 +440,7 @@ let mockProxmoxSession: ProxmoxSession | null = null;
 export async function proxmoxConnect(
   credentials: ProxmoxCredentials
 ): Promise<ProxmoxSession> {
-  if (isBrowserOnly()) {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
     // Simulate connection delay
     await new Promise((resolve) => setTimeout(resolve, 1500));
     mockProxmoxSession = {
@@ -453,7 +461,7 @@ export async function proxmoxConnect(
 export async function proxmoxListNodes(
   session: ProxmoxSession
 ): Promise<ProxmoxNode[]> {
-  if (isBrowserOnly()) {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
     await new Promise((resolve) => setTimeout(resolve, 500));
     return [
       {
@@ -485,7 +493,7 @@ export async function proxmoxListStorage(
   session: ProxmoxSession,
   node: string
 ): Promise<ProxmoxStorage[]> {
-  if (isBrowserOnly()) {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
     await new Promise((resolve) => setTimeout(resolve, 500));
     return [
       {
@@ -517,7 +525,7 @@ export async function proxmoxListStorage(
 export async function proxmoxGetNextVmId(
   session: ProxmoxSession
 ): Promise<number> {
-  if (isBrowserOnly()) {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
     await new Promise((resolve) => setTimeout(resolve, 200));
     return 100;
   }
@@ -536,7 +544,7 @@ export async function proxmoxCreateVm(
   config: ProxmoxVmConfig,
   onProgress: (progress: FlashProgress) => void
 ): Promise<ProxmoxVmResult> {
-  if (isBrowserOnly()) {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
     return simulateProxmoxInstall(config, onProgress);
   }
 

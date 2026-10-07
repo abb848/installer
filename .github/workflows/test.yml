@@ -53,6 +53,17 @@ jobs:
       - name: Check formatting
         run: npm run format:check
 
+      # The browser mock reports a successful flash without writing anything,
+      # so it may only exist in development builds. The unit and E2E tests
+      # all run in development mode and can't see this; check the real build.
+      - name: Check the production build has no browser mock
+        run: |
+          npm run build
+          if grep -l -E '__TAURI__|mock-ticket' dist/assets/*.js; then
+            echo "::error::The production bundle contains the browser mock"
+            exit 1
+          fi
+
   lint-backend:
     name: Lint Backend (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

@@ -3,7 +3,7 @@
 //! Used by the VM flows to size a new VM and to poll a freshly started
 //! Home Assistant instance.
 
-use crate::error::{Error, Result};
+use crate::error::Result;
 use crate::types::SystemInfo;
 use crate::{Backend, HostBackend};
 use std::time::Duration;
@@ -38,7 +38,7 @@ fn system_info() -> Result<SystemInfo> {
 
     #[cfg(not(target_os = "macos"))]
     {
-        Err(Error::UnsupportedPlatform(
+        Err(crate::error::Error::UnsupportedPlatform(
             "Host system info is only implemented on macOS".to_string(),
         ))
     }
@@ -48,6 +48,12 @@ fn system_info() -> Result<SystemInfo> {
 async fn check_ha_ready(ip: &str) -> bool {
     use tokio::net::TcpStream;
     use tokio::time::timeout;
+
+    // An empty host isn't an error everywhere: Windows resolves ":80" to the
+    // local machine, so any local web server would pass for Home Assistant.
+    if ip.trim().is_empty() {
+        return false;
+    }
 
     let addr = format!("{}:80", ip);
     matches!(

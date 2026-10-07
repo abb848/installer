@@ -128,8 +128,7 @@ home-assistant-installer/
 │                   └── utm/
 │
 ├── docs/
-│   ├── spec/                     # This documentation
-│   └── project.md                # Roadmap
+│   └── spec/                     # This documentation
 ├── test/
 │   ├── unit/                     # Frontend unit tests
 │   └── e2e/                      # Playwright E2E tests

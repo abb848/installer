@@ -33,7 +33,6 @@ This architecture enables future additions like a TUI installer for live USB env
 
 ## Quick Links
 
-- [Project Roadmap](../project.md) - Phased implementation plan
 - [Contributing Guide](./contributing.md#contributing-guide)
 
 ## Target Platforms

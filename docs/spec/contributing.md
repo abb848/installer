@@ -679,16 +679,15 @@ hai/
 │   ├── copilot-review.yml
 │   └── claude-instructions.md
 ├── docs/
-│   ├── spec/
-│   │   ├── README.md
-│   │   ├── architecture.md
-│   │   ├── ui-design.md
-│   │   ├── user-flows.md
-│   │   ├── backend.md
-│   │   ├── testing.md
-│   │   ├── ci-cd.md
-│   │   └── contributing.md
-│   └── project.md
+│   └── spec/
+│       ├── README.md
+│       ├── architecture.md
+│       ├── ui-design.md
+│       ├── user-flows.md
+│       ├── backend.md
+│       ├── testing.md
+│       ├── ci-cd.md
+│       └── contributing.md
 ├── src-tauri/
 │   └── ...
 ├── src/

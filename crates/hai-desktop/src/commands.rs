@@ -4,6 +4,7 @@
 //! It handles the bridge between Tauri's Channel<T> and hai-core's ProgressCallback trait.
 
 use crate::backend::Backend;
+use crate::flash_state::FlashState;
 use hai_core::{
     BlockDevice, DeviceBackend, DeviceManifest, ExpectedDevice, FlashProgress, FlashRequest,
     FlashStage, HaosRelease, HostBackend, ImageFormat, ProgressCallback, ProxmoxBackend,
@@ -100,9 +101,14 @@ fn find_flash_target<'a>(
 pub async fn flash_image(
     request: FlashRequest,
     progress_channel: Channel<FlashProgress>,
+    state: tauri::State<'_, FlashState>,
 ) -> Result<FlashResult, String> {
-    let callback = TauriProgressCallback::new(&progress_channel);
-    run_flash(&Backend, &request, &callback).await
+    state
+        .run(async move {
+            let callback = TauriProgressCallback::new(&progress_channel);
+            run_flash(&Backend, &request, &callback).await
+        })
+        .await
 }
 
 /// The message for a failed write, as the frontend shows it.

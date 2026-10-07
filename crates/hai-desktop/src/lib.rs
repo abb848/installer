@@ -5,6 +5,10 @@
 
 mod backend;
 mod commands;
+mod flash_state;
+
+#[cfg(desktop)]
+use tauri::Manager;
 
 use commands::{
     check_for_updates, check_ha_ready, check_ha_updated, check_utm_status, create_utm_vm,
@@ -16,7 +20,20 @@ use commands::{
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+
+    // Register first so a second launch exits before initializing other plugins.
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _, _| {
+        if let Some(window) = app.get_webview_window("main") {
+            let _ = window.show();
+            let _ = window.unminimize();
+            let _ = window.set_focus();
+        }
+    }));
+
+    builder
+        .manage(flash_state::FlashState::default())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             list_block_devices,

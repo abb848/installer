@@ -225,7 +225,7 @@ export class ProxmoxConnectView extends LitElement {
       !this._connecting &&
       !this._connected
     ) {
-      this.connect();
+      void this.connect();
     }
   }
 

@@ -235,7 +235,7 @@ export class DriveSelectionView extends LitElement {
     // the same device and drops it if it is not.
     this._selectedDriveId = wizardState.getState().selections.drive ?? null;
 
-    this._loadDrives();
+    void this._loadDrives();
   }
 
   private async _loadDrives() {

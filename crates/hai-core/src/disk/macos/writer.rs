@@ -881,10 +881,12 @@ mod tests {
 
     /// Without the `drop(command)` in `spawn_and_receive_descriptor` this
     /// hangs: the socket never reaches EOF.
+    ///
+    /// No stdin payload: `true` never reads it and can exit before the write,
+    /// which then fails with EPIPE and makes the handshake `Failed` at random.
     #[test]
     fn test_spawn_and_receive_descriptor_returns_when_the_child_sends_nothing() {
-        let (handshake, output) =
-            spawn_and_receive_descriptor("/usr/bin/true", &[], b"ignored").unwrap();
+        let (handshake, output) = spawn_and_receive_descriptor("/usr/bin/true", &[], b"").unwrap();
 
         assert!(output.status.success());
         assert!(matches!(handshake, Handshake::NoDescriptor));

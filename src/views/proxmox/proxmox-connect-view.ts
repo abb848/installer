@@ -2,6 +2,9 @@ import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { proxmoxConnect } from "../../api/commands.js";
 import { wizardState } from "../../state/wizard-state.js";
+import "@home-assistant/webawesome/dist/components/callout/callout.js";
+import type WaInput from "@home-assistant/webawesome/dist/components/input/input.js";
+import "@home-assistant/webawesome/dist/components/input/input.js";
 
 @customElement("proxmox-connect-view")
 export class ProxmoxConnectView extends LitElement {
@@ -47,49 +50,8 @@ export class ProxmoxConnectView extends LitElement {
       }
     }
 
-    .form-group {
-      display: flex;
-      flex-direction: column;
-      gap: 0.5rem;
-    }
-
-    .form-label {
-      font-size: 0.875rem;
-      font-weight: 500;
-      color: var(--ha-text-color, #212121);
-    }
-
-    .form-input {
-      padding: 0.75rem;
-      font-size: 1rem;
-      color: var(--ha-text-color, #212121);
-      background-color: var(--ha-background-color, #ffffff);
-      border: 1px solid var(--ha-border-color, #e0e0e0);
-      border-radius: 8px;
-      outline: none;
-      transition: border-color 0.2s ease;
-    }
-
-    .form-input:focus {
-      border-color: var(--ha-primary-color, #03a9f4);
-    }
-
-    .form-input::placeholder {
-      color: var(--ha-secondary-text-color, #9e9e9e);
-    }
-
-    @media (prefers-color-scheme: dark) {
-      .form-input {
-        background-color: var(--ha-background-color, #121212);
-        border-color: var(--ha-border-color, #333333);
-        color: var(--ha-text-color, #e0e0e0);
-      }
-    }
-
-    .form-hint {
-      font-size: 0.75rem;
-      color: var(--ha-secondary-text-color, #9e9e9e);
-      margin: 0;
+    wa-callout {
+      padding: 0;
     }
 
     .status-row {
@@ -225,20 +187,20 @@ export class ProxmoxConnectView extends LitElement {
   }
 
   private _onServerUrlChange(e: Event) {
-    const input = e.target as HTMLInputElement;
-    this._serverUrl = input.value;
+    const input = e.target as WaInput;
+    this._serverUrl = input.value ?? "";
     this._resetConnection();
   }
 
   private _onUsernameChange(e: Event) {
-    const input = e.target as HTMLInputElement;
-    this._username = input.value;
+    const input = e.target as WaInput;
+    this._username = input.value ?? "";
     this._resetConnection();
   }
 
   private _onPasswordChange(e: Event) {
-    const input = e.target as HTMLInputElement;
-    this._password = input.value;
+    const input = e.target as WaInput;
+    this._password = input.value ?? "";
     this._resetConnection();
   }
 
@@ -251,7 +213,18 @@ export class ProxmoxConnectView extends LitElement {
   }
 
   private _onKeyDown(e: KeyboardEvent) {
-    if (e.key === "Enter" && !this._connecting && !this._connected) {
+    // wa-input's own buttons (the password toggle) send their keydown through
+    // the host too, and Enter there should reveal the password, not connect.
+    // Enter that confirms an input method composition isn't a submit either.
+    const fromTextField = e.composedPath()[0] instanceof HTMLInputElement;
+
+    if (
+      e.key === "Enter" &&
+      fromTextField &&
+      !e.isComposing &&
+      !this._connecting &&
+      !this._connected
+    ) {
       this.connect();
     }
   }
@@ -264,53 +237,56 @@ export class ProxmoxConnectView extends LitElement {
       <div class="connect-card">
         ${this._error ? this._renderError() : ""}
 
-        <div class="form-group">
-          <label class="form-label" for="server-url">Server URL</label>
-          <input
-            type="url"
-            id="server-url"
-            class="form-input"
-            .value=${this._serverUrl}
-            @input=${this._onServerUrlChange}
-            @keydown=${this._onKeyDown}
-            placeholder="https://192.168.1.100:8006"
-            ?disabled=${this._connecting}
-          />
-          <p class="form-hint">
-            Full URL to your Proxmox server (e.g., https://192.168.1.100:8006)
-          </p>
-        </div>
+        <wa-input
+          type="url"
+          input-id="server-url"
+          label="Server URL"
+          hint="Full URL to your Proxmox server (e.g., https://192.168.1.100:8006)"
+          placeholder="https://192.168.1.100:8006"
+          autocomplete="url"
+          autocapitalize="off"
+          autocorrect="off"
+          .spellcheck=${false}
+          .value=${this._serverUrl}
+          @input=${this._onServerUrlChange}
+          @keydown=${this._onKeyDown}
+          ?disabled=${this._connecting}
+        ></wa-input>
 
-        <div class="form-group">
-          <label class="form-label" for="username">Username</label>
-          <input
-            type="text"
-            id="username"
-            class="form-input"
-            .value=${this._username}
-            @input=${this._onUsernameChange}
-            @keydown=${this._onKeyDown}
-            placeholder="root@pam"
-            ?disabled=${this._connecting}
-          />
-          <p class="form-hint">
-            Usually root@pam for the default admin account
-          </p>
-        </div>
+        <wa-input
+          type="text"
+          input-id="username"
+          label="Username"
+          hint="Usually root@pam for the default admin account"
+          placeholder="root@pam"
+          autocomplete="username"
+          autocapitalize="off"
+          autocorrect="off"
+          .spellcheck=${false}
+          .value=${this._username}
+          @input=${this._onUsernameChange}
+          @keydown=${this._onKeyDown}
+          ?disabled=${this._connecting}
+        ></wa-input>
 
-        <div class="form-group">
-          <label class="form-label" for="password">Password</label>
-          <input
-            type="password"
-            id="password"
-            class="form-input"
-            .value=${this._password}
-            @input=${this._onPasswordChange}
-            @keydown=${this._onKeyDown}
-            placeholder="Enter your password"
-            ?disabled=${this._connecting}
-          />
-        </div>
+        <wa-input
+          type="password"
+          input-id="password"
+          label="Password"
+          placeholder="Enter your password"
+          autocomplete="current-password"
+          password-toggle
+          .value=${this._password}
+          @input=${this._onPasswordChange}
+          @keydown=${this._onKeyDown}
+          ?disabled=${this._connecting}
+        ></wa-input>
+
+        <wa-callout variant="neutral" appearance="plain" size="s">
+          Proxmox uses a self-signed certificate by default, so the installer
+          accepts the server's certificate without checking it. The connection
+          is encrypted, but only connect on a network you trust.
+        </wa-callout>
       </div>
     `;
   }

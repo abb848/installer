@@ -205,6 +205,9 @@ pub struct HaosImage {
     pub download_url: String,
     /// File size in bytes
     pub size: u64,
+    /// GitHub's digest of the compressed asset. Required for installation.
+    #[serde(default)]
+    pub digest: Option<String>,
 }
 
 /// GitHub release asset from API
@@ -213,6 +216,7 @@ pub struct GitHubAsset {
     pub name: String,
     pub size: u64,
     pub browser_download_url: String,
+    pub digest: Option<String>,
 }
 
 /// GitHub release from API
@@ -616,12 +620,14 @@ mod tests {
                     board: "rpi5-64".to_string(),
                     format: ImageFormat::Raw,
                     download_url: "https://example.com/haos-rpi5-16.3.img.xz".to_string(),
+                    digest: None,
                     size: 500000000,
                 },
                 HaosImage {
                     board: "generic-x86-64".to_string(),
                     format: ImageFormat::Raw,
                     download_url: "https://example.com/haos-generic-x86-16.3.img.xz".to_string(),
+                    digest: None,
                     size: 600000000,
                 },
             ],
@@ -991,12 +997,14 @@ mod tests {
                     board: "rpi5-64".to_string(),
                     format: ImageFormat::Raw,
                     download_url: "https://example.com/rpi5.img.xz".to_string(),
+                    digest: None,
                     size: 100,
                 },
                 HaosImage {
                     board: "green".to_string(),
                     format: ImageFormat::Raw,
                     download_url: "https://example.com/green.img.xz".to_string(),
+                    digest: None,
                     size: 200,
                 },
             ],
@@ -1016,6 +1024,7 @@ mod tests {
                 board: "rpi5-64".to_string(),
                 format: ImageFormat::Raw,
                 download_url: "https://example.com/rpi5.img.xz".to_string(),
+                digest: None,
                 size: 100,
             }],
         };
@@ -1035,12 +1044,14 @@ mod tests {
                     board: "generic-aarch64".to_string(),
                     format: ImageFormat::Qcow2,
                     download_url: "https://example.com/aarch64.qcow2.xz".to_string(),
+                    digest: None,
                     size: 300,
                 },
                 HaosImage {
                     board: "generic-aarch64".to_string(),
                     format: ImageFormat::Raw,
                     download_url: "https://example.com/aarch64.img.xz".to_string(),
+                    digest: None,
                     size: 200,
                 },
             ],

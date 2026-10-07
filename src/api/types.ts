@@ -136,6 +136,8 @@ export interface HaosImage {
   download_url: string;
   /** File size in bytes */
   size: number;
+  /** GitHub digest of the compressed asset; required for installation. */
+  digest?: string | null;
 }
 
 // ============================================================================

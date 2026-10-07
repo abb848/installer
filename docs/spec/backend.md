@@ -118,6 +118,25 @@ pub async fn list_internal_devices() -> Result<Vec<BlockDevice>>;
 
 ### Image Download
 
+Installation requires a `sha256:` digest with exactly 64 hexadecimal digits
+from the selected asset in GitHub's release API response. The downloader hashes
+the compressed bytes while streaming them to a private temporary file and only
+publishes the file after a match. Missing, null, malformed, and unsupported
+digests stop installation before download; a mismatch stops before extraction,
+drive writing, or VM import. There is no fallback to an XZ checksum or a guessed
+download URL. Older releases without a GitHub digest cannot be installed.
+
+The same policy applies to raw images and UTM/Proxmox qcow2 images, selected from
+the version for their board in `stable.json`. The `is_cached` helper hashes the
+full compressed file, but installation flows currently always download again.
+GitHub metadata obtained over HTTPS is the trust source; this does not verify a
+publisher signature or protect against compromised GitHub release metadata.
+
+Normal errors and cancellation remove the unverified temporary file. Quitting
+the app or a crash during a download can leave `.haos-download-*.part` files in the
+cache. The existing `cleanup_cache` helper recognizes them, but automatic startup recovery
+and ownership across concurrent installations remain separate lifecycle work.
+
 ```rust
 // crates/hai-core/src/download.rs
 

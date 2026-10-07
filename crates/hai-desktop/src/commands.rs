@@ -196,7 +196,7 @@ where
     let compressed_path = temporary_image.archive_path();
 
     backend
-        .download_image(&image.download_url, &compressed_path, callback)
+        .download_image(image, &compressed_path, callback)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -357,7 +357,7 @@ where
     let compressed_path = temporary_image.archive_path();
 
     backend
-        .download_image(&image.download_url, &compressed_path, callback)
+        .download_image(image, &compressed_path, callback)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -768,7 +768,7 @@ mod tests {
 
         async fn download_image<P: ProgressCallback>(
             &self,
-            _: &str,
+            _: &hai_core::HaosImage,
             _: &std::path::Path,
             _: &P,
         ) -> hai_core::Result<()> {
@@ -863,7 +863,7 @@ mod mock_tests {
         }
         async fn download_image<P: ProgressCallback>(
             &self,
-            _: &str,
+            _: &hai_core::HaosImage,
             dest: &std::path::Path,
             _: &P,
         ) -> hai_core::Result<()> {
@@ -1156,6 +1156,90 @@ mod mock_tests {
                 model: device.model,
                 vendor: device.vendor,
             },
+        }
+    }
+
+    struct DigestFailureBackend {
+        cache: tempfile::TempDir,
+    }
+
+    impl ReleaseSource for DigestFailureBackend {
+        async fn get_device_manifest(&self) -> hai_core::Result<hai_core::DeviceManifest> {
+            unreachable!()
+        }
+
+        async fn get_haos_release(&self, _: &str) -> hai_core::Result<HaosRelease> {
+            unreachable!("must use the selected board's release")
+        }
+
+        async fn get_latest_haos_release_for_board(
+            &self,
+            board: &str,
+        ) -> hai_core::Result<HaosRelease> {
+            BackendMock.get_latest_haos_release_for_board(board).await
+        }
+
+        async fn download_image<P: ProgressCallback>(
+            &self,
+            image: &hai_core::HaosImage,
+            _: &std::path::Path,
+            _: &P,
+        ) -> hai_core::Result<()> {
+            assert!(image.download_url.contains(&image.board));
+            Err(hai_core::Error::ChecksumMismatch {
+                expected: "published digest".into(),
+                actual: "tampered digest".into(),
+            })
+        }
+
+        async fn extract_xz<P: ProgressCallback>(
+            &self,
+            _: &std::path::Path,
+            _: &std::path::Path,
+            _: &P,
+        ) -> hai_core::Result<()> {
+            panic!("unverified image reached extraction")
+        }
+
+        fn cache_dir(&self) -> hai_core::Result<std::path::PathBuf> {
+            Ok(self.cache.path().to_path_buf())
+        }
+    }
+
+    impl DeviceBackend for DigestFailureBackend {
+        async fn list_devices(&self) -> hai_core::Result<Vec<BlockDevice>> {
+            panic!("unverified image reached device preparation")
+        }
+
+        async fn write_image<P: ProgressCallback>(
+            &self,
+            _: &std::path::Path,
+            _: &str,
+            _: bool,
+            _: &P,
+        ) -> hai_core::Result<()> {
+            panic!("unverified image reached the writer")
+        }
+    }
+
+    #[tokio::test]
+    async fn digest_failure_stops_flash_and_utm_before_extraction() {
+        let backend = DigestFailureBackend {
+            cache: tempfile::tempdir().unwrap(),
+        };
+        let error = run_flash(
+            &backend,
+            &request("mock-sd-card-32gb", "rpi5-64").await,
+            &NoOpProgress,
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("Checksum mismatch"));
+        for board in ["generic-aarch64", "generic-x86-64"] {
+            let error = run_utm_download(&backend, board, &NoOpProgress)
+                .await
+                .unwrap_err();
+            assert!(error.contains("Checksum mismatch"));
         }
     }
 

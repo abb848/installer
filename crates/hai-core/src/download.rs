@@ -11,6 +11,7 @@ use crate::types::{
 use crate::{Backend, ProgressCallback, ReleaseSource};
 use directories::ProjectDirs;
 use futures_util::StreamExt;
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
@@ -347,9 +348,24 @@ pub async fn is_cached(image: &HaosImage) -> Result<bool> {
         return Ok(false);
     }
 
-    // Size matches. A truncated or corrupt cache entry is caught later when the
-    // `.xz` container fails its integrity check during extraction.
-    Ok(true)
+    let expected = expected_sha256(image)?;
+    tokio::task::spawn_blocking(move || {
+        let mut file = std::fs::File::open(cache_path)?;
+        let mut hasher = Sha256::new();
+        use std::io::Read;
+        let mut buffer = [0; 64 * 1024];
+        loop {
+            let count = file.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            hasher.update(&buffer[..count]);
+        }
+        let actual: [u8; 32] = hasher.finalize().into();
+        Ok(actual == expected)
+    })
+    .await
+    .map_err(|e| Error::VerificationFailed(e.to_string()))?
 }
 
 /// Clean up old cached images (partial downloads)
@@ -504,6 +520,7 @@ fn parse_github_release(release: GitHubRelease) -> Result<HaosRelease> {
             format,
             download_url: asset.browser_download_url,
             size: asset.size,
+            digest: asset.digest,
         });
     }
 
@@ -540,12 +557,35 @@ pub fn parse_board_from_filename(filename: &str, version: &str) -> Result<String
     parse_board_from_filename_with_suffix(filename, version, ".img.xz")
 }
 
-/// Download an image file with progress updates
+/// Require the SHA-256 digest supplied by GitHub's release metadata over HTTPS.
+/// Missing/unknown digests must never downgrade an installation to an XZ-only check.
+fn expected_sha256(image: &HaosImage) -> Result<[u8; 32]> {
+    let digest = image.digest.as_deref().ok_or_else(|| {
+        Error::VerificationFailed(
+            "GitHub did not provide a SHA-256 digest for this image; installation stopped. Try again later.".to_string(),
+        )
+    })?;
+    let mut expected = [0; 32];
+    let valid = digest
+        .strip_prefix("sha256:")
+        .is_some_and(|value| hex::decode_to_slice(value, &mut expected).is_ok());
+    if !valid {
+        return Err(Error::VerificationFailed(
+            "GitHub provided an invalid or unsupported image digest; installation stopped."
+                .to_string(),
+        ));
+    }
+    Ok(expected)
+}
+
+/// Download and verify the compressed image before permitting extraction.
 pub(crate) async fn download_image<P: ProgressCallback>(
-    url: &str,
+    image: &HaosImage,
     dest_path: &Path,
     progress_callback: &P,
 ) -> Result<()> {
+    let expected = expected_sha256(image)?;
+    let url = &image.download_url;
     let client = reqwest::Client::new();
     let response = client.get(url).send().await?;
 
@@ -567,16 +607,25 @@ pub(crate) async fn download_image<P: ProgressCallback>(
         message: "Starting download...".to_string(),
     });
 
-    let mut file = std::fs::File::create(dest_path)?;
+    // Keep unverified bytes private and remove them on normal error/cancellation.
+    // The .part suffix also lets cleanup_cache recognize leftovers after a crash.
+    let mut file = tempfile::Builder::new()
+        .prefix(".haos-download-")
+        .suffix(".part")
+        .tempfile_in(dest_path.parent().ok_or_else(|| {
+            Error::InvalidConfig("Image destination must have a parent directory".into())
+        })?)?;
     let mut downloaded: u64 = 0;
     let mut last_progress_update: u64 = 0;
     let mut stream = response.bytes_stream();
+    let mut hasher = Sha256::new();
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
 
         use std::io::Write;
         file.write_all(&chunk)?;
+        hasher.update(&chunk);
 
         downloaded += chunk.len() as u64;
 
@@ -598,6 +647,16 @@ pub(crate) async fn download_image<P: ProgressCallback>(
             last_progress_update = downloaded;
         }
     }
+
+    let actual: [u8; 32] = hasher.finalize().into();
+    if actual != expected {
+        return Err(Error::ChecksumMismatch {
+            expected: hex::encode(expected),
+            actual: hex::encode(actual),
+        });
+    }
+    file.persist(dest_path)
+        .map_err(|error| Error::Io(error.error))?;
 
     progress_callback.on_progress(FlashProgress {
         stage: FlashStage::Downloading,
@@ -742,11 +801,11 @@ impl ReleaseSource for Backend {
 
     async fn download_image<P: ProgressCallback>(
         &self,
-        url: &str,
+        image: &HaosImage,
         dest_path: &Path,
         progress_callback: &P,
     ) -> Result<()> {
-        download_image(url, dest_path, progress_callback).await
+        download_image(image, dest_path, progress_callback).await
     }
 
     async fn extract_xz<P: ProgressCallback>(
@@ -780,6 +839,184 @@ impl ReleaseSource for Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn image_for_data(url: &str, data: &[u8]) -> HaosImage {
+        HaosImage {
+            board: "test".into(),
+            format: ImageFormat::Raw,
+            download_url: url.into(),
+            size: data.len() as u64,
+            digest: Some(format!("sha256:{}", hex::encode(Sha256::digest(data)))),
+        }
+    }
+
+    #[tokio::test]
+    async fn download_rejects_missing_or_invalid_digest_before_touching_destination() {
+        let mut server = mockito::Server::new_async().await;
+        let request = server
+            .mock("GET", "/image.xz")
+            .expect(0)
+            .create_async()
+            .await;
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("image.xz");
+        std::fs::write(&destination, b"existing image").unwrap();
+        for digest in [
+            None,
+            Some("".into()),
+            Some("sha256:".into()),
+            Some(format!("sha512:{}", "a".repeat(64))),
+            Some(format!("sha256:{}", "g".repeat(64))),
+            Some(format!("sha256:{}", "a".repeat(63))),
+            Some(format!("sha256:{}", "a".repeat(65))),
+        ] {
+            let mut image = image_for_data(&format!("{}/image.xz", server.url()), b"");
+            image.digest = digest;
+            assert!(matches!(
+                download_image(&image, &destination, &crate::NoOpProgress).await,
+                Err(Error::VerificationFailed(_))
+            ));
+            assert_eq!(std::fs::read(&destination).unwrap(), b"existing image");
+        }
+        request.assert_async().await;
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
+
+    #[tokio::test]
+    async fn download_rejects_valid_xz_with_wrong_digest_and_keeps_existing_file() {
+        use std::io::Write;
+        let mut encoder = xz2::write::XzEncoder::new(Vec::new(), 1);
+        encoder
+            .write_all(b"an attacker can generate a valid XZ checksum")
+            .unwrap();
+        let archive = encoder.finish().unwrap();
+        let mut server = mockito::Server::new_async().await;
+        let request = server
+            .mock("GET", "/image.xz")
+            .with_body(&archive)
+            .expect(2)
+            .create_async()
+            .await;
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("image.xz");
+        let image = image_for_data(&format!("{}/image.xz", server.url()), b"published bytes");
+        assert!(matches!(
+            download_image(&image, &destination, &crate::NoOpProgress).await,
+            Err(Error::ChecksumMismatch { .. })
+        ));
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+        std::fs::write(&destination, b"previous verified image").unwrap();
+        assert!(matches!(
+            download_image(&image, &destination, &crate::NoOpProgress).await,
+            Err(Error::ChecksumMismatch { .. })
+        ));
+        assert_eq!(
+            std::fs::read(&destination).unwrap(),
+            b"previous verified image"
+        );
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        request.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn download_removes_unverified_partial_on_stream_error() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/image.xz", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            let received = stream.read(&mut request).await.unwrap();
+            assert!(received > 0);
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\nConnection: close\r\n\r\npartial",
+                )
+                .await
+                .unwrap();
+        });
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("image.xz");
+        let result = download_image(
+            &image_for_data(&url, b"published"),
+            &destination,
+            &crate::NoOpProgress,
+        )
+        .await;
+        assert!(matches!(result, Err(Error::Network(_))));
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn download_removes_temporary_file_when_promotion_fails() {
+        let data = b"published";
+        let mut server = mockito::Server::new_async().await;
+        let request = server
+            .mock("GET", "/image.xz")
+            .with_body(data)
+            .create_async()
+            .await;
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("image.xz");
+        std::fs::create_dir(&destination).unwrap();
+        let image = image_for_data(&format!("{}/image.xz", server.url()), data);
+        assert!(matches!(
+            download_image(&image, &destination, &crate::NoOpProgress).await,
+            Err(Error::Io(_))
+        ));
+        assert!(destination.is_dir());
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        request.assert_async().await;
+    }
+
+    #[test]
+    fn release_metadata_preserves_unusable_digests_for_explicit_rejection() {
+        for digest in [
+            None,
+            Some(serde_json::Value::Null),
+            Some(serde_json::json!("sha256:bad")),
+        ] {
+            let mut asset = serde_json::json!({ "name": "haos_ova-18.3.qcow2.xz", "size": 100, "browser_download_url": "https://github.com/example.xz" });
+            if let Some(digest) = digest {
+                asset["digest"] = digest;
+            }
+            let release: GitHubRelease =
+                serde_json::from_value(serde_json::json!({"tag_name": "18.3", "assets": [asset]}))
+                    .unwrap();
+            let release = parse_github_release(release).unwrap();
+            assert!(
+                expected_sha256(release.image_for("ova", ImageFormat::Qcow2).unwrap()).is_err()
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn release_digest_survives_metadata_parsing_and_controls_download() {
+        let data = b"published compressed bytes";
+        let mut server = mockito::Server::new_async().await;
+        let image = image_for_data(&format!("{}/image.xz", server.url()), data);
+        let metadata = server.mock("GET", "/tags/18.3").with_header("content-type", "application/json").with_body(serde_json::json!({
+            "tag_name": "18.3", "assets": [{ "name": "haos_ova-18.3.qcow2.xz", "size": data.len(), "browser_download_url": image.download_url, "digest": image.digest }]
+        }).to_string()).create_async().await;
+        let asset = server
+            .mock("GET", "/image.xz")
+            .with_body(data)
+            .create_async()
+            .await;
+        let release = fetch_release_from_api(&server.url(), "18.3").await.unwrap();
+        let selected = release.image_for("ova", ImageFormat::Qcow2).unwrap();
+        assert_eq!(selected.digest, image.digest);
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("image.xz");
+        std::fs::write(&destination, b"same name from a previous download").unwrap();
+        download_image(selected, &destination, &crate::NoOpProgress)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(destination).unwrap(), data);
+        metadata.assert_async().await;
+        asset.assert_async().await;
+    }
 
     fn stable_with(boards: &[(&str, &str)]) -> StableVersionInfo {
         serde_json::from_value(serde_json::json!({
@@ -1078,17 +1315,20 @@ mod tests {
             assets: vec![
                 GitHubAsset {
                     name: "haos_rpi5-64-14.2.img.xz".to_string(),
+                    digest: None,
                     size: 500_000_000,
                     browser_download_url: "https://github.com/download/rpi5.img.xz".to_string(),
                 },
                 GitHubAsset {
                     name: "haos_generic-x86-64-14.2.qcow2.xz".to_string(),
+                    digest: None,
                     size: 600_000_000,
                     browser_download_url: "https://github.com/download/x86.qcow2.xz".to_string(),
                 },
                 // Should be ignored (wrong extension)
                 GitHubAsset {
                     name: "haos_rpi5-64-14.2.img.xz.sha256".to_string(),
+                    digest: None,
                     size: 100,
                     browser_download_url: "https://github.com/download/sha256".to_string(),
                 },
@@ -1122,6 +1362,7 @@ mod tests {
             board: "test".to_string(),
             format: ImageFormat::Raw,
             download_url: "https://example.com/test.img.xz".to_string(),
+            digest: None,
             size: 100,
         };
         let result = is_cached(&image).await.unwrap();
@@ -1137,6 +1378,7 @@ mod tests {
             board: "test".to_string(),
             format: ImageFormat::Raw,
             download_url: "https://example.com/nonexistent-file-12345.img.xz".to_string(),
+            digest: None,
             size: 100,
         };
         let result = is_cached(&image).await.unwrap();
@@ -1144,6 +1386,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_cleanup_cache_removes_part_files() {
         let cache_dir = get_cache_dir().unwrap();
 
@@ -1165,6 +1408,7 @@ mod tests {
             board: "test".to_string(),
             format: ImageFormat::Raw,
             download_url: "https://github.com/home-assistant/operating-system/releases/download/14.2/haos_rpi5-64-14.2.img.xz".to_string(),
+            digest: None,
             size: 100,
         };
 
@@ -1215,6 +1459,7 @@ mod tests {
             board: "test".to_string(),
             format: ImageFormat::Raw,
             download_url: "no-slashes-here".to_string(),
+            digest: None,
             size: 100,
         };
 
@@ -1242,6 +1487,7 @@ mod tests {
                 "https://example.com/{}",
                 test_file.file_name().unwrap().to_string_lossy()
             ),
+            digest: None,
             size: 100,
         };
 
@@ -1255,6 +1501,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_download_image_http_404_error() {
+        let test_data = b"";
         let mut server = mockito::Server::new_async().await;
 
         let mock = server
@@ -1267,7 +1514,12 @@ mod tests {
         let cache_dir = get_cache_dir().unwrap();
         let dest = cache_dir.join("test_404.img");
 
-        let result = download_image(&url, &dest, &crate::NoOpProgress).await;
+        let result = download_image(
+            &image_for_data(&url, test_data.as_ref()),
+            &dest,
+            &crate::NoOpProgress,
+        )
+        .await;
         assert!(result.is_err());
 
         if let Err(e) = result {
@@ -1281,6 +1533,7 @@ mod tests {
     #[tokio::test]
     #[serial]
     async fn test_download_image_http_500_error() {
+        let test_data = b"";
         let mut server = mockito::Server::new_async().await;
 
         let mock = server
@@ -1296,7 +1549,12 @@ mod tests {
         // Clean up any existing file from previous test runs
         let _ = std::fs::remove_file(&dest);
 
-        let result = download_image(&url, &dest, &crate::NoOpProgress).await;
+        let result = download_image(
+            &image_for_data(&url, test_data.as_ref()),
+            &dest,
+            &crate::NoOpProgress,
+        )
+        .await;
         assert!(result.is_err());
 
         mock.assert_async().await;
@@ -1305,7 +1563,7 @@ mod tests {
 
     #[tokio::test]
     #[serial]
-    async fn test_download_image_success_without_checksum() {
+    async fn test_download_image_success_with_checksum() {
         let mut server = mockito::Server::new_async().await;
 
         let test_data = b"test image data content";
@@ -1321,7 +1579,12 @@ mod tests {
         let cache_dir = get_cache_dir().unwrap();
         let dest = cache_dir.join("test_download_success.img");
 
-        let result = download_image(&url, &dest, &crate::NoOpProgress).await;
+        let result = download_image(
+            &image_for_data(&url, test_data.as_ref()),
+            &dest,
+            &crate::NoOpProgress,
+        )
+        .await;
         assert!(result.is_ok());
 
         // Verify file was created and has correct content
@@ -1369,7 +1632,8 @@ mod tests {
             calls: calls.clone(),
         };
 
-        let result = download_image(&url, &dest, &callback).await;
+        let result =
+            download_image(&image_for_data(&url, test_data.as_ref()), &dest, &callback).await;
         assert!(result.is_ok());
         mock.assert_async().await;
 
@@ -1403,7 +1667,12 @@ mod tests {
         let cache_dir = get_cache_dir().unwrap();
         let dest = cache_dir.join("test_no_length.img");
 
-        let result = download_image(&url, &dest, &crate::NoOpProgress).await;
+        let result = download_image(
+            &image_for_data(&url, test_data.as_ref()),
+            &dest,
+            &crate::NoOpProgress,
+        )
+        .await;
         assert!(result.is_ok());
 
         mock.assert_async().await;
@@ -1554,17 +1823,27 @@ mod tests {
                 "https://example.com/{}",
                 test_file.file_name().unwrap().to_string_lossy()
             ),
+            digest: image_for_data("", &[0; 100]).digest,
             size: 100,
         };
 
         let result = is_cached(&image).await.unwrap();
-        assert!(result, "Should return true when file size matches");
+        assert!(result, "Matching size and digest should be accepted");
+        std::fs::write(&test_file, [1u8; 100]).unwrap();
+        assert!(
+            !is_cached(&image).await.unwrap(),
+            "Same-size tampering must fail"
+        );
+        let mut missing_digest = image;
+        missing_digest.digest = None;
+        assert!(is_cached(&missing_digest).await.is_err());
 
         // Cleanup
         std::fs::remove_file(&test_file).unwrap();
     }
 
     #[tokio::test]
+    #[serial]
     async fn test_cleanup_cache_nonexistent_directory() {
         // This tests the early return path when the cache directory doesn't exist
         // The function should handle this gracefully
@@ -1580,6 +1859,7 @@ mod tests {
             tag_name: "14.2".to_string(),
             assets: vec![GitHubAsset {
                 name: "invalid_filename.img.xz".to_string(), // Doesn't match pattern
+                digest: None,
                 size: 500_000_000,
                 browser_download_url: "https://github.com/download/invalid.img.xz".to_string(),
             }],
@@ -1977,6 +2257,7 @@ mod tests {
         #[tokio::test]
         #[serial]
         async fn test_download_image_empty_response() {
+            let test_data = b"";
             let mut server = mockito::Server::new_async().await;
 
             let mock = server
@@ -1991,7 +2272,12 @@ mod tests {
             let cache_dir = get_cache_dir().unwrap();
             let dest = cache_dir.join("test_empty.img");
 
-            let result = download_image(&url, &dest, &crate::NoOpProgress).await;
+            let result = download_image(
+                &image_for_data(&url, test_data.as_ref()),
+                &dest,
+                &crate::NoOpProgress,
+            )
+            .await;
             assert!(result.is_ok());
 
             // Verify empty file was created
@@ -2027,7 +2313,12 @@ mod tests {
             let cache_dir = get_cache_dir().unwrap();
             let dest = cache_dir.join("test_redirect.img");
 
-            let result = download_image(&url, &dest, &crate::NoOpProgress).await;
+            let result = download_image(
+                &image_for_data(&url, test_data.as_ref()),
+                &dest,
+                &crate::NoOpProgress,
+            )
+            .await;
             assert!(result.is_ok());
 
             // Verify file content

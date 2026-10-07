@@ -1291,7 +1291,8 @@ async fn wait_for_vm_ip(session: &ProxmoxSession, node: &str, vm_id: u32) -> Opt
 }
 
 /// Create a Home Assistant VM on Proxmox
-async fn create_vm<P: ProgressCallback>(
+async fn create_vm<B: ReleaseSource, P: ProgressCallback>(
+    backend: &B,
     session: &ProxmoxSession,
     config: &ProxmoxVmConfig,
     progress_callback: &P,
@@ -1305,18 +1306,8 @@ async fn create_vm<P: ProgressCallback>(
         message: "Fetching release info...".to_string(),
     });
 
-    // Get the stable version info
-    let stable_version = crate::download::get_stable_version().await?;
-
-    // Get the OVA version for Proxmox (generic x86-64 virtualization)
-    let haos_version = stable_version
-        .hassos
-        .get("ova")
-        .ok_or_else(|| Error::ProxmoxApi("No HAOS version found for OVA".to_string()))?;
-
-    // Look up the OVA image in the release to get its download URL.
-    // Use the OVA's own version rather than "latest", which may differ.
-    let release: HaosRelease = Backend.get_haos_release(haos_version).await?;
+    let release: HaosRelease = backend.get_latest_haos_release_for_board("ova").await?;
+    let haos_version = &release.version;
     let image: &HaosImage = release
         .image_for("ova", ImageFormat::Qcow2)
         .ok_or_else(|| {
@@ -1335,13 +1326,14 @@ async fn create_vm<P: ProgressCallback>(
         message: "Downloading HAOS image...".to_string(),
     });
 
-    let cache_dir = crate::download::get_cache_dir()?;
+    let cache_dir = backend.cache_dir()?;
     let temporary_image =
         crate::download::TemporaryImage::new(&cache_dir, crate::ImageFormat::Qcow2)?;
     let compressed_path = temporary_image.archive_path();
 
     // Download the image
-    crate::download::download_image(&image.download_url, &compressed_path, progress_callback)
+    backend
+        .download_image(image, &compressed_path, progress_callback)
         .await?;
 
     // Step 3: Extract the compressed image
@@ -1355,7 +1347,8 @@ async fn create_vm<P: ProgressCallback>(
 
     let extracted_path = temporary_image.path();
 
-    crate::ReleaseSource::extract_temporary_image(&Backend, &temporary_image, progress_callback)
+    backend
+        .extract_temporary_image(&temporary_image, progress_callback)
         .await?;
     temporary_image.cache_archive(&cache_dir, "ova", haos_version);
 
@@ -1479,7 +1472,7 @@ impl ProxmoxBackend for Backend {
         config: &ProxmoxVmConfig,
         progress_callback: &P,
     ) -> Result<ProxmoxVmResult> {
-        create_vm(session, config, progress_callback).await
+        create_vm(self, session, config, progress_callback).await
     }
 }
 
@@ -2450,8 +2443,72 @@ mod tests {
 
         #[tokio::test]
         #[serial]
-        async fn test_pre_install_checks_pass_on_healthy_server() {
+        async fn test_create_vm_digest_failure_after_healthy_preflight() {
             let mut server = Server::new_async().await;
+
+            struct ImageSource {
+                cache: tempfile::TempDir,
+                url: String,
+            }
+            impl ReleaseSource for ImageSource {
+                async fn get_device_manifest(&self) -> Result<crate::DeviceManifest> {
+                    unreachable!()
+                }
+                async fn get_haos_release(&self, _: &str) -> Result<HaosRelease> {
+                    unreachable!("must use OVA's board-specific release")
+                }
+                async fn get_latest_haos_release_for_board(
+                    &self,
+                    board: &str,
+                ) -> Result<HaosRelease> {
+                    assert_eq!(board, "ova");
+                    Ok(HaosRelease {
+                        version: "18.2".into(),
+                        images: vec![HaosImage {
+                            board: "ova".into(),
+                            format: ImageFormat::Qcow2,
+                            download_url: self.url.clone(),
+                            size: 400_000_000,
+                            digest: Some(format!("sha256:{}", "0".repeat(64))),
+                        }],
+                    })
+                }
+                async fn download_image<P: ProgressCallback>(
+                    &self,
+                    image: &HaosImage,
+                    dest: &std::path::Path,
+                    callback: &P,
+                ) -> Result<()> {
+                    assert_eq!(image.board, "ova");
+                    assert_eq!(image.format, ImageFormat::Qcow2);
+                    Backend.download_image(image, dest, callback).await
+                }
+                async fn extract_xz<P: ProgressCallback>(
+                    &self,
+                    _: &std::path::Path,
+                    _: &std::path::Path,
+                    _: &P,
+                ) -> Result<()> {
+                    panic!("unverified image reached extraction")
+                }
+                fn cache_dir(&self) -> Result<std::path::PathBuf> {
+                    Ok(self.cache.path().to_path_buf())
+                }
+            }
+            let backend = ImageSource {
+                cache: tempfile::tempdir().unwrap(),
+                url: format!("{}/image.xz", server.url()),
+            };
+            let asset_mock = server
+                .mock("GET", "/image.xz")
+                .with_body("tampered")
+                .create_async()
+                .await;
+            let no_upload = server
+                .mock("POST", Matcher::Any)
+                .expect(0)
+                .create_async()
+                .await;
 
             let nodes_mock = server
                 .mock("GET", "/api2/json/nodes")
@@ -2517,8 +2574,20 @@ mod tests {
                 auto_start: true,
             };
 
-            let result = pre_install_checks(&test_session(&server), &config, 400_000_000).await;
-            assert!(result.is_ok(), "unexpected error: {:?}", result.err());
+            let result = create_vm(
+                &backend,
+                &test_session(&server),
+                &config,
+                &crate::NoOpProgress,
+            )
+            .await;
+            assert!(
+                matches!(result, Err(Error::ChecksumMismatch { .. })),
+                "unexpected result: {result:?}"
+            );
+            assert_eq!(std::fs::read_dir(backend.cache.path()).unwrap().count(), 0);
+            asset_mock.assert_async().await;
+            no_upload.assert_async().await;
 
             nodes_mock.assert_async().await;
             for mock in permission_mocks {

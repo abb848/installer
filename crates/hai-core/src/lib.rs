@@ -55,10 +55,10 @@ pub trait ReleaseSource {
     /// Fetch the release stable.json currently lists for `board`.
     async fn get_latest_haos_release_for_board(&self, board: &str) -> Result<HaosRelease>;
 
-    /// Download an image to `dest_path`, reporting progress.
+    /// Download an image to `dest_path`, verifying its trusted compressed-asset digest.
     async fn download_image<P: ProgressCallback>(
         &self,
-        url: &str,
+        image: &HaosImage,
         dest_path: &Path,
         progress_callback: &P,
     ) -> Result<()>;

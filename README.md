@@ -14,6 +14,10 @@ A cross-platform desktop application for installing Home Assistant OS on various
 
 Download the latest release for your platform from the [Releases](https://github.com/home-assistant/installer/releases) page.
 
+### Updating the installer
+
+The installer does not check for updates or update itself. To update it, download and install a newer release for your platform from the Releases page linked above. This updates the installer application, not an existing Home Assistant installation.
+
 ## Privacy and Error Reporting
 
 The installer does not automatically send error reports or diagnostic logs. For the first beta, feedback is voluntary through [GitHub issues](https://github.com/home-assistant/installer/issues). Review anything you share and remove credentials, hostnames, IP addresses, usernames, drive serials, and personal file paths; do not assume raw logs are redacted. The manual diagnostics workflow is tracked in [#152](https://github.com/home-assistant/installer/issues/152).

@@ -321,10 +321,6 @@ async fn utm_is_installed() -> bool
 #[tauri::command]
 async fn utm_create_vm(config: VmConfig, window: Window) -> Result<(), String>
 
-// Updates
-#[tauri::command]
-async fn check_for_updates(include_beta: bool) -> Result<Option<UpdateInfo>, String>
-
 // Companion apps (macOS)
 #[tauri::command]
 #[cfg(target_os = "macos")]
@@ -427,9 +423,11 @@ On launch:
 
 ## App Updates
 
-**No auto-update in v1.** Instead, version check with download prompt.
+Installer updates are manual: download and install a newer release for your platform from the [Releases](https://github.com/home-assistant/installer/releases) page. The app does not check for updates or display an update prompt.
 
-### Version Check Implementation
+### Deferred Version Check Proposal
+
+The following proposal is not implemented. There is no registered `check_for_updates` command or `UpdateInfo` type.
 
 ```rust
 #[derive(Deserialize)]

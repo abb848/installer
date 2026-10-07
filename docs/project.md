@@ -173,7 +173,7 @@ This document outlines the phased implementation of HAI (Home Assistant Installe
 - [x] Add `HA_INSTALLER_MOCK` environment variable check
 - [x] Create mock `list_block_devices` returning fake devices
 - [x] Create mock `flash_image` with simulated progress
-- [x] Create mock `check_for_updates` response
+- [ ] App update checks deferred; installer updates are manual
 
 ### Frontend Mock Support
 

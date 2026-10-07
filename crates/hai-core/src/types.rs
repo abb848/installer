@@ -85,23 +85,6 @@ pub enum FlashStage {
     Error,
 }
 
-/// Update information
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateInfo {
-    /// Whether an update is available
-    pub update_available: bool,
-    /// Current version
-    pub current_version: String,
-    /// Latest available version
-    pub latest_version: String,
-    /// Download URL for the latest version
-    pub download_url: Option<String>,
-    /// Release notes URL
-    pub release_notes_url: Option<String>,
-    /// Whether this is a beta release
-    pub is_beta: bool,
-}
-
 /// Device manifest for supported devices
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceManifest {
@@ -739,31 +722,6 @@ mod tests {
         assert_eq!(result.success, deserialized.success);
         assert_eq!(result.error, deserialized.error);
         assert_eq!(result.duration_secs, deserialized.duration_secs);
-    }
-
-    #[test]
-    fn test_update_info_roundtrip() {
-        let update_info = UpdateInfo {
-            update_available: true,
-            current_version: "1.0.0".to_string(),
-            latest_version: "1.1.0".to_string(),
-            download_url: Some("https://example.com/download".to_string()),
-            release_notes_url: Some("https://example.com/notes".to_string()),
-            is_beta: false,
-        };
-
-        let json = serde_json::to_string(&update_info).unwrap();
-        let deserialized: UpdateInfo = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(update_info.update_available, deserialized.update_available);
-        assert_eq!(update_info.current_version, deserialized.current_version);
-        assert_eq!(update_info.latest_version, deserialized.latest_version);
-        assert_eq!(update_info.download_url, deserialized.download_url);
-        assert_eq!(
-            update_info.release_notes_url,
-            deserialized.release_notes_url
-        );
-        assert_eq!(update_info.is_beta, deserialized.is_beta);
     }
 
     #[test]

@@ -71,9 +71,6 @@ pub trait ReleaseSource {
         progress_callback: &P,
     ) -> Result<()>;
 
-    /// Check whether a newer installer release is available.
-    async fn check_for_updates(&self) -> Result<UpdateInfo>;
-
     /// Directory where downloaded images are cached.
     fn cache_dir(&self) -> Result<PathBuf>;
 }

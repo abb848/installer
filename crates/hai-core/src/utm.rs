@@ -96,6 +96,19 @@ fn vm_status(vm_id: &str) -> Result<VmStatusInfo> {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn applescript_error(stderr: &str) -> Error {
+    // osascript reports the numeric Apple Event error after the localized message.
+    if stderr.trim().ends_with("(-1743)") {
+        Error::Utm(
+            "Home Assistant Installer is not allowed to control UTM. Open System Settings > Privacy & Security > Automation, enable UTM under Home Assistant Installer, then try again."
+                .to_string(),
+        )
+    } else {
+        Error::Utm(stderr.trim().to_string())
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
     use super::*;
@@ -181,7 +194,7 @@ mod macos {
             Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
         } else {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(Error::Utm(stderr.trim().to_string()))
+            Err(applescript_error(&stderr))
         }
     }
 
@@ -325,6 +338,38 @@ impl UtmBackend for Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_applescript_automation_denied() {
+        for stderr in [
+            "0:30: execution error: Not authorized to send Apple events to UTM. (-1743)\n",
+            "0:30: execution error: Keine Berechtigung zum Senden von Apple-Events an UTM. (-1743)\n",
+        ] {
+            let Error::Utm(message) = applescript_error(stderr) else {
+                panic!("Expected UTM error");
+            };
+            assert!(message.contains("System Settings > Privacy & Security > Automation"));
+            assert!(message.contains("enable UTM under Home Assistant Installer"));
+            assert!(message.contains("try again"));
+            assert!(!message.contains("execution error"));
+        }
+    }
+
+    #[test]
+    fn test_other_applescript_errors_keep_their_message() {
+        for stderr in [
+            "0:30: execution error: User canceled. (-128)\n",
+            "0:30: execution error: Virtual machine not found. (-1728)\n",
+            "0:30: execution error: Other failure. (-17430)\n",
+            "0:30: execution error: VM named (-1743) not found. (-1728)\n",
+            "",
+        ] {
+            let Error::Utm(message) = applescript_error(stderr) else {
+                panic!("Expected UTM error");
+            };
+            assert_eq!(message, stderr.trim());
+        }
+    }
 
     #[tokio::test]
     #[serial_test::serial]

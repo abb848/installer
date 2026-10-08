@@ -542,6 +542,20 @@ mod tests {
     }
 
     #[test]
+    fn write_error_message_shows_capacity_failure_without_a_prefix() {
+        for written in [0, 3_000_000_000] {
+            let msg = write_error_message(hai_core::Error::ImageTooLarge {
+                written,
+                image_size: 4_000_000_000,
+            });
+            assert_eq!(
+                msg,
+                "Image is larger than the selected drive: image size is 4000000000 bytes"
+            );
+        }
+    }
+
+    #[test]
     fn write_error_message_prefixes_a_plain_io_error() {
         let msg = write_error_message(hai_core::Error::Io(std::io::Error::other("boom")));
         assert!(msg.starts_with("Write failed"), "{msg}");

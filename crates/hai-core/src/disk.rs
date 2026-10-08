@@ -36,6 +36,10 @@ mod macos_logic;
 #[path = "disk/macos/safety.rs"]
 mod macos_safety;
 
+#[cfg(any(target_os = "windows", test))]
+#[path = "disk/windows/transfer.rs"]
+mod windows_transfer;
+
 #[cfg(all(test, not(target_os = "macos")))]
 #[allow(dead_code)]
 #[path = "disk/macos/device.rs"]
@@ -118,7 +122,7 @@ fn is_write_protected(io_err: &std::io::Error) -> bool {
 /// Map an I/O error from reading or writing the device onto an [`Error`]:
 /// a disconnect and write protection get their own errors, so the user is
 /// told what to do about them.
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
 fn device_io_error(io_err: std::io::Error) -> Error {
     if is_drive_disconnected(&io_err) {
         Error::DriveDisconnected

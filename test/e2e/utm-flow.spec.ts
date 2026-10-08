@@ -176,7 +176,7 @@ test.describe("UTM Installation Flow", () => {
     await navigateToUtmStep2(page);
 
     const configView = page.locator("utm-configure-view");
-    const nameInput = configView.locator(".name-input");
+    const nameInput = configView.getByRole("textbox", { name: "Display name" });
 
     await nameInput.clear();
     await nameInput.fill("My Home Assistant VM");
@@ -190,7 +190,7 @@ test.describe("UTM Installation Flow", () => {
     await navigateToUtmStep2(page);
 
     const configView = page.locator("utm-configure-view");
-    const nameInput = configView.locator(".name-input");
+    const nameInput = configView.getByRole("textbox", { name: "Display name" });
     const coresValue = configView.locator(".setting-value").first();
 
     const defaultCores = await coresValue.textContent();
@@ -199,7 +199,10 @@ test.describe("UTM Installation Flow", () => {
     await nameInput.clear();
     await nameInput.fill("My Home Assistant VM");
 
-    const coresSlider = configView.locator('input[type="range"]').first();
+    const coresSlider = configView.getByRole("slider", {
+      name: "CPU cores",
+      exact: true,
+    });
     await coresSlider.focus();
     await coresSlider.press("ArrowRight");
 
@@ -220,9 +223,9 @@ test.describe("UTM Installation Flow", () => {
     // not silently reset to the defaults
     await page.locator("wizard-shell").locator(".header wa-button").click();
     await expect(configView).toBeVisible();
-    await expect(configView.locator(".name-input")).toHaveValue(
-      "My Home Assistant VM"
-    );
+    await expect(
+      configView.getByRole("textbox", { name: "Display name" })
+    ).toHaveValue("My Home Assistant VM");
     await expect(coresValue).toHaveText(chosenCores!);
 
     // And forward again, so what gets installed is what was picked

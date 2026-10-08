@@ -22,11 +22,13 @@ for (const width of [1100, 390]) {
       if (scenario.device.startsWith("generic-")) {
         await page.locator('option-card[title="Generic (mini) PC"]').click();
         await page
-          .locator("minipc-setup-method-view .option-card")
+          .locator("minipc-setup-method-view")
+          .locator("option-card, wa-radio")
           .filter({ hasText: "I can connect the drive" })
           .click();
         await page
-          .locator("minipc-architecture-selection-view .option-card")
+          .locator("minipc-architecture-selection-view")
+          .locator("option-card, wa-radio")
           .filter({
             hasText: scenario.device === "generic-x86-64" ? "Intel/AMD" : "ARM",
           })

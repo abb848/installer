@@ -8,6 +8,8 @@ import { getManifest, type Device } from "../../api/index.js";
 import { wizardState } from "../../state/wizard-state.js";
 import { getPlatform } from "../../utils/platform.js";
 import "@home-assistant/webawesome/dist/components/button/button.js";
+import "@home-assistant/webawesome/dist/components/radio-group/radio-group.js";
+import "@home-assistant/webawesome/dist/components/radio/radio.js";
 
 @customElement("minipc-architecture-selection-view")
 export class MiniPCArchitectureSelectionView extends LitElement {
@@ -38,11 +40,24 @@ export class MiniPCArchitectureSelectionView extends LitElement {
     }
 
     .options {
-      display: flex;
-      flex-direction: row;
-      gap: 1rem;
+      display: block;
       width: 100%;
       max-width: 700px;
+    }
+
+    .options::part(form-control-label) {
+      display: none;
+    }
+
+    .options::part(form-control-input) {
+      display: flex;
+      gap: 1rem;
+    }
+
+    @media (max-width: 500px) {
+      .options::part(form-control-input) {
+        flex-direction: column;
+      }
     }
 
     .mac-note {
@@ -53,47 +68,22 @@ export class MiniPCArchitectureSelectionView extends LitElement {
       max-width: 500px;
     }
 
-    .option-card {
-      position: relative;
+    wa-radio {
+      flex: 1;
+      min-width: 0;
+      height: auto;
+      padding: 1.5rem;
+      border-radius: 12px;
+      align-items: flex-start;
+    }
+
+    wa-radio::part(label) {
       display: flex;
       flex-direction: column;
       align-items: center;
       text-align: center;
-      flex: 1;
+      white-space: normal;
       gap: 0.75rem;
-      padding: 1.5rem;
-      background-color: var(--ha-card-background, #ffffff);
-      border: 2px solid var(--ha-border-color, #e0e0e0);
-      border-radius: 12px;
-      cursor: pointer;
-      transition:
-        border-color 0.2s ease,
-        box-shadow 0.2s ease;
-    }
-
-    .option-card:hover {
-      border-color: var(--ha-primary-color, #03a9f4);
-      box-shadow: 0 2px 8px rgba(3, 169, 244, 0.15);
-    }
-
-    .option-card.selected {
-      border-color: var(--ha-primary-color, #03a9f4);
-      background-color: rgba(3, 169, 244, 0.05);
-    }
-
-    @media (prefers-color-scheme: dark) {
-      .option-card {
-        background-color: var(--ha-card-background, #1e1e1e);
-        border-color: var(--ha-border-color, #333333);
-      }
-
-      .option-card:hover {
-        box-shadow: 0 2px 8px rgba(3, 169, 244, 0.25);
-      }
-
-      .option-card.selected {
-        background-color: rgba(3, 169, 244, 0.1);
-      }
     }
 
     .option-icon {
@@ -132,21 +122,6 @@ export class MiniPCArchitectureSelectionView extends LitElement {
       color: var(--ha-secondary-text-color, #9e9e9e);
       margin: 0;
       line-height: 1.4;
-    }
-
-    .option-check {
-      position: absolute;
-      top: 8px;
-      right: 8px;
-      width: 24px;
-      height: 24px;
-      background-color: var(--ha-primary-fill, #006787);
-      border-radius: 50%;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      color: white;
-      font-size: 14px;
     }
 
     .loading {
@@ -257,6 +232,19 @@ export class MiniPCArchitectureSelectionView extends LitElement {
     } finally {
       this._loading = false;
     }
+
+    // The setup action is removed on navigation. Give keyboard users a new
+    // focus target once the asynchronously loaded architecture choices exist.
+    await this.updateComplete;
+    const focusTarget =
+      this.shadowRoot?.querySelector("wa-radio-group") ??
+      this.shadowRoot?.querySelector("wa-button");
+    if (focusTarget) {
+      await focusTarget.updateComplete;
+      if (this.isConnected && document.activeElement === document.body) {
+        focusTarget.focus();
+      }
+    }
   }
 
   render() {
@@ -293,16 +281,16 @@ export class MiniPCArchitectureSelectionView extends LitElement {
       <h2>Select your architecture</h2>
       <p class="subtitle">Choose the CPU architecture of your mini PC.</p>
 
-      <div class="options">
+      <wa-radio-group
+        class="options"
+        orientation="horizontal"
+        label="CPU architecture"
+        .value=${this._selectedDeviceId ?? ""}
+        @change=${this._onDeviceChange}
+      >
         ${this._x86Device
           ? html`
-              <div
-                class="option-card ${this._selectedDeviceId ===
-                this._x86Device.id
-                  ? "selected"
-                  : ""}"
-                @click=${() => this._onSelectDevice(this._x86Device!)}
-              >
+              <wa-radio appearance="button" .value=${this._x86Device.id}>
                 <div class="option-icon">
                   <svg viewBox="0 0 24 24">
                     <path
@@ -321,21 +309,12 @@ export class MiniPCArchitectureSelectionView extends LitElement {
                     Dell, HP
                   </p>
                 </div>
-                ${this._selectedDeviceId === this._x86Device.id
-                  ? html`<span class="option-check">✓</span>`
-                  : ""}
-              </div>
+              </wa-radio>
             `
           : ""}
         ${this._arm64Device
           ? html`
-              <div
-                class="option-card ${this._selectedDeviceId ===
-                this._arm64Device.id
-                  ? "selected"
-                  : ""}"
-                @click=${() => this._onSelectDevice(this._arm64Device!)}
-              >
+              <wa-radio appearance="button" .value=${this._arm64Device.id}>
                 <div class="option-icon">
                   <svg viewBox="0 0 24 24">
                     <path
@@ -354,13 +333,10 @@ export class MiniPCArchitectureSelectionView extends LitElement {
                     machines. A Raspberry Pi or ODROID has its own option.
                   </p>
                 </div>
-                ${this._selectedDeviceId === this._arm64Device.id
-                  ? html`<span class="option-check">✓</span>`
-                  : ""}
-              </div>
+              </wa-radio>
             `
           : ""}
-      </div>
+      </wa-radio-group>
       ${getPlatform() === "macos"
         ? html`<p class="mac-note">
             Want Home Assistant on this Mac itself? Start over and choose
@@ -368,6 +344,14 @@ export class MiniPCArchitectureSelectionView extends LitElement {
           </p>`
         : ""}
     `;
+  }
+
+  private _onDeviceChange(e: Event) {
+    const id = (e.target as { value?: string }).value;
+    const device = [this._x86Device, this._arm64Device].find(
+      (device) => device?.id === id
+    );
+    if (device) this._onSelectDevice(device);
   }
 
   private _onSelectDevice(device: Device) {

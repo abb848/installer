@@ -108,7 +108,7 @@ describe("Proxmox bridge selection", () => {
     await ready();
     await el.updateComplete;
     const select =
-      el.shadowRoot!.querySelector<HTMLSelectElement>(".select-dropdown")!;
+      el.shadowRoot!.querySelector<HTMLSelectElement>("wa-select")!;
     const changeNode = (name: string) => {
       select.value = name;
       select.dispatchEvent(new Event("change"));
@@ -249,9 +249,8 @@ describe("Proxmox bridge selection", () => {
     );
     await restored.updateComplete;
     expect(
-      restored.shadowRoot!.querySelectorAll<HTMLSelectElement>(
-        ".select-dropdown"
-      )[1].value
+      restored.shadowRoot!.querySelectorAll<HTMLSelectElement>("wa-select")[1]
+        .value
     ).to.equal("local-lvm");
   });
 

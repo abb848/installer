@@ -50,7 +50,7 @@ test.describe("Mini PC Flow - Setup Method Selection", () => {
 
     const setupView = page.locator("minipc-setup-method-view");
     const connectDriveOption = setupView
-      .locator(".option-card")
+      .locator("option-card, wa-radio")
       .filter({ hasText: "I can connect the drive" });
     await expect(connectDriveOption).toBeVisible();
     await expect(connectDriveOption).toContainText("SSD");
@@ -62,7 +62,7 @@ test.describe("Mini PC Flow - Setup Method Selection", () => {
 
     const setupView = page.locator("minipc-setup-method-view");
     const usbBootOption = setupView
-      .locator(".option-card")
+      .locator("option-card, wa-radio")
       .filter({ hasText: "I need to boot from USB" });
     await expect(usbBootOption).toBeVisible();
     await expect(usbBootOption).toContainText("bootable USB");
@@ -73,7 +73,7 @@ test.describe("Mini PC Flow - Setup Method Selection", () => {
 
     const setupView = page.locator("minipc-setup-method-view");
     const usbBootOption = setupView
-      .locator(".option-card")
+      .locator("option-card, wa-radio")
       .filter({ hasText: "I need to boot from USB" });
     await usbBootOption.click();
 
@@ -89,7 +89,7 @@ test.describe("Mini PC Flow - Setup Method Selection", () => {
 
     const setupView = page.locator("minipc-setup-method-view");
     const usbBootOption = setupView
-      .locator(".option-card")
+      .locator("option-card, wa-radio")
       .filter({ hasText: "I need to boot from USB" });
     await usbBootOption.click();
 
@@ -108,7 +108,7 @@ test.describe("Mini PC Flow - Setup Method Selection", () => {
 
     const setupView = page.locator("minipc-setup-method-view");
     const usbBootOption = setupView
-      .locator(".option-card")
+      .locator("option-card, wa-radio")
       .filter({ hasText: "I need to boot from USB" });
     await usbBootOption.click();
 
@@ -132,7 +132,7 @@ test.describe("Mini PC Flow - Setup Method Selection", () => {
 
     const setupView = page.locator("minipc-setup-method-view");
     const usbBootOption = setupView
-      .locator(".option-card")
+      .locator("option-card, wa-radio")
       .filter({ hasText: "I need to boot from USB" });
     await usbBootOption.click();
 
@@ -154,7 +154,7 @@ test.describe("Mini PC Flow - Setup Method Selection", () => {
 
     const setupView = page.locator("minipc-setup-method-view");
     const connectDriveOption = setupView
-      .locator(".option-card")
+      .locator("option-card, wa-radio")
       .filter({ hasText: "I can connect the drive" });
     await connectDriveOption.click();
 
@@ -175,7 +175,7 @@ test.describe("Mini PC Flow - Architecture Selection", () => {
     const setupView = page.locator("minipc-setup-method-view");
     await expect(setupView).toBeVisible();
     const connectDriveOption = setupView
-      .locator(".option-card")
+      .locator("option-card, wa-radio")
       .filter({ hasText: "I can connect the drive" });
     await connectDriveOption.click();
   });
@@ -206,7 +206,7 @@ test.describe("Mini PC Flow - Architecture Selection", () => {
     const options = archView.locator(".options");
     await expect(options).toBeVisible();
 
-    const x86Option = options.locator(".option-card").filter({
+    const x86Option = options.locator("option-card, wa-radio").filter({
       hasText: "Intel/AMD",
     });
     await expect(x86Option).toBeVisible();
@@ -218,7 +218,7 @@ test.describe("Mini PC Flow - Architecture Selection", () => {
     const options = archView.locator(".options");
     await expect(options).toBeVisible();
 
-    const armOption = options.locator(".option-card").filter({
+    const armOption = options.locator("option-card, wa-radio").filter({
       hasText: "ARM",
     });
     await expect(armOption).toBeVisible();
@@ -227,7 +227,7 @@ test.describe("Mini PC Flow - Architecture Selection", () => {
 
   test("x86-64 option shows example devices", async ({ page }) => {
     const archView = page.locator("minipc-architecture-selection-view");
-    const x86Option = archView.locator(".option-card").filter({
+    const x86Option = archView.locator("option-card, wa-radio").filter({
       hasText: "Intel/AMD",
     });
     await expect(x86Option).toBeVisible();
@@ -242,7 +242,7 @@ test.describe("Mini PC Flow - Architecture Selection", () => {
 
   test("ARM64 option shows example devices", async ({ page }) => {
     const archView = page.locator("minipc-architecture-selection-view");
-    const armOption = archView.locator(".option-card").filter({
+    const armOption = archView.locator("option-card, wa-radio").filter({
       hasText: "ARM",
     });
     await expect(armOption).toBeVisible();
@@ -277,7 +277,7 @@ test.describe("Mini PC Flow - Architecture Selection", () => {
     await expect(options).toBeVisible();
 
     // Click x86-64 option to select it
-    const x86Option = options.locator(".option-card").filter({
+    const x86Option = options.locator("option-card, wa-radio").filter({
       hasText: "Intel/AMD",
     });
     await x86Option.click();
@@ -310,7 +310,7 @@ test.describe("Mini PC Flow - Navigation", () => {
     await expect(setupView).toBeVisible();
 
     const connectDriveOption = setupView
-      .locator(".option-card")
+      .locator("option-card, wa-radio")
       .filter({ hasText: "I can connect the drive" });
     await connectDriveOption.click();
 
@@ -319,7 +319,7 @@ test.describe("Mini PC Flow - Navigation", () => {
     const options = archView.locator(".options");
     await expect(options).toBeVisible();
 
-    const x86Option = options.locator(".option-card").filter({
+    const x86Option = options.locator("option-card, wa-radio").filter({
       hasText: "Intel/AMD",
     });
     await x86Option.click();
@@ -351,7 +351,7 @@ test.describe("Mini PC Flow - Navigation", () => {
     const setupView = page.locator("minipc-setup-method-view");
     await expect(setupView).toBeVisible();
     const connectDriveOption = setupView
-      .locator(".option-card")
+      .locator("option-card, wa-radio")
       .filter({ hasText: "I can connect the drive" });
     await connectDriveOption.click();
 
@@ -360,7 +360,7 @@ test.describe("Mini PC Flow - Navigation", () => {
     const options = archView.locator(".options");
     await expect(options).toBeVisible();
 
-    const armOption = options.locator(".option-card").filter({
+    const armOption = options.locator("option-card, wa-radio").filter({
       hasText: "ARM",
     });
     await armOption.click();

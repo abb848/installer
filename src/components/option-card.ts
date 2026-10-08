@@ -69,6 +69,36 @@ export class OptionCard extends LitElement {
       }
     }
 
+    :host([horizontal]) .card {
+      display: grid;
+      grid-template-columns: 48px minmax(0, 1fr) auto;
+      gap: 0.25rem 1rem;
+      min-height: 0;
+      align-items: center;
+    }
+
+    :host([horizontal]) .icon-container {
+      grid-row: span 2;
+      width: 48px;
+      height: 48px;
+      margin: 0;
+    }
+
+    :host([horizontal]) .title,
+    :host([horizontal]) .description {
+      grid-column: 2;
+      text-align: left;
+      margin: 0;
+    }
+
+    :host([horizontal]) slot[name="end"] {
+      display: block;
+      grid-column: 3;
+      grid-row: 1 / span 2;
+      color: var(--ha-secondary-text-color, #9e9e9e);
+      font-size: 1.25rem;
+    }
+
     .icon-container {
       width: 80px;
       height: 80px;
@@ -105,6 +135,9 @@ export class OptionCard extends LitElement {
       margin: 0;
     }
   `;
+
+  @property({ type: Boolean, reflect: true })
+  horizontal = false;
 
   @property({ type: String })
   title = "";
@@ -145,6 +178,7 @@ export class OptionCard extends LitElement {
         <div class="icon-container">${this._renderIcon()}</div>
         <p class="title">${this.title}</p>
         <p class="description">${this.description}</p>
+        <slot name="end"></slot>
       </div>
     `;
   }

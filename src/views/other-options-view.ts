@@ -4,6 +4,7 @@ import {
   reducedMotionStyles,
 } from "../utils/view-accessibility.js";
 import { customElement } from "lit/decorators.js";
+import "../components/option-card.js";
 import { openExternalLink, openExternalUrl } from "../utils/external-url.js";
 import "@home-assistant/webawesome/dist/components/button/button.js";
 
@@ -106,84 +107,6 @@ export class OtherOptionsView extends LitElement {
     .subtitle a {
       color: var(--ha-primary-color, #03a9f4);
     }
-
-    .option-item {
-      display: flex;
-      align-items: center;
-      gap: 1rem;
-      padding: 1rem 1.5rem;
-      background-color: var(--ha-card-background, #ffffff);
-      border: 2px solid var(--ha-border-color, #e0e0e0);
-      border-radius: 12px;
-      cursor: pointer;
-      transition:
-        border-color 0.2s ease,
-        box-shadow 0.2s ease;
-    }
-
-    .option-item:hover {
-      border-color: var(--ha-primary-color, #03a9f4);
-      box-shadow: 0 2px 8px rgba(3, 169, 244, 0.15);
-    }
-
-    @media (prefers-color-scheme: dark) {
-      .option-item {
-        background-color: var(--ha-card-background, #1e1e1e);
-        border-color: var(--ha-border-color, #333333);
-      }
-
-      .option-item:hover {
-        box-shadow: 0 2px 8px rgba(3, 169, 244, 0.25);
-      }
-    }
-
-    .option-icon {
-      width: 48px;
-      height: 48px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-    }
-
-    .option-icon img {
-      max-width: 100%;
-      max-height: 100%;
-      object-fit: contain;
-    }
-
-    .icon-placeholder {
-      width: 40px;
-      height: 40px;
-      background-color: var(--ha-primary-color, #03a9f4);
-      border-radius: 8px;
-      opacity: 0.2;
-    }
-
-    .option-text {
-      flex: 1;
-      min-width: 0;
-    }
-
-    .option-title {
-      font-size: 1rem;
-      font-weight: 500;
-      color: var(--ha-text-color, #212121);
-      margin: 0 0 0.25rem 0;
-    }
-
-    .option-description {
-      font-size: 0.8125rem;
-      color: var(--ha-secondary-text-color, #727272);
-      margin: 0;
-      line-height: 1.4;
-    }
-
-    .external-icon {
-      color: var(--ha-secondary-text-color, #9e9e9e);
-      font-size: 1.25rem;
-      flex-shrink: 0;
-    }
   `;
 
   render() {
@@ -213,39 +136,19 @@ export class OtherOptionsView extends LitElement {
         <div class="options-list">
           ${OTHER_OPTIONS.map(
             (option) => html`
-              <div
-                class="option-item"
+              <option-card
+                horizontal
+                .title=${option.title}
+                .description=${option.description}
+                .image=${"/assets/icons/" + option.icon + ".svg"}
                 @click=${() => openExternalUrl(option.url)}
+                ><span slot="end" aria-hidden="true">↗</span></option-card
               >
-                <div class="option-icon">${this._renderIcon(option.icon)}</div>
-                <div class="option-text">
-                  <p class="option-title">${option.title}</p>
-                  <p class="option-description">${option.description}</p>
-                </div>
-                <span class="external-icon">↗</span>
-              </div>
             `
           )}
         </div>
       </div>
     `;
-  }
-
-  private _renderIcon(iconName: string) {
-    const iconMap: Record<string, string> = {
-      docker: "/assets/icons/docker.svg",
-      synology: "/assets/icons/synology.svg",
-      qnap: "/assets/icons/qnap.svg",
-      linux: "/assets/icons/linux.svg",
-      windows: "/assets/icons/windows.svg",
-    };
-
-    const iconSrc = iconMap[iconName];
-    if (iconSrc) {
-      return html`<img src=${iconSrc} alt=${iconName} />`;
-    }
-
-    return html`<div class="icon-placeholder"></div>`;
   }
 
   private _onBack() {

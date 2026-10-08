@@ -177,7 +177,9 @@ test("navigation focuses headings without stealing focus on input", async ({
   await expect(
     page.getByRole("heading", { name: "Configure virtual machine" })
   ).toBeFocused();
-  const name = page.locator('proxmox-configure-view input[type="text"]');
+  const name = page
+    .locator("proxmox-configure-view")
+    .getByRole("textbox", { name: "Display name" });
   await name.fill("my-home");
   await expect(name).toBeFocused();
   await page.getByRole("button", { name: "Next", exact: true }).click();

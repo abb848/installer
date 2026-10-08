@@ -175,7 +175,9 @@ test.describe("Proxmox Installation Flow", () => {
     await navigateToProxmoxStep2(page);
 
     const configView = page.locator("proxmox-configure-view");
-    const nameInput = configView.locator(".name-input").first();
+    const nameInput = configView
+      .getByRole("textbox", { name: "Display name" })
+      .first();
 
     await nameInput.clear();
     await nameInput.fill("my-home-assistant");
@@ -234,7 +236,9 @@ test.describe("Proxmox Installation Flow", () => {
     await navigateToProxmoxStep2(page);
 
     const configView = page.locator("proxmox-configure-view");
-    const nameInput = configView.locator(".name-input").first();
+    const nameInput = configView
+      .getByRole("textbox", { name: "Display name" })
+      .first();
     const coresValue = configView.locator(".setting-value").first();
 
     const defaultCores = await coresValue.textContent();
@@ -243,7 +247,10 @@ test.describe("Proxmox Installation Flow", () => {
     await nameInput.clear();
     await nameInput.fill("my-home-assistant");
 
-    const coresSlider = configView.locator('input[type="range"]').first();
+    const coresSlider = configView.getByRole("slider", {
+      name: "CPU cores",
+      exact: true,
+    });
     await coresSlider.focus();
     await coresSlider.press("ArrowRight");
 
@@ -265,9 +272,9 @@ test.describe("Proxmox Installation Flow", () => {
     // not silently reset to the defaults
     await page.locator("wizard-shell").locator(".header wa-button").click();
     await expect(configView).toBeVisible();
-    await expect(configView.locator(".name-input").first()).toHaveValue(
-      "my-home-assistant"
-    );
+    await expect(
+      configView.getByRole("textbox", { name: "Display name" }).first()
+    ).toHaveValue("my-home-assistant");
     await expect(coresValue).toHaveText(chosenCores!);
 
     // And forward again, so what gets installed is what was picked

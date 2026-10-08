@@ -11,7 +11,9 @@ test("holds Next until a restored bridge is verified for the current session", a
     .fill("https://pve.example:8006");
   await page.getByLabel("Password", { exact: true }).fill("test");
   await page.getByRole("button", { name: "Next", exact: true }).click();
-  await expect(page.getByLabel("Network bridge")).toHaveValue("vmbr0");
+  await expect(
+    page.locator('wa-select[label="Network bridge"]')
+  ).toHaveJSProperty("value", "vmbr0");
   await page.getByRole("button", { name: "Next", exact: true }).click();
   await page.evaluate(() => {
     const testWindow = window as typeof window & {
@@ -67,14 +69,32 @@ test("retains the chosen bridge and sends it to VM creation", async ({
   await connection.locator("#password").fill("test");
   await page.getByRole("button", { name: "Next", exact: true }).click();
   const configure = page.locator("proxmox-configure-view");
-  await expect(configure.locator("#network-bridge")).toHaveValue("vmbr0");
-  await configure.getByLabel("Network bridge").selectOption("vmbr1");
+  await expect(configure.locator("#network-bridge")).toHaveJSProperty(
+    "value",
+    "vmbr0"
+  );
+  // Keyboard selection, like the other Web Awesome selects, works in WebKit too
+  const bridgeSelect = configure.getByRole("combobox", {
+    name: "Network bridge",
+    exact: true,
+  });
+  await bridgeSelect.focus();
+  await page.keyboard.press("Space");
+  await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
+  await expect(bridgeSelect).toHaveAttribute("aria-expanded", "false");
+  await expect(configure.locator("#network-bridge")).toHaveJSProperty(
+    "value",
+    "vmbr1"
+  );
   await page.getByRole("button", { name: "Next", exact: true }).click();
   await expect(page.locator("proxmox-confirm-view")).toContainText(
     "Network bridge: vmbr1"
   );
   await page.locator("wizard-shell .header wa-button").click();
-  await expect(configure.getByLabel("Network bridge")).toHaveValue("vmbr1");
+  await expect(
+    configure.locator('wa-select[label="Network bridge"]')
+  ).toHaveJSProperty("value", "vmbr1");
   await expect(
     page.getByRole("button", { name: "Next", exact: true })
   ).toBeEnabled();

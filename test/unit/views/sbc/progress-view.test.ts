@@ -31,9 +31,10 @@ describe("progress-view", () => {
       await el.updateComplete;
 
       expect(el.hasError).to.be.true;
-      expect(el.shadowRoot!.textContent).to.contain(
-        "Missing drive or device configuration"
-      );
+      expect(
+        el.shadowRoot!.querySelector("install-progress")!.shadowRoot!
+          .textContent
+      ).to.contain("Missing drive or device configuration");
       expect(errorEvents).to.equal(1);
     } finally {
       document.removeEventListener("flash-error", onError);

@@ -108,6 +108,10 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo fmt --all --check
 
+      - name: Check generated TypeScript wire types
+        if: runner.os == 'Linux'
+        run: cargo test -p hai-core generated_types_are_current --locked
+
       - name: Check unused dependencies
         if: runner.os == 'Linux'
         run: cargo shear --locked --deny-warnings --format=github

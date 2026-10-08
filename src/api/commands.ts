@@ -16,7 +16,10 @@ import type {
   SystemInfo,
   UtmStatus,
   UtmVmConfig,
+  VmStatusInfo,
 } from "./types.js";
+
+export type { VmStatusInfo } from "./types.js";
 
 /**
  * Whether to answer with mock data because there's no Tauri backend, as in
@@ -191,6 +194,7 @@ async function simulateFlashProgress(
 
   return {
     success: true,
+    error: null,
     duration_secs: 45,
   };
 }
@@ -412,14 +416,6 @@ export async function resizeUtmVmDisk(
     return;
   }
   return invoke<void>("resize_utm_vm_disk", { vmId, sizeGb });
-}
-
-/**
- * VM status info from backend.
- */
-export interface VmStatusInfo {
-  status: string;
-  ip_address: string | null;
 }
 
 /**

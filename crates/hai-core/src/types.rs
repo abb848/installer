@@ -6,8 +6,12 @@
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(test)]
+mod bindings;
+
 /// Represents a block device (SD card, USB drive, etc.)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct BlockDevice {
     /// Unique identifier (e.g., "/dev/sda" on Linux, "disk2" on macOS)
     pub id: String,
@@ -27,6 +31,7 @@ pub struct BlockDevice {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub enum DeviceType {
     SdCard,
     UsbDrive,
@@ -38,6 +43,7 @@ pub enum DeviceType {
 
 /// Progress event sent during flashing
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct FlashProgress {
     /// Current stage of the process
     pub stage: FlashStage,
@@ -71,6 +77,7 @@ impl FlashProgress {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub enum FlashStage {
     Downloading,
     Extracting,
@@ -87,6 +94,7 @@ pub enum FlashStage {
 
 /// Device manifest for supported devices
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct DeviceManifest {
     /// Version of the manifest format
     pub version: u32,
@@ -96,6 +104,7 @@ pub struct DeviceManifest {
 
 /// A supported device in the manifest
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct Device {
     /// Unique device identifier
     pub id: String,
@@ -111,6 +120,7 @@ pub struct Device {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub enum DeviceCategory {
     RaspberryPi,
     Odroid,
@@ -122,6 +132,7 @@ pub enum DeviceCategory {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct HaosConfig {
     /// Board identifier for the HAOS image
     pub board: String,
@@ -143,6 +154,7 @@ impl HaosConfig {
 
 /// Flash request parameters
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct FlashRequest {
     /// Target device ID (block device path)
     pub device_id: String,
@@ -158,7 +170,10 @@ pub struct FlashRequest {
 ///
 /// `device_id` is a path the OS can reassign to another device, for example
 /// while the image downloads. `None` means the field was unknown.
+/// Request-only: serde accepts both omitted fields and explicit nulls.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+#[cfg_attr(test, ts(optional_fields = nullable))]
 pub struct ExpectedDevice {
     pub size: Option<u64>,
     pub model: Option<String>,
@@ -175,6 +190,7 @@ impl ExpectedDevice {
 
 /// HAOS release information from GitHub
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct HaosRelease {
     /// Version string (e.g., "16.3")
     pub version: String,
@@ -197,6 +213,7 @@ impl HaosRelease {
 /// has both `.img.xz` and `.qcow2.xz`), so lookups must pick the format explicitly.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub enum ImageFormat {
     /// Raw disk image (`.img.xz`), written byte-for-byte to a drive
     #[default]
@@ -207,6 +224,7 @@ pub enum ImageFormat {
 
 /// A single HAOS image file
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct HaosImage {
     /// Board name (e.g., "rpi5-64", "green", "generic-x86-64")
     pub board: String,
@@ -240,6 +258,7 @@ pub struct GitHubRelease {
 
 /// Result of a flash operation
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct FlashResult {
     /// Whether the operation was successful
     pub success: bool,
@@ -262,6 +281,7 @@ pub struct StableVersionInfo {
 
 /// Proxmox connection credentials
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct ProxmoxCredentials {
     /// Proxmox server URL (e.g., https://192.168.1.100:8006)
     pub server_url: String,
@@ -271,11 +291,13 @@ pub struct ProxmoxCredentials {
     pub password: String,
     /// Optional time-based one-time password from an authenticator app.
     #[serde(default)]
+    #[cfg_attr(test, ts(optional = nullable))]
     pub totp: Option<String>,
 }
 
 /// Proxmox session (authentication result)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct ProxmoxSession {
     /// Server URL for the session
     pub server_url: String,
@@ -287,6 +309,7 @@ pub struct ProxmoxSession {
 
 /// Proxmox node information
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct ProxmoxNode {
     /// Node name
     pub name: String,
@@ -302,6 +325,7 @@ pub struct ProxmoxNode {
 
 /// Proxmox storage information
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct ProxmoxStorage {
     /// Storage name
     pub name: String,
@@ -319,6 +343,7 @@ pub struct ProxmoxStorage {
 
 /// Configuration for creating a Proxmox VM
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct ProxmoxVmConfig {
     /// Target node name
     pub node: String,
@@ -340,6 +365,7 @@ pub struct ProxmoxVmConfig {
 
 /// Proxmox VM creation result
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct ProxmoxVmResult {
     /// The created VM ID
     pub vm_id: u32,
@@ -355,6 +381,7 @@ pub struct ProxmoxVmResult {
 
 /// Configuration for creating a UTM virtual machine
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct UtmVmConfig {
     /// VM name
     pub name: String,
@@ -372,6 +399,7 @@ pub struct UtmVmConfig {
 
 /// UTM VM creation result
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct UtmVmResult {
     /// UTM's unique identifier, used for subsequent status and start commands
     pub id: String,
@@ -383,6 +411,7 @@ pub struct UtmVmResult {
 
 /// UTM application status
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct UtmStatus {
     /// Whether UTM is installed
     pub installed: bool,
@@ -398,6 +427,7 @@ pub struct UtmStatus {
 
 /// Host system information (CPU cores and memory)
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct SystemInfo {
     /// Number of logical CPU cores.
     pub cpu_cores: usize,
@@ -407,6 +437,7 @@ pub struct SystemInfo {
 
 /// Status of a provisioned VM
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 pub struct VmStatusInfo {
     /// VM run status (e.g. "started", "unknown").
     pub status: String,

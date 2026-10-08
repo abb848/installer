@@ -88,7 +88,11 @@ describe("progress-view", () => {
       stage: "complete",
       progress: 100,
     });
-    attempts[0].result.resolve({ success: true, duration_secs: 1 });
+    attempts[0].result.resolve({
+      success: true,
+      error: null,
+      duration_secs: 1,
+    });
     await settle();
     expect(completed).to.equal(1);
     expect(errors).to.equal(0);
@@ -133,7 +137,11 @@ describe("progress-view", () => {
         total_bytes: 2048,
         message: "Complete",
       });
-      attempts[1].result.resolve({ success: true, duration_secs: 1 });
+      attempts[1].result.resolve({
+        success: true,
+        error: null,
+        duration_secs: 1,
+      });
       await settle();
       expect(completed).to.equal(1);
       expect(errors).to.equal(1);

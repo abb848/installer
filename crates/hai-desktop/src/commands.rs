@@ -8,9 +8,9 @@ use crate::flash_state::FlashState;
 use hai_core::download::TemporaryImage;
 use hai_core::{
     BlockDevice, DeviceBackend, DeviceManifest, ExpectedDevice, FlashProgress, FlashRequest,
-    FlashStage, HaosRelease, HostBackend, ImageFormat, ProgressCallback, ProxmoxBackend,
-    ProxmoxCredentials, ProxmoxNode, ProxmoxSession, ProxmoxStorage, ProxmoxVmConfig,
-    ProxmoxVmResult, ReleaseSource, SystemInfo, UtmBackend, VmStatusInfo,
+    FlashResult, FlashStage, HaosRelease, HostBackend, ImageFormat, ProgressCallback,
+    ProxmoxBackend, ProxmoxCredentials, ProxmoxNode, ProxmoxSession, ProxmoxStorage,
+    ProxmoxVmConfig, ProxmoxVmResult, ReleaseSource, SystemInfo, UtmBackend, VmStatusInfo,
 };
 use tauri::ipc::Channel;
 
@@ -42,18 +42,6 @@ impl<'a> ProgressCallback for TauriProgressCallback<'a> {
     fn on_progress(&self, progress: FlashProgress) {
         let _ = self.channel.send(progress);
     }
-}
-
-// =============================================================================
-// Request/Response Types
-// =============================================================================
-
-/// Result of a flash operation
-#[derive(Debug, serde::Serialize)]
-pub struct FlashResult {
-    pub success: bool,
-    pub error: Option<String>,
-    pub duration_secs: u64,
 }
 
 // =============================================================================
@@ -639,6 +627,19 @@ mod tests {
     #[tokio::test]
     async fn check_connection_uses_mock_backend() {
         assert!(check_connection().await.is_ok());
+    }
+
+    #[test]
+    fn flash_command_result_keeps_its_wire_shape() {
+        let result = FlashResult {
+            success: true,
+            error: None,
+            duration_secs: 42,
+        };
+        assert_eq!(
+            serde_json::to_value(result).unwrap(),
+            serde_json::json!({"success": true, "error": null, "duration_secs": 42})
+        );
     }
 
     #[test]

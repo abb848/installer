@@ -44,6 +44,18 @@ npm run test:e2e
 cargo test --workspace
 ```
 
+### Shared Wire Types
+
+`src/api/types.ts` is generated from the Rust types in `hai-core`. After changing
+an IPC request, response, or progress type, run `npm run generate:types` and commit
+the output. Register new shared types in `types/bindings.rs`. The generator runs
+only in tests and preserves serde names and nullable `Option` fields. JSON integer
+fields remain TypeScript `number`, matching Tauri's existing wire representation
+and precision limits. `ExpectedDevice` request fields also allow omission, as
+accepted by serde; response fields with `None` are required nullable values.
+CI checks the committed file without rewriting it. Handwritten command wrappers
+remain in `src/api/commands.ts`; this does not generate command bindings.
+
 ## Development Guidelines
 
 ### Code Style

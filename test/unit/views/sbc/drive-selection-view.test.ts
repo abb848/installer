@@ -174,6 +174,8 @@ function drive(overrides: Partial<BlockDevice> = {}): BlockDevice {
     size: 64_000_000_000,
     device_type: "usb_drive",
     removable: true,
+    model: null,
+    vendor: null,
     ...overrides,
   };
 }

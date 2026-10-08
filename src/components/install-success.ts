@@ -88,15 +88,17 @@ export class InstallSuccess extends LitElement {
       color: var(--ha-text-color, #212121);
       line-height: 1.5;
       padding-top: 2px;
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
 
-    .step-text a {
+    .next-steps a {
       color: var(--ha-primary-color, #03a9f4);
       text-decoration: none;
       font-weight: 500;
     }
 
-    .step-text a:hover {
+    .next-steps a:hover {
       text-decoration: underline;
     }
 
@@ -187,6 +189,17 @@ export class InstallSuccess extends LitElement {
       text-align: left;
     }
 
+    .notice {
+      padding: 0.75rem 0 0.75rem 1rem;
+      border-left: 3px solid var(--ha-warning-color, #f5a623);
+      line-height: 1.5;
+      margin: 1.25rem 0;
+    }
+
+    .next-steps-footer {
+      margin: 1.25rem 0 0;
+    }
+
     .tip-section strong {
       color: var(--ha-primary-color, #03a9f4);
     }
@@ -194,6 +207,10 @@ export class InstallSuccess extends LitElement {
   @property({ attribute: false }) subtitle: string | TemplateResult = "";
   @property({ attribute: false }) steps: (string | TemplateResult)[] = [];
   @property({ attribute: false }) tip: string | TemplateResult = "";
+  /** Shown above the steps, for something to avoid before starting them. */
+  @property({ attribute: false }) notice: string | TemplateResult = "";
+  /** Shown below the steps, such as a link to further documentation. */
+  @property({ attribute: false }) footer: string | TemplateResult = "";
 
   render() {
     return html`
@@ -202,6 +219,7 @@ export class InstallSuccess extends LitElement {
       <p class="subtitle">${this.subtitle}</p>
       <div class="next-steps">
         <p class="next-steps-title">Next steps</p>
+        ${this.notice ? html`<p class="notice">${this.notice}</p>` : ""}
         <ol class="steps-list">
           ${this.steps.map(
             (step, index) => html`
@@ -212,6 +230,9 @@ export class InstallSuccess extends LitElement {
             `
           )}
         </ol>
+        ${this.footer
+          ? html`<p class="next-steps-footer">${this.footer}</p>`
+          : ""}
       </div>
       ${this.tip ? html`<div class="tip-section">${this.tip}</div>` : ""}
       <div class="companion-section">

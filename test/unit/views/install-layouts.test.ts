@@ -137,10 +137,10 @@ describe("shared install layouts", () => {
       const layout = view.shadowRoot!.querySelector("install-success")!;
       const content = layout.shadowRoot!;
       expect(content.querySelectorAll(".step-item").length).to.equal(
-        flow === "sbc" ? 4 : 3
+        flow === "sbc" ? 5 : 3
       );
       expect(content.querySelector(".subtitle")!.textContent).to.contain(
-        flow === "sbc" ? "Raspberry Pi 5" : "My home"
+        flow === "sbc" ? "written to your storage device" : "My home"
       );
       if (flow === "proxmox") {
         expect(content.querySelector(".subtitle")!.textContent).to.contain(
@@ -158,7 +158,9 @@ describe("shared install layouts", () => {
         appLink.click();
       await settle();
       expect(opened).to.deep.equal([
-        flow === "sbc" ? "http://homeassistant.local" : "http://192.0.2.50",
+        flow === "sbc"
+          ? "http://homeassistant.local:8123"
+          : "http://192.0.2.50",
         "https://apps.apple.com/app/home-assistant/id1099568401",
         "https://play.google.com/store/apps/details?id=io.homeassistant.companion.android",
       ]);

@@ -679,6 +679,8 @@ async fn download_image_with_client<P: ProgressCallback>(
     });
 
     // Keep unverified bytes private, and remove them on error or cancellation.
+    // Installation downloads live inside an owned TemporaryImage directory;
+    // startup pruning reclaims abandoned directories, including nested temp files.
     let mut file = tempfile::NamedTempFile::new_in(directory)?;
     let mut downloaded: u64 = 0;
     let mut last_progress_update: u64 = 0;
@@ -1951,27 +1953,44 @@ mod tests {
         let cache = tempfile::tempdir().unwrap();
         let live = TemporaryImage::new(cache.path(), ImageFormat::Raw).unwrap();
         std::fs::write(live.path(), b"live").unwrap();
+        let live_partial = live.archive_path().with_file_name(".tmp-live-partial");
+        std::fs::write(&live_partial, b"partial").unwrap();
         let abandoned = cache.path().join("hai-image-1234567890123456");
         std::fs::create_dir(&abandoned).unwrap();
         std::fs::write(abandoned.join("image.img"), b"abandoned").unwrap();
+        let abandoned_partial = abandoned.join(".tmp-abandoned-partial");
+        std::fs::write(&abandoned_partial, b"partial").unwrap();
         let mut lock = std::fs::File::create(abandoned.join(".owner")).unwrap();
         lock.lock().unwrap();
         lock.write_all(IMAGE_OWNER_MARKER.as_bytes()).unwrap();
         let unowned = cache.path().join("hai-image-0000000000000000");
         std::fs::create_dir(&unowned).unwrap();
         std::fs::write(unowned.join(".owner"), b"not an installer image").unwrap();
+        let importing = TemporaryImage::new(cache.path(), ImageFormat::Qcow2).unwrap();
+        let retained_partial = importing
+            .archive_path()
+            .with_file_name(".tmp-retained-partial");
+        std::fs::write(&retained_partial, b"partial").unwrap();
+        importing.begin_utm_import().unwrap();
+        drop(importing);
         prune_cached_images(cache.path()).unwrap();
         assert!(
             abandoned.exists(),
             "separately held lock must protect the directory"
         );
         assert!(live.path().exists());
+        assert!(live_partial.exists());
+        assert!(abandoned_partial.exists());
+        assert!(retained_partial.exists());
         // Make the unlocked fixture independent of when all descriptors close.
         lock.unlock().unwrap();
         drop(lock);
         prune_cached_images(cache.path()).unwrap();
         assert!(!abandoned.exists());
+        assert!(!abandoned_partial.exists());
         assert!(live.path().exists());
+        assert!(live_partial.exists());
+        assert!(retained_partial.exists());
         assert!(unowned.exists());
     }
 

@@ -164,6 +164,13 @@ the installer does not synthesize asset metadata or skip verification to guess a
 direct download URL. An alternative trusted metadata/digest source for that case
 remains deferred under #170; the required digest verification is already enforced.
 
+Normal errors and cancellation remove the unverified temporary file. Installation
+downloads stage that file inside an owned `TemporaryImage` directory. After a quit
+or crash, startup `prune_cached_images` removes abandoned, unlocked owned
+directories, including these nested files; live owners and uncertain UTM imports
+remain protected. Direct library callers remain responsible for their destination
+directory's lifecycle.
+
 ```rust
 // crates/hai-core/src/download.rs
 

@@ -69,9 +69,9 @@ fn mock_haos_release() -> HaosRelease {
                 size: 341_537_340,
             },
             HaosImage {
-                board: "generic-x86-64".to_string(),
+                board: "ova".to_string(),
                 format: ImageFormat::Qcow2,
-                download_url: "https://github.com/home-assistant/operating-system/releases/download/16.3/haos_generic-x86-64-16.3.qcow2.xz".to_string(),
+                download_url: "https://github.com/home-assistant/operating-system/releases/download/16.3/haos_ova-16.3.qcow2.xz".to_string(),
                 digest: None,
                 size: 396_000_000,
             },

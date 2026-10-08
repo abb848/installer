@@ -309,13 +309,12 @@ pub async fn download_utm_image(
         .check_utm_status()
         .await
         .map_err(|e| e.to_string())?;
-    let arch = if cfg!(target_arch = "aarch64") {
-        "generic-aarch64"
-    } else {
-        "generic-x86-64"
-    };
+    #[cfg(all(feature = "mock", not(target_os = "macos")))]
+    let arch = hai_core::utm::UtmArchitecture::X86_64;
+    #[cfg(any(not(feature = "mock"), target_os = "macos"))]
+    let arch = hai_core::utm::UtmArchitecture::host().map_err(|e| e.to_string())?;
 
-    let image = run_utm_download(&Backend, arch, &callback).await?;
+    let image = run_utm_download(&Backend, arch.haos_board(), &callback).await?;
     let path = image.path().to_string_lossy().into_owned();
     pending.0.lock().unwrap().insert(path.clone(), image);
     Ok(path)
@@ -1241,7 +1240,7 @@ mod mock_tests {
         .await
         .unwrap_err();
         assert!(error.contains("Checksum mismatch"));
-        for board in ["generic-aarch64", "generic-x86-64"] {
+        for board in ["generic-aarch64", "ova"] {
             let error = run_utm_download(&backend, board, &NoOpProgress)
                 .await
                 .unwrap_err();
@@ -1302,12 +1301,62 @@ mod mock_tests {
     #[tokio::test]
     #[serial] // all share the mock cache directory
     async fn run_utm_download_returns_extracted_image() {
-        let image = run_utm_download(&BackendMock, "generic-aarch64", &NoOpProgress)
+        use hai_core::utm::UtmArchitecture;
+
+        for arch in [UtmArchitecture::Aarch64, UtmArchitecture::X86_64] {
+            let release = BackendMock
+                .get_latest_haos_release_for_board(arch.haos_board())
+                .await
+                .unwrap();
+            let image = release
+                .image_for(arch.haos_board(), ImageFormat::Qcow2)
+                .unwrap();
+            assert!(image
+                .download_url
+                .ends_with(&format!("haos_{}-16.3.qcow2.xz", arch.haos_board())));
+            let image = run_utm_download(&BackendMock, arch.haos_board(), &NoOpProgress)
+                .await
+                .unwrap();
+            let path = image.path();
+            assert!(path.exists());
+            drop(image);
+            assert!(!path.exists());
+        }
+    }
+
+    #[tokio::test]
+    #[serial]
+    #[cfg(not(target_os = "macos"))]
+    async fn mock_utm_download_command_works_without_native_mac_architecture() {
+        use tauri::Manager;
+
+        // Off macOS the mock command uses the Intel OVA board without Rosetta
+        // detection; run_utm_download_returns_extracted_image covers that board.
+        let app = tauri::test::mock_app();
+        app.manage(PendingUtmImages::default());
+        let path = download_utm_image(Channel::new(|_| Ok(())), app.state())
             .await
             .unwrap();
-        let path = image.path();
-        assert!(path.exists());
-        drop(image);
-        assert!(!path.exists());
+        assert!(std::path::Path::new(&path).exists());
+        assert!(path.ends_with(".qcow2"));
+        assert!(app
+            .state::<PendingUtmImages>()
+            .0
+            .lock()
+            .unwrap()
+            .contains_key(&path));
+        discard_utm_image(path.clone(), app.state());
+        assert!(!std::path::Path::new(&path).exists());
+    }
+
+    #[tokio::test]
+    async fn mock_release_preserves_raw_intel_image_without_inventing_qcow2() {
+        let release = BackendMock.get_haos_release("latest").await.unwrap();
+        assert!(release
+            .image_for("generic-x86-64", ImageFormat::Raw)
+            .is_some());
+        assert!(release
+            .image_for("generic-x86-64", ImageFormat::Qcow2)
+            .is_none());
     }
 }

@@ -1628,12 +1628,9 @@ mod tests {
 
     #[test]
     fn test_parse_board_from_filename_qcow2() {
-        let result = parse_board_from_filename_with_suffix(
-            "haos_generic-x86-64-14.2.qcow2.xz",
-            "14.2",
-            ".qcow2.xz",
-        );
-        assert_eq!(result.unwrap(), "generic-x86-64");
+        let result =
+            parse_board_from_filename_with_suffix("haos_ova-14.2.qcow2.xz", "14.2", ".qcow2.xz");
+        assert_eq!(result.unwrap(), "ova");
 
         let result = parse_board_from_filename_with_suffix(
             "haos_generic-aarch64-14.2.qcow2.xz",
@@ -1670,7 +1667,7 @@ mod tests {
                     browser_download_url: "https://github.com/download/rpi5.img.xz".to_string(),
                 },
                 GitHubAsset {
-                    name: "haos_generic-x86-64-14.2.qcow2.xz".to_string(),
+                    name: "haos_ova-14.2.qcow2.xz".to_string(),
                     digest: None,
                     size: 600_000_000,
                     browser_download_url: "https://github.com/download/x86.qcow2.xz".to_string(),
@@ -1695,11 +1692,7 @@ mod tests {
         assert_eq!(rpi_image.size, 500_000_000);
 
         // Check x86 qcow2 image
-        let x86_image = parsed
-            .images
-            .iter()
-            .find(|i| i.board == "generic-x86-64")
-            .unwrap();
+        let x86_image = parsed.images.iter().find(|i| i.board == "ova").unwrap();
         assert_eq!(x86_image.format, ImageFormat::Qcow2);
         assert_eq!(x86_image.size, 600_000_000);
     }
@@ -2224,7 +2217,7 @@ mod tests {
                             "digest": "sha256:abc123"
                         },
                         {
-                            "name": "haos_generic-x86-64-14.2.qcow2.xz",
+                            "name": "haos_ova-14.2.qcow2.xz",
                             "size": 600000000,
                             "browser_download_url": "https://github.com/download/x86.qcow2.xz",
                             "digest": "sha256:def456"
@@ -2242,7 +2235,7 @@ mod tests {
             assert_eq!(release.version, "14.2");
             assert_eq!(release.images.len(), 2);
             assert!(release.images.iter().any(|i| i.board == "rpi5-64"));
-            assert!(release.images.iter().any(|i| i.board == "generic-x86-64"));
+            assert!(release.images.iter().any(|i| i.board == "ova"));
 
             mock.assert_async().await;
         }
@@ -2548,7 +2541,7 @@ mod tests {
                     "tag_name": "14.2",
                     "assets": [
                         {
-                            "name": "haos_generic-x86-64-14.2.qcow2.xz",
+                            "name": "haos_ova-14.2.qcow2.xz",
                             "size": 600000000,
                             "browser_download_url": "https://github.com/download/x86.qcow2.xz",
                             "digest": "sha256:qcow2hash"
@@ -2564,7 +2557,7 @@ mod tests {
 
             let release = result.unwrap();
             assert_eq!(release.images.len(), 1);
-            assert_eq!(release.images[0].board, "generic-x86-64");
+            assert_eq!(release.images[0].board, "ova");
             assert!(release.images[0].download_url.contains("qcow2"));
 
             mock.assert_async().await;

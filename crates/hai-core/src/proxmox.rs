@@ -13,7 +13,8 @@
 //! 5. Wait for upload task to complete
 //! 6. Create VM with UEFI/OVMF, EFI disk, and import-from to import the disk
 //! 7. Wait for VM creation task to complete
-//! 8. Start VM and wait for IP via QEMU guest agent
+//! 8. Resize the imported disk to the selected size and wait for completion
+//! 9. Start VM and wait for IP via QEMU guest agent
 //!
 //! References:
 //! - https://forum.proxmox.com/threads/api-equivalent-of-qm-importdisk.157457/
@@ -30,6 +31,19 @@ use std::collections::HashSet;
 /// Minimum required Proxmox VE version for disk image import via API.
 /// Version 8.4.1 added support for uploading qcow2/raw/img/vmdk files with content=import.
 const MIN_PROXMOX_VERSION: (u32, u32, u32) = (8, 4, 1);
+
+/// Minimum size of the HAOS OVA disk, matching the configure view.
+const MIN_DISK_SIZE_GB: u32 = 32;
+
+fn validate_disk_size(disk_size_gb: u32) -> Result<()> {
+    if disk_size_gb < MIN_DISK_SIZE_GB {
+        return Err(Error::ProxmoxApi(format!(
+            "The HAOS disk must be at least {} GiB. Proxmox cannot shrink the imported disk.",
+            MIN_DISK_SIZE_GB
+        )));
+    }
+    Ok(())
+}
 
 /// How often to send progress updates (every N bytes)
 const PROGRESS_UPDATE_INTERVAL: u64 = 10 * 1024 * 1024; // 10 MB
@@ -976,7 +990,7 @@ async fn upload_image_to_proxmox<P: ProgressCallback>(
 /// Create a VM with the disk imported during creation.
 ///
 /// Uses the `import-from` parameter on scsi0 to import the uploaded
-/// disk image during VM creation.
+/// disk image during VM creation, then grows it to the selected size.
 async fn create_vm_with_disk(
     session: &ProxmoxSession,
     config: &ProxmoxVmConfig,
@@ -984,6 +998,11 @@ async fn create_vm_with_disk(
     storage_name: &str,
     source_unused: &mut bool,
 ) -> Result<()> {
+    if let Err(error) = validate_disk_size(config.disk_size_gb) {
+        *source_unused = true;
+        return Err(error);
+    }
+
     let url = format!(
         "{}/api2/json/nodes/{}/qemu",
         session.server_url.trim_end_matches('/'),
@@ -1052,7 +1071,58 @@ async fn create_vm_with_disk(
     // Deleting the source is only safe after confirmed import completion.
     wait_for_task_completion(session, &config.node, upid, 600, source_unused).await?;
 
-    Ok(())
+    resize_vm_disk(session, config).await.map_err(|error| {
+        let message = match error {
+            Error::ProxmoxApi(message) => message,
+            other => other.to_string(),
+        };
+        Error::ProxmoxApi(format!(
+            "VM {} was created but its disk could not be resized: {}",
+            config.vm_id, message
+        ))
+    })
+}
+
+/// Apply an absolute size, including the minimum, so Proxmox checks the actual
+/// imported volume and rejects shrinking if a future HAOS image is larger.
+async fn resize_vm_disk(session: &ProxmoxSession, config: &ProxmoxVmConfig) -> Result<()> {
+    let url = format!(
+        "{}/api2/json/nodes/{}/qemu/{}/resize",
+        session.server_url.trim_end_matches('/'),
+        config.node,
+        config.vm_id
+    );
+    let client = create_client(60)?;
+    let response = client
+        .put(&url)
+        .header("Cookie", format!("PVEAuthCookie={}", session.ticket))
+        .header("CSRFPreventionToken", &session.csrf_token)
+        .form(&[
+            ("disk", "scsi0".to_string()),
+            ("size", format!("{}G", config.disk_size_gb)),
+        ])
+        .send()
+        .await
+        .map_err(|e| Error::ProxmoxApi(format!("Failed to resize VM disk: {}", e)))?;
+
+    let status = response.status();
+    let response_text = response.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(Error::ProxmoxApi(format!(
+            "Failed to resize VM disk ({}): {}",
+            status, response_text
+        )));
+    }
+
+    let json: serde_json::Value = serde_json::from_str(&response_text)
+        .map_err(|e| Error::ProxmoxApi(format!("Failed to parse disk resize response: {}", e)))?;
+    let upid = json
+        .get("data")
+        .and_then(|v| v.as_str())
+        .filter(|upid| !upid.is_empty())
+        .ok_or_else(|| Error::ProxmoxApi("Disk resize response missing task UPID".to_string()))?;
+
+    wait_for_task(session, &config.node, upid, 600).await
 }
 
 async fn delete_import_image(
@@ -1297,6 +1367,8 @@ async fn create_vm<B: ReleaseSource, P: ProgressCallback>(
     config: &ProxmoxVmConfig,
     progress_callback: &P,
 ) -> Result<ProxmoxVmResult> {
+    validate_disk_size(config.disk_size_gb)?;
+
     // Step 1: Get HAOS release info
     progress_callback.on_progress(FlashProgress {
         stage: FlashStage::Downloading,
@@ -1364,7 +1436,7 @@ async fn create_vm<B: ReleaseSource, P: ProgressCallback>(
     .await?;
     drop(temporary_image);
 
-    // Step 5: Create the VM with disk import
+    // Step 5: Create the VM with disk import and apply the selected size
     progress_callback.on_progress(FlashProgress {
         stage: FlashStage::Verifying,
         progress: 0,
@@ -3156,7 +3228,14 @@ mod tests {
         #[tokio::test]
         #[serial]
         async fn test_create_vm_with_disk_success() {
+            for disk_size_gb in [32, 64, 128, 256, 512] {
+                check_create_vm_with_disk_size(disk_size_gb).await;
+            }
+        }
+
+        async fn check_create_vm_with_disk_size(disk_size_gb: u32) {
             let mut server = Server::new_async().await;
+            let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
 
             let vm_create_mock = server
                 .mock("POST", "/api2/json/nodes/pve/qemu")
@@ -3181,6 +3260,7 @@ mod tests {
                 .await;
 
             // Mock task completion
+            let create_requests = requests.clone();
             let task_mock = server
                 .mock(
                     "GET",
@@ -3188,15 +3268,38 @@ mod tests {
                 )
                 .with_status(200)
                 .with_header("content-type", "application/json")
-                .with_body(
-                    r#"{
-                        "data": {
-                            "status": "stopped",
-                            "exitstatus": "OK"
-                        }
-                    }"#,
-                )
+                .with_body_from_request(move |_| {
+                    create_requests.lock().unwrap().push("import complete");
+                    r#"{"data":{"status":"stopped","exitstatus":"OK"}}"#.into()
+                })
                 .expect_at_least(1)
+                .create_async()
+                .await;
+
+            let resize_requests = requests.clone();
+            let resize_mock = server
+                .mock("PUT", "/api2/json/nodes/pve/qemu/100/resize")
+                .match_header("Cookie", "PVEAuthCookie=test-ticket")
+                .match_header("CSRFPreventionToken", "test-csrf")
+                .match_body(Matcher::AllOf(vec![
+                    Matcher::UrlEncoded("disk".into(), "scsi0".into()),
+                    Matcher::UrlEncoded("size".into(), format!("{}G", disk_size_gb)),
+                ]))
+                .with_header("content-type", "application/json")
+                .with_body_from_request(move |_| {
+                    resize_requests.lock().unwrap().push("resize requested");
+                    r#"{"data":"resize-task"}"#.into()
+                })
+                .create_async()
+                .await;
+            let resize_task_requests = requests.clone();
+            let resize_task_mock = server
+                .mock("GET", "/api2/json/nodes/pve/tasks/resize-task/status")
+                .with_header("content-type", "application/json")
+                .with_body_from_request(move |_| {
+                    resize_task_requests.lock().unwrap().push("resize complete");
+                    r#"{"data":{"status":"stopped","exitstatus":"OK"}}"#.into()
+                })
                 .create_async()
                 .await;
 
@@ -3213,7 +3316,7 @@ mod tests {
                 storage: "local-lvm".to_string(),
                 cpu_cores: 2,
                 memory_mb: 2048,
-                disk_size_gb: 32,
+                disk_size_gb,
                 auto_start: false,
             };
 
@@ -3229,6 +3332,176 @@ mod tests {
 
             vm_create_mock.assert_async().await;
             task_mock.assert_async().await;
+            resize_mock.assert_async().await;
+            resize_task_mock.assert_async().await;
+            assert_eq!(
+                *requests.lock().unwrap(),
+                ["import complete", "resize requested", "resize complete"]
+            );
+        }
+
+        fn disk_test_config(disk_size_gb: u32) -> ProxmoxVmConfig {
+            ProxmoxVmConfig {
+                vm_id: 100,
+                name: "test-vm".into(),
+                node: "pve".into(),
+                storage: "local-lvm".into(),
+                cpu_cores: 2,
+                memory_mb: 2048,
+                disk_size_gb,
+                auto_start: true,
+            }
+        }
+
+        #[tokio::test]
+        async fn test_disk_minimum_rejected_before_download_or_creation() {
+            let session = ProxmoxSession {
+                server_url: "http://127.0.0.1:1".into(),
+                ticket: "test-ticket".into(),
+                csrf_token: "test-csrf".into(),
+            };
+            for size in [0, 1, 31] {
+                let config = disk_test_config(size);
+                let error = create_vm(&Backend, &session, &config, &crate::NoOpProgress)
+                    .await
+                    .unwrap_err();
+                assert!(error.to_string().contains("at least 32 GiB"));
+                let mut source_unused = false;
+                let error = create_vm_with_disk(
+                    &session,
+                    &config,
+                    "haos.qcow2",
+                    "local",
+                    &mut source_unused,
+                )
+                .await
+                .unwrap_err();
+                assert!(error.to_string().contains("cannot shrink"));
+                assert!(source_unused);
+            }
+        }
+
+        #[tokio::test]
+        async fn test_disk_resize_failures_propagate_from_creation() {
+            for (status, body, task_status, expected_error) in [
+                (500, "Insufficient storage", None, "Insufficient storage"),
+                (403, "Permission denied", None, "Permission denied"),
+                (200, "invalid json", None, "parse disk resize response"),
+                (200, r#"{"data":null}"#, None, "missing task UPID"),
+                (200, r#"{"data":""}"#, None, "missing task UPID"),
+                (200, r#"{"data":12}"#, None, "missing task UPID"),
+                (
+                    200,
+                    r#"{"data":"resize-task"}"#,
+                    Some("shrinking disks is not supported"),
+                    "shrinking disks is not supported",
+                ),
+            ] {
+                let mut server = Server::new_async().await;
+                let create_mock = server
+                    .mock("POST", "/api2/json/nodes/pve/qemu")
+                    .with_header("content-type", "application/json")
+                    .with_body(r#"{"data":"create-task"}"#)
+                    .create_async()
+                    .await;
+                let create_task = server
+                    .mock("GET", "/api2/json/nodes/pve/tasks/create-task/status")
+                    .with_header("content-type", "application/json")
+                    .with_body(r#"{"data":{"status":"stopped","exitstatus":"OK"}}"#)
+                    .create_async()
+                    .await;
+                let resize_mock = server
+                    .mock("PUT", "/api2/json/nodes/pve/qemu/100/resize")
+                    .with_status(status)
+                    .with_body(body)
+                    .create_async()
+                    .await;
+                let resize_task = server
+                    .mock("GET", "/api2/json/nodes/pve/tasks/resize-task/status")
+                    .with_header("content-type", "application/json")
+                    .with_body(
+                        serde_json::json!({
+                            "data": {"status": "stopped", "exitstatus": task_status}
+                        })
+                        .to_string(),
+                    )
+                    .expect(usize::from(task_status.is_some()))
+                    .create_async()
+                    .await;
+                let session = ProxmoxSession {
+                    server_url: server.url(),
+                    ticket: "test-ticket".into(),
+                    csrf_token: "test-csrf".into(),
+                };
+                let delete = server
+                    .mock(
+                        "DELETE",
+                        "/api2/json/nodes/pve/storage/local/content/local%3Aimport%2Fhaos.qcow2",
+                    )
+                    .with_status(500)
+                    .create_async()
+                    .await;
+                let error = import_and_cleanup_image(
+                    &session,
+                    &disk_test_config(32),
+                    "haos.qcow2",
+                    "local",
+                )
+                .await
+                .unwrap_err();
+                assert!(error.to_string().contains(expected_error), "{error}");
+                assert!(error
+                    .to_string()
+                    .contains("VM 100 was created but its disk could not be resized"));
+                assert_eq!(error.to_string().matches("Proxmox API error:").count(), 1);
+                create_mock.assert_async().await;
+                create_task.assert_async().await;
+                resize_mock.assert_async().await;
+                resize_task.assert_async().await;
+                delete.assert_async().await;
+            }
+        }
+
+        #[tokio::test]
+        async fn test_disk_resize_requires_successful_import() {
+            for body in [r#"{"data":null}"#, r#"{"data":"create-task"}"#] {
+                let mut server = Server::new_async().await;
+                let create_mock = server
+                    .mock("POST", "/api2/json/nodes/pve/qemu")
+                    .with_header("content-type", "application/json")
+                    .with_body(body)
+                    .create_async()
+                    .await;
+                let create_task = server
+                    .mock("GET", "/api2/json/nodes/pve/tasks/create-task/status")
+                    .with_header("content-type", "application/json")
+                    .with_body(r#"{"data":{"status":"stopped","exitstatus":"import failed"}}"#)
+                    .expect(usize::from(body.contains("create-task")))
+                    .create_async()
+                    .await;
+                let resize_mock = server
+                    .mock("PUT", "/api2/json/nodes/pve/qemu/100/resize")
+                    .expect(0)
+                    .create_async()
+                    .await;
+                let session = ProxmoxSession {
+                    server_url: server.url(),
+                    ticket: "test-ticket".into(),
+                    csrf_token: "test-csrf".into(),
+                };
+                assert!(create_vm_with_disk(
+                    &session,
+                    &disk_test_config(64),
+                    "haos.qcow2",
+                    "local",
+                    &mut false,
+                )
+                .await
+                .is_err());
+                create_mock.assert_async().await;
+                create_task.assert_async().await;
+                resize_mock.assert_async().await;
+            }
         }
 
         #[tokio::test]
@@ -3322,6 +3595,16 @@ mod tests {
                     })
                     .create_async()
                     .await;
+                let resize = server
+                    .mock("PUT", "/api2/json/nodes/pve/qemu/100/resize")
+                    .with_body(r#"{"data":"resize-task"}"#)
+                    .create_async()
+                    .await;
+                let resize_task = server
+                    .mock("GET", "/api2/json/nodes/pve/tasks/resize-task/status")
+                    .with_body(r#"{"data":{"status":"stopped","exitstatus":"OK"}}"#)
+                    .create_async()
+                    .await;
                 let delete = server.mock("DELETE", "/api2/json/nodes/pve/storage/local-import/content/local-import%3Aimport%2Fhai-image-unique.qcow2")
                     .match_header("cookie", "PVEAuthCookie=test-ticket")
                     .match_header("CSRFPreventionToken", "test-csrf")
@@ -3361,6 +3644,8 @@ mod tests {
                 .unwrap();
                 create.assert_async().await;
                 task.assert_async().await;
+                resize.assert_async().await;
+                resize_task.assert_async().await;
                 delete.assert_async().await;
                 cleanup_task.assert_async().await;
             }

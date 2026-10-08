@@ -1,4 +1,4 @@
-import type { HaosConfig, ProxmoxSession } from "../api/types.js";
+import type { HaosConfig, ProxmoxSession, UtmVmConfig } from "../api/types.js";
 import type { InstallationPath } from "../views/path-selection-view.js";
 
 export type WizardFlow = InstallationPath;
@@ -39,6 +39,10 @@ export interface WizardSelections {
 
   /** UTM install progress, so a retry resumes instead of starting over. */
   vmId?: string;
+  /** Native creation outlives its view; reentry must await the same result. */
+  utmCreation?: { config: UtmVmConfig; result: Promise<string> };
+  /** A completed VM with superseded settings must not be silently recreated. */
+  utmSupersededVmId?: string;
   /** Set once the disk of the VM in `vmId` has been resized. */
   utmDiskResized?: boolean;
 
@@ -113,7 +117,13 @@ function createInitialState(): WizardState {
 
 class WizardStateStore {
   private state: WizardState = createInitialState();
+  private _flowGeneration = 0;
   private listeners: Set<WizardStateListener> = new Set();
+
+  /** Identifies a flow across navigation and selection updates. */
+  get flowGeneration(): number {
+    return this._flowGeneration;
+  }
 
   getState(): WizardState {
     return this.state;
@@ -129,6 +139,7 @@ class WizardStateStore {
   }
 
   startFlow(flow: WizardFlow) {
+    this._flowGeneration++;
     this.state = {
       currentFlow: flow,
       currentStepIndex: 0,
@@ -183,6 +194,7 @@ class WizardStateStore {
   }
 
   reset() {
+    this._flowGeneration++;
     this.state = createInitialState();
     this.notify();
   }

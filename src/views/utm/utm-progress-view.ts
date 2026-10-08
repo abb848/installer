@@ -21,7 +21,6 @@ import {
   DEFAULT_UTM_VM_NAME,
 } from "../../state/vm-defaults.js";
 import {
-  PollTimeoutError,
   isCancelled,
   pollUntil,
   throwIfCancelled,
@@ -65,7 +64,7 @@ const HA_READY_TIMEOUT_MS = 5 * 60 * 1000;
 const HA_UPDATED_TIMEOUT_MS = 60 * 60 * 1000;
 
 /** VM statuses that mean the VM does not need to be started again */
-const RUNNING_VM_STATUSES = ["started", "running"];
+const RUNNING_VM_STATUSES = ["started", "running", "starting", "resuming"];
 
 @customElement("utm-progress-view")
 export class UtmProgressView extends LitElement {
@@ -408,8 +407,11 @@ export class UtmProgressView extends LitElement {
 
   connectedCallback() {
     super.connectedCallback();
+    this._wizardState = wizardState.getState();
+    const generation = wizardState.flowGeneration;
     this._unsubscribe = wizardState.subscribe((state) => {
       this._wizardState = state;
+      if (wizardState.flowGeneration !== generation) this._cancelInstall();
     });
 
     void this._startInstall();
@@ -441,6 +443,7 @@ export class UtmProgressView extends LitElement {
     this._error = null;
 
     const selections = this._wizardState.selections;
+    const flowGeneration = wizardState.flowGeneration;
     const vmName = selections.vmName || DEFAULT_UTM_VM_NAME;
     const cpuCores = selections.cpuCores ?? DEFAULT_CPU_CORES;
     const memoryMb = selections.memoryMb ?? DEFAULT_MEMORY_MB;
@@ -453,22 +456,28 @@ export class UtmProgressView extends LitElement {
       // a second VM with the same name and orphan the first one.
       let vmId = selections.vmId;
       if (!vmId) {
-        imagePath = await this._downloadImage(signal);
+        if (selections.utmSupersededVmId) {
+          throw new Error(
+            "A virtual machine was already created with earlier settings. " +
+              "Check UTM, then start a new installation."
+          );
+        }
+        const pending = selections.utmCreation;
+        imagePath = pending ? undefined : await this._downloadImage(signal);
         throwIfCancelled(signal);
         this._startStage("creating");
 
         const config: UtmVmConfig = {
           name: vmName,
-          image_path: imagePath,
+          image_path: pending?.config.image_path ?? imagePath!,
           cpu_cores: cpuCores,
           memory_mb: memoryMb,
           disk_size_gb: diskSizeGb,
           auto_start: false,
         };
 
-        vmId = await createUtmVm(config);
+        vmId = await this._createVm(config, flowGeneration);
         throwIfCancelled(signal);
-        wizardState.setSelection("vmId", vmId);
       }
 
       // Tracked separately from `vmId`: if the resize fails after the VM was
@@ -487,23 +496,20 @@ export class UtmProgressView extends LitElement {
       // Wait for the VM to get an IP address. Asked again on a retry rather
       // than reusing the last one: a restarted VM can get a new DHCP lease.
       this._startStage("waiting");
+      wizardState.setSelection("ipAddress", undefined);
       const ipAddress = await this._waitForVmIp(vmId, signal);
       throwIfCancelled(signal);
-      // Cleared when none was found, so the success view does not link to an
-      // address from an earlier attempt
-      wizardState.setSelection("ipAddress", ipAddress ?? undefined);
+      wizardState.setSelection("ipAddress", ipAddress);
 
-      if (ipAddress) {
-        // Wait for the Home Assistant webserver to be ready
-        this._startStage("ready");
-        await this._waitForHaReady(ipAddress, signal);
-        throwIfCancelled(signal);
+      // Wait for the Home Assistant webserver to be ready
+      this._startStage("ready");
+      await this._waitForHaReady(ipAddress, signal);
+      throwIfCancelled(signal);
 
-        // Wait for Home Assistant to finish updating
-        this._startStage("updating");
-        await this._waitForHaUpdated(ipAddress, signal);
-        throwIfCancelled(signal);
-      }
+      // Wait for Home Assistant to finish updating
+      this._startStage("updating");
+      await this._waitForHaUpdated(ipAddress, signal);
+      throwIfCancelled(signal);
 
       // Complete
       this._stage = "complete";
@@ -518,7 +524,11 @@ export class UtmProgressView extends LitElement {
         })
       );
     } catch (error) {
-      if (isCancelled(error) || signal.aborted) {
+      if (
+        isCancelled(error) ||
+        signal.aborted ||
+        wizardState.flowGeneration !== flowGeneration
+      ) {
         // The view was detached mid-install - leave the wizard alone
         return;
       }
@@ -550,6 +560,54 @@ export class UtmProgressView extends LitElement {
         }
       }
     }
+  }
+
+  private _createVm(config: UtmVmConfig, generation: number): Promise<string> {
+    const changed = () =>
+      new Error(
+        "The installation changed while the virtual machine was being created. " +
+          "Check UTM before trying again."
+      );
+    const pending = wizardState.getState().selections.utmCreation;
+    if (pending) {
+      if (
+        pending.config.name !== config.name ||
+        pending.config.image_path !== config.image_path ||
+        pending.config.cpu_cores !== config.cpu_cores ||
+        pending.config.memory_mb !== config.memory_mb ||
+        pending.config.disk_size_gb !== config.disk_size_gb
+      ) {
+        return Promise.reject(changed());
+      }
+      return pending.result;
+    }
+
+    // Persist the result once, before any awaiting view can resize/start it.
+    const result = createUtmVm(config)
+      .then((vmId) => {
+        const current = wizardState.getState().selections;
+        if (wizardState.flowGeneration !== generation || current.vmId) {
+          throw changed();
+        }
+        if (
+          (current.vmName || DEFAULT_UTM_VM_NAME) !== config.name ||
+          (current.cpuCores ?? DEFAULT_CPU_CORES) !== config.cpu_cores ||
+          (current.memoryMb ?? DEFAULT_MEMORY_MB) !== config.memory_mb ||
+          (current.diskSizeGb ?? DEFAULT_DISK_SIZE_GB) !== config.disk_size_gb
+        ) {
+          wizardState.setSelection("utmSupersededVmId", vmId);
+          throw changed();
+        }
+        wizardState.setSelection("vmId", vmId);
+        return vmId;
+      })
+      .finally(() => {
+        if (wizardState.getState().selections.utmCreation?.result === result) {
+          wizardState.setSelection("utmCreation", undefined);
+        }
+      });
+    wizardState.setSelection("utmCreation", { config, result });
+    return result;
   }
 
   /** Move to an indeterminate stage, clearing the previous stage's progress */
@@ -590,8 +648,7 @@ export class UtmProgressView extends LitElement {
   /**
    * Start the VM unless it is already running.
    *
-   * `createUtmVm` starts the VM it creates, and a resumed attempt can find it
-   * still running, so starting unconditionally would fail for no reason.
+   * A resumed attempt can find the VM already running or starting.
    */
   private async _ensureVmStarted(
     vmId: string,
@@ -821,31 +878,19 @@ export class UtmProgressView extends LitElement {
   /**
    * Wait for the VM to get an IP address, polling every 2 seconds for up to
    * 5 minutes.
-   *
-   * A timeout here is not fatal: the VM is up either way and the success view
-   * falls back to homeassistant.local. Without an address there is nothing to
-   * poll Home Assistant on, so the caller skips the checks below.
    */
   private async _waitForVmIp(
     vmId: string,
     signal: AbortSignal
-  ): Promise<string | null> {
-    try {
-      return await pollUntil(
-        async () => (await getUtmVmStatus(vmId)).ip_address,
-        {
-          interval: POLL_INTERVAL_MS,
-          timeout: VM_IP_TIMEOUT_MS,
-          signal,
-          timeoutMessage: "The virtual machine did not report an IP address",
-        }
-      );
-    } catch (error) {
-      if (error instanceof PollTimeoutError) {
-        return null;
-      }
-      throw error;
-    }
+  ): Promise<string> {
+    return pollUntil(async () => (await getUtmVmStatus(vmId)).ip_address, {
+      interval: POLL_INTERVAL_MS,
+      timeout: VM_IP_TIMEOUT_MS,
+      signal,
+      timeoutMessage:
+        "The virtual machine did not report an IPv4 address within 5 minutes. " +
+        "Check its network connection in UTM, then try again.",
+    });
   }
 
   /**

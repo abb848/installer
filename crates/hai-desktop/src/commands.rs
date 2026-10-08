@@ -432,11 +432,11 @@ async fn run_utm_creation<B: UtmBackend>(
             image.path().display()
         );
     }
-    result.map(|result| result.name).map_err(|e| e.to_string())
+    result.map(|result| result.id).map_err(|e| e.to_string())
 }
 
 /// Start a UTM VM
-#[tauri::command]
+#[tauri::command(async)]
 pub fn start_utm_vm(vm_id: String) -> Result<(), String> {
     Backend.start_vm(&vm_id).map_err(|e| e.to_string())
 }
@@ -450,7 +450,7 @@ pub fn resize_utm_vm_disk(vm_id: String, size_gb: u32) -> Result<(), String> {
 }
 
 /// Get the status of a UTM VM
-#[tauri::command]
+#[tauri::command(async)]
 pub fn get_utm_vm_status(vm_id: String) -> Result<VmStatusInfo, String> {
     Backend.vm_status(&vm_id).map_err(|e| e.to_string())
 }
@@ -606,10 +606,9 @@ mod tests {
     // ===== Additional edge case tests =====
 
     #[test]
-    #[cfg(target_os = "macos")]
-    fn test_start_utm_vm_non_mock_returns_ok() {
+    #[cfg(feature = "mock")]
+    fn test_start_utm_vm_mock_returns_ok() {
         let result = start_utm_vm("test-vm".to_string());
-        // Should return Ok even though not implemented
         assert!(result.is_ok());
     }
 
@@ -639,15 +638,14 @@ mod tests {
         assert!(err.contains("only available on macOS"), "{err}");
     }
 
-    #[cfg(not(feature = "mock"))] // asserts on the real backend's answers
     #[test]
-    #[cfg(target_os = "macos")]
-    fn test_get_utm_vm_status_non_mock_returns_unknown() {
+    #[cfg(feature = "mock")]
+    fn test_get_utm_vm_status_mock_returns_running_vm() {
         let result = get_utm_vm_status("test-vm".to_string());
         assert!(result.is_ok());
         let status = result.unwrap();
-        assert_eq!(status.status, "unknown");
-        assert_eq!(status.ip_address, None);
+        assert_eq!(status.status, "started");
+        assert_eq!(status.ip_address.as_deref(), Some("192.168.1.100"));
     }
 
     // ===== check_ha_ready() Tests =====
@@ -1026,11 +1024,13 @@ mod mock_tests {
                     std::fs::remove_file(&marker).unwrap();
                     std::fs::create_dir(marker).unwrap();
                     Ok(hai_core::UtmVmResult {
+                        id: "stable-utm-id".into(),
                         name: config.name.clone(),
                         path: None,
                     })
                 }
                 "success" => Ok(hai_core::UtmVmResult {
+                    id: "stable-utm-id".into(),
                     name: config.name.clone(),
                     path: None,
                 }),
@@ -1109,6 +1109,10 @@ mod mock_tests {
                     matches!(outcome, "success" | "release-failure"),
                     "{outcome}"
                 );
+                if let Ok(id) = &result {
+                    assert_eq!(id, "stable-utm-id");
+                    assert_ne!(id, &config.name);
+                }
                 if matches!(outcome, "timeout" | "transport") {
                     let error = result.as_ref().unwrap_err();
                     assert!(error.contains(&format!(

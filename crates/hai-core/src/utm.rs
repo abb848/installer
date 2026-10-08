@@ -4,7 +4,7 @@
 //! using UTM on macOS via AppleScript automation.
 
 use crate::error::{Error, Result};
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 use crate::types::{FlashProgress, FlashStage};
 use crate::types::{UtmStatus, UtmVmConfig, UtmVmResult, VmStatusInfo};
 use crate::{Backend, ProgressCallback, UtmBackend};
@@ -69,9 +69,7 @@ async fn create_vm<P: ProgressCallback>(
 fn start_vm(vm_id: &str) -> Result<()> {
     #[cfg(target_os = "macos")]
     {
-        // TODO: Implement via AppleScript
-        let _ = vm_id;
-        Ok(())
+        macos::start_vm(vm_id)
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -130,6 +128,98 @@ fn applescript_error(stderr: &str) -> Error {
     }
 }
 
+#[cfg(any(target_os = "macos", test))]
+fn escaped_vm_id(vm_id: &str) -> String {
+    vm_id.replace('\\', "\\\\").replace('"', "\\\"")
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn query_vm_status(
+    vm_id: &str,
+    mut run: impl FnMut(&str) -> Result<String>,
+) -> Result<VmStatusInfo> {
+    let vm_id = escaped_vm_id(vm_id);
+    let status = run(&format!(
+        r#"tell application "UTM"
+    return status of virtual machine id "{vm_id}"
+end tell"#
+    ))?;
+    let ip_address = if status == "started" {
+        // The guest agent can be unavailable while HAOS boots. Keep the real
+        // running state so a retry does not try to start an already running VM.
+        run(&format!(
+            r#"tell application "UTM"
+    set addresses to query ip virtual machine id "{vm_id}"
+    set AppleScript's text item delimiters to linefeed
+    return addresses as text
+end tell"#
+        ))
+        .ok()
+        .and_then(|output| first_usable_ipv4(&output))
+    } else {
+        None
+    };
+    Ok(VmStatusInfo { status, ip_address })
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn first_usable_ipv4(output: &str) -> Option<String> {
+    // UTM returns addresses in guest-interface order, with IPv4 before IPv6.
+    // The current readiness checks and success links require an IPv4 host.
+    output
+        .lines()
+        .filter_map(|line| line.trim().parse::<std::net::Ipv4Addr>().ok())
+        .find(|ip| {
+            !ip.is_unspecified()
+                && !ip.is_loopback()
+                && !ip.is_link_local()
+                && !ip.is_multicast()
+                && !ip.is_broadcast()
+                && ip.octets()[0] != 0
+                && ip.octets()[0] < 240
+        })
+        .map(|ip| ip.to_string())
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn finish_vm_creation(
+    config: &UtmVmConfig,
+    vm_id: String,
+    progress_callback: &impl ProgressCallback,
+    start: impl FnOnce(&str) -> Result<()>,
+) -> Result<UtmVmResult> {
+    if config.auto_start {
+        progress_callback.on_progress(FlashProgress {
+            stage: FlashStage::Downloading,
+            progress: 50,
+            bytes_processed: 0,
+            total_bytes: 0,
+            message: "Starting virtual machine...".to_string(),
+        });
+        start(&vm_id)?;
+    }
+    progress_callback.on_progress(FlashProgress {
+        stage: FlashStage::Complete,
+        progress: 100,
+        bytes_processed: 0,
+        total_bytes: 0,
+        message: if config.auto_start {
+            "VM created and started"
+        } else {
+            "VM created"
+        }
+        .to_string(),
+    });
+    Ok(UtmVmResult {
+        id: vm_id,
+        name: config.name.clone(),
+        path: Some(format!(
+            "~/Library/Containers/com.utmapp.UTM/Data/Documents/{}.utm",
+            config.name
+        )),
+    })
+}
+
 #[cfg(target_os = "macos")]
 mod macos {
     use super::*;
@@ -137,12 +227,8 @@ mod macos {
 
     const UTM_APP_PATH: &str = "/Applications/UTM.app";
 
-    pub(super) fn vm_status(_vm_id: &str) -> Result<VmStatusInfo> {
-        // TODO: Implement via utmctl
-        Ok(VmStatusInfo {
-            status: "unknown".to_string(),
-            ip_address: None,
-        })
+    pub(super) fn vm_status(vm_id: &str) -> Result<VmStatusInfo> {
+        query_vm_status(vm_id, run_applescript)
     }
 
     pub(super) async fn check_utm_status() -> Result<UtmStatus> {
@@ -226,7 +312,7 @@ mod macos {
     set vm to virtual machine id "{}"
     start vm
 end tell"#,
-            vm_id
+            escaped_vm_id(vm_id)
         );
 
         run_applescript(&script).map_err(|error| match error {
@@ -306,32 +392,7 @@ end tell"#,
 
         let vm_id = run_applescript(&script)?;
 
-        // Start the VM
-        progress_callback.on_progress(FlashProgress {
-            stage: FlashStage::Downloading,
-            progress: 50,
-            bytes_processed: 0,
-            total_bytes: 0,
-            message: "Starting virtual machine...".to_string(),
-        });
-
-        start_vm(&vm_id)?;
-
-        progress_callback.on_progress(FlashProgress {
-            stage: FlashStage::Complete,
-            progress: 100,
-            bytes_processed: 0,
-            total_bytes: 0,
-            message: "VM created and started".to_string(),
-        });
-
-        Ok(UtmVmResult {
-            name: config.name.clone(),
-            path: Some(format!(
-                "~/Library/Containers/com.utmapp.UTM/Data/Documents/{}.utm",
-                config.name
-            )),
-        })
+        finish_vm_creation(config, vm_id, progress_callback, start_vm)
     }
 }
 
@@ -448,6 +509,104 @@ mod tests {
             .unwrap(),
             "vm-id"
         );
+    }
+
+    #[test]
+    fn status_and_address_queries_use_the_same_escaped_id() {
+        let mut calls = Vec::new();
+        let result = query_vm_status("unique\\\"id", |script| {
+            calls.push(script.to_string());
+            Ok(if calls.len() == 1 {
+                "started".to_string()
+            } else {
+                "169.254.1.2\n192.168.1.20\n172.30.32.1\nfe80::1".to_string()
+            })
+        })
+        .unwrap();
+        assert_eq!(result.status, "started");
+        assert_eq!(result.ip_address.as_deref(), Some("192.168.1.20"));
+        assert_eq!(calls.len(), 2);
+        for script in &calls {
+            assert!(script.contains(r#"virtual machine id "unique\\\"id""#));
+        }
+        assert!(calls[1].contains("text item delimiters to linefeed"));
+    }
+
+    #[test]
+    fn status_survives_guest_agent_not_ready() {
+        let mut calls = 0;
+        let result = query_vm_status("unique-id", |_| {
+            calls += 1;
+            if calls == 1 {
+                Ok("started".into())
+            } else {
+                Err(Error::Utm("Guest agent is not running".into()))
+            }
+        })
+        .unwrap();
+        assert_eq!(result.status, "started");
+        assert!(result.ip_address.is_none());
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn only_started_vms_query_the_guest() {
+        for status in [
+            "stopped", "starting", "paused", "pausing", "stopping", "resuming",
+        ] {
+            let mut calls = 0;
+            let result = query_vm_status("unique-id", |_| {
+                calls += 1;
+                Ok(status.into())
+            })
+            .unwrap();
+            assert_eq!(result.status, status);
+            assert!(result.ip_address.is_none());
+            assert_eq!(calls, 1);
+        }
+        assert!(query_vm_status("missing-id", |_| Err(Error::Utm("VM not found".into()))).is_err());
+    }
+
+    #[test]
+    fn address_selection_excludes_unusable_hosts_without_rejecting_private_lans() {
+        for output in [
+            "",
+            "not-an-ip\n::1\nfe80::1\n2001:db8::1",
+            "0.0.0.0\n0.1.2.3\n127.0.0.2\n169.254.2.3\n224.0.0.1\n240.0.0.1\n255.255.255.255",
+        ] {
+            assert_eq!(first_usable_ipv4(output), None);
+        }
+        for ip in ["10.1.2.3", "172.17.0.5", "172.30.32.8", "192.168.1.20"] {
+            assert_eq!(
+                first_usable_ipv4(&format!("fe80::1\n {ip}\n192.168.2.1")),
+                Some(ip.into())
+            );
+        }
+    }
+
+    #[test]
+    fn creation_returns_the_id_before_start_unless_auto_start_was_requested() {
+        for auto_start in [false, true] {
+            let config = UtmVmConfig {
+                name: "Non-unique name".into(),
+                image_path: "/tmp/test.qcow2".into(),
+                cpu_cores: 2,
+                memory_mb: 2048,
+                disk_size_gb: 32,
+                auto_start,
+            };
+            let mut started = false;
+            let result =
+                finish_vm_creation(&config, "unique-id".into(), &crate::NoOpProgress, |id| {
+                    assert_eq!(id, "unique-id");
+                    started = true;
+                    Ok(())
+                })
+                .unwrap();
+            assert_eq!(started, auto_start);
+            assert_eq!(result.id, "unique-id");
+            assert_eq!(result.name, config.name);
+        }
     }
 
     #[tokio::test]

@@ -566,7 +566,32 @@ export class AppShell extends LitElement {
   }
 
   private async _onDialogConfirm() {
+    if (!this._showConfirmDialog) return;
+    const confirmed = this._wizardState;
+    const dialog = this.shadowRoot?.querySelector("confirm-dialog");
+    if (!dialog) return;
+    const closed = new Promise<void>((resolve) => {
+      const onHide = (event: Event) => {
+        if (
+          event.composedPath()[0] !==
+          dialog.shadowRoot?.querySelector("wa-dialog")
+        )
+          return;
+        dialog.removeEventListener("wa-after-hide", onHide);
+        resolve();
+      };
+      dialog.addEventListener("wa-after-hide", onHide);
+    });
     this._showConfirmDialog = false;
+    // The rest of the document is inert until the modal finishes closing.
+    await closed;
+    if (
+      !this.isConnected ||
+      this._wizardState.selections !== confirmed.selections ||
+      this._wizardState.currentFlow !== confirmed.currentFlow ||
+      this._wizardState.currentStepIndex !== confirmed.currentStepIndex
+    )
+      return;
     // The dialog can sit open for any length of time and the next step starts
     // writing immediately, so check the device one last time.
     if (!(await this._verifySelectedDrive())) {

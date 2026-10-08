@@ -1,4 +1,8 @@
 import { LitElement, html, css } from "lit";
+import {
+  ViewAccessibility,
+  reducedMotionStyles,
+} from "../../utils/view-accessibility.js";
 import { customElement, state } from "lit/decorators.js";
 import { live } from "lit/directives/live.js";
 import { wizardState } from "../../state/wizard-state.js";
@@ -13,7 +17,9 @@ import {
 
 @customElement("utm-configure-view")
 export class UtmConfigureView extends LitElement {
+  protected readonly _accessibility = new ViewAccessibility(this);
   static styles = css`
+    ${reducedMotionStyles}
     :host {
       display: flex;
       flex-direction: column;

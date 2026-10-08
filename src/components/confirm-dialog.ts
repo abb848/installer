@@ -38,6 +38,12 @@ export class ConfirmDialog extends LitElement {
       --width: 32rem;
     }
 
+    @media (prefers-reduced-motion: reduce) {
+      wa-dialog::part(dialog) {
+        animation: none !important;
+      }
+    }
+
     .dialog-title {
       display: inline-flex;
       align-items: center;
@@ -213,6 +219,7 @@ export class ConfirmDialog extends LitElement {
   }
 
   private _onConfirm() {
+    if (!this.open) return;
     this.open = false;
     this._dispatch("dialog-confirm");
   }

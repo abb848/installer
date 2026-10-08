@@ -1,4 +1,5 @@
 import { LitElement, html, css } from "lit";
+import { ViewAccessibility } from "../utils/view-accessibility.js";
 import { customElement } from "lit/decorators.js";
 
 import "@home-assistant/webawesome/dist/components/button/button.js";
@@ -14,6 +15,7 @@ export type InstallationPath =
 
 @customElement("path-selection-view")
 export class PathSelectionView extends LitElement {
+  protected readonly _accessibility = new ViewAccessibility(this);
   static styles = css`
     :host {
       display: flex;

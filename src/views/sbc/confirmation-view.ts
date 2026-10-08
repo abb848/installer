@@ -1,10 +1,12 @@
 import { LitElement, html, css, nothing } from "lit";
+import { ViewAccessibility } from "../../utils/view-accessibility.js";
 import { customElement, state } from "lit/decorators.js";
 import { wizardState, type WizardState } from "../../state/wizard-state.js";
 import { formatBytes, getHaosRelease } from "../../api/commands.js";
 
 @customElement("confirmation-view")
 export class ConfirmationView extends LitElement {
+  protected readonly _accessibility = new ViewAccessibility(this);
   static styles = css`
     :host {
       display: flex;

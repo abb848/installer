@@ -1,5 +1,6 @@
 import { LitElement, html, css } from "lit";
 import { customElement, property } from "lit/decorators.js";
+import { reducedMotionStyles } from "../utils/view-accessibility.js";
 
 import "./ha-svg-icon.js";
 
@@ -16,6 +17,12 @@ const mdiDotsHorizontal =
 @customElement("option-card")
 export class OptionCard extends LitElement {
   static styles = css`
+    ${reducedMotionStyles}
+    @media (prefers-reduced-motion: reduce) {
+      .card:active {
+        transform: none !important;
+      }
+    }
     :host {
       display: block;
       outline: none;

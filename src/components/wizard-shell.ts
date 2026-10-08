@@ -33,12 +33,22 @@ export class WizardShell extends LitElement {
 
     .header-center {
       flex: 1;
+      min-width: 0;
       display: flex;
       justify-content: center;
     }
 
     .header-right {
       min-width: 80px;
+    }
+
+    @media (max-width: 600px) {
+      .header {
+        padding: 1rem;
+      }
+      .header-right {
+        min-width: 0;
+      }
     }
 
     .content {

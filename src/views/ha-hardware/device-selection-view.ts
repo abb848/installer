@@ -1,4 +1,8 @@
 import { LitElement, html, css } from "lit";
+import {
+  ViewAccessibility,
+  reducedMotionStyles,
+} from "../../utils/view-accessibility.js";
 import { customElement, state } from "lit/decorators.js";
 import { getManifest, type Device } from "../../api/index.js";
 import { wizardState } from "../../state/wizard-state.js";
@@ -8,7 +12,9 @@ import "../../components/device-card.js";
 
 @customElement("ha-hardware-device-selection-view")
 export class HaHardwareDeviceSelectionView extends LitElement {
+  protected readonly _accessibility = new ViewAccessibility(this);
   static styles = css`
+    ${reducedMotionStyles}
     :host {
       display: flex;
       flex-direction: column;
@@ -171,7 +177,7 @@ export class HaHardwareDeviceSelectionView extends LitElement {
       return html`
         <div class="error">
           <span class="error-icon">⚠️</span>
-          <p class="error-message">${this._error}</p>
+          <p class="error-message" role="alert">${this._error}</p>
           <wa-button
             variant="brand"
             appearance="outlined"

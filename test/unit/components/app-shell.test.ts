@@ -44,6 +44,23 @@ const shellOf = (el: AppShell) =>
 const dialogOf = (el: AppShell) =>
   el.shadowRoot!.querySelector("confirm-dialog") as ConfirmDialog;
 
+async function waitForDialogOpen(el: AppShell) {
+  await waitUntil(
+    () =>
+      !!dialogOf(el)
+        .shadowRoot?.querySelector("wa-dialog")
+        ?.shadowRoot?.querySelector("dialog")?.open
+  );
+}
+
+async function finishDialogHide(el: AppShell) {
+  await el.updateComplete;
+  await dialogOf(el).updateComplete;
+  // Model the overlay lifecycle here; both browser engines test the actual close.
+  fire(dialogOf(el).shadowRoot!.querySelector("wa-dialog")!, "wa-after-hide");
+  await flush();
+}
+
 /** Pick a device and a drive, as the two selection steps would. */
 function selectTargets({ withBoard = true } = {}) {
   wizardState.setSelection("device", "rpi5");
@@ -273,14 +290,39 @@ describe("app-shell", () => {
 
     it("writes to the drive when it is still connected", async () => {
       fire(shellOf(el), "wizard-next");
-      await waitUntil(() => dialogOf(el).hasAttribute("open"));
+      await waitForDialogOpen(el);
 
       fire(dialogOf(el), "dialog-confirm");
+      expect(wizardState.currentStep!.id).to.equal("confirm");
+      await finishDialogHide(el);
 
       await waitUntil(
         () => wizardState.currentStep?.id === "flash",
         "never reached the write step"
       );
+      fire(
+        dialogOf(el).shadowRoot!.querySelector("wa-dialog")!,
+        "wa-after-hide"
+      );
+      await flush();
+      expect(wizardState.currentStep!.id).to.equal("flash");
+    });
+
+    it("does not advance if the selected configuration changes while the dialog closes", async () => {
+      fire(shellOf(el), "wizard-next");
+      await waitForDialogOpen(el);
+      fire(dialogOf(el), "dialog-confirm");
+      wizardState.setSelection("device", "different-device");
+      await finishDialogHide(el);
+      expect(wizardState.currentStep!.id).to.equal("confirm");
+    });
+
+    it("does not advance after cancelling the dialog", async () => {
+      fire(shellOf(el), "wizard-next");
+      await waitForDialogOpen(el);
+      fire(dialogOf(el), "dialog-cancel");
+      await finishDialogHide(el);
+      expect(wizardState.currentStep!.id).to.equal("confirm");
     });
 
     it("returns to drive selection when the path names a different disk", async () => {
@@ -317,10 +359,11 @@ describe("app-shell", () => {
     // checked again on confirm.
     it("re-checks between opening the dialog and the write", async () => {
       fire(shellOf(el), "wizard-next");
-      await waitUntil(() => dialogOf(el).hasAttribute("open"));
+      await waitForDialogOpen(el);
 
       wizardState.setSelection("driveModel", "Swapped While You Read This");
       fire(dialogOf(el), "dialog-confirm");
+      await finishDialogHide(el);
 
       await waitUntil(
         () => wizardState.currentStep?.id === "drive",
@@ -338,6 +381,7 @@ describe("app-shell", () => {
         recommended_storage_bytes: CONNECTED.size * 2,
       });
       fire(dialogOf(el), "dialog-confirm");
+      await finishDialogHide(el);
       await waitUntil(() => wizardState.currentStep?.id === "drive");
       await waitUntil(
         () => wizardState.getState().selections.drive === undefined

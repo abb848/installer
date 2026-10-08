@@ -3,6 +3,7 @@ import { customElement, property } from "lit/decorators.js";
 import WaRadio from "@home-assistant/webawesome/dist/components/radio/radio.js";
 import type { DeviceType } from "../api/types.js";
 import { formatBytes } from "../api/commands.js";
+import { reducedMotionStyles } from "../utils/view-accessibility.js";
 
 /**
  * A drive row that behaves as a radio inside a `<wa-radio-group>`.
@@ -13,7 +14,13 @@ import { formatBytes } from "../api/commands.js";
 @customElement("drive-card")
 export class DriveCard extends WaRadio {
   static css = [
+    reducedMotionStyles,
     css`
+      @media (prefers-reduced-motion: reduce) {
+        .card:active {
+          transform: none !important;
+        }
+      }
       :host {
         display: block;
         outline: none;
@@ -120,7 +127,7 @@ export class DriveCard extends WaRadio {
       .selected-indicator {
         width: 24px;
         height: 24px;
-        background-color: var(--ha-primary-color, #03a9f4);
+        background-color: var(--ha-primary-fill, #006787);
         border-radius: 50%;
         display: flex;
         align-items: center;

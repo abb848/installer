@@ -1,4 +1,5 @@
 import { LitElement, html, css } from "lit";
+import { ViewAccessibility } from "../../utils/view-accessibility.js";
 import { customElement, state } from "lit/decorators.js";
 import { wizardState, type WizardState } from "../../state/wizard-state.js";
 import {
@@ -11,6 +12,7 @@ import { getUtmHaosRelease } from "../../api/commands.js";
 
 @customElement("utm-confirm-view")
 export class UtmConfirmView extends LitElement {
+  protected readonly _accessibility = new ViewAccessibility(this);
   static styles = css`
     :host {
       display: flex;

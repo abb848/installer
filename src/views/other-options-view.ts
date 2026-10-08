@@ -1,4 +1,8 @@
 import { LitElement, html, css } from "lit";
+import {
+  ViewAccessibility,
+  reducedMotionStyles,
+} from "../utils/view-accessibility.js";
 import { customElement } from "lit/decorators.js";
 import { openExternalLink, openExternalUrl } from "../utils/external-url.js";
 import "@home-assistant/webawesome/dist/components/button/button.js";
@@ -51,7 +55,9 @@ const OTHER_OPTIONS: OtherOption[] = [
 
 @customElement("other-options-view")
 export class OtherOptionsView extends LitElement {
+  protected readonly _accessibility = new ViewAccessibility(this);
   static styles = css`
+    ${reducedMotionStyles}
     :host {
       display: flex;
       flex-direction: column;

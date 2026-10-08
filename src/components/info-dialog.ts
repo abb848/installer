@@ -32,6 +32,12 @@ export class InfoDialog extends LitElement {
       --width: 30rem;
     }
 
+    @media (prefers-reduced-motion: reduce) {
+      wa-dialog::part(dialog) {
+        animation: none !important;
+      }
+    }
+
     .dialog-title {
       display: inline-flex;
       align-items: center;

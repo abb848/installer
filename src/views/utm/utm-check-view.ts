@@ -1,4 +1,8 @@
 import { LitElement, html, css } from "lit";
+import {
+  ViewAccessibility,
+  reducedMotionStyles,
+} from "../../utils/view-accessibility.js";
 import { customElement, state } from "lit/decorators.js";
 import { checkUtmStatus } from "../../api/commands.js";
 import type { UtmStatus } from "../../api/types.js";
@@ -16,7 +20,9 @@ const mdiRefresh =
 
 @customElement("utm-check-view")
 export class UtmCheckView extends LitElement {
+  protected readonly _accessibility = new ViewAccessibility(this);
   static styles = css`
+    ${reducedMotionStyles}
     :host {
       display: flex;
       flex-direction: column;
@@ -162,7 +168,7 @@ export class UtmCheckView extends LitElement {
     .warning-title {
       font-size: 0.875rem;
       font-weight: 500;
-      color: #e65100;
+      color: var(--ha-text-color, #212121);
       margin: 0;
     }
 
@@ -174,7 +180,7 @@ export class UtmCheckView extends LitElement {
 
     .warning-description {
       font-size: 0.8125rem;
-      color: var(--ha-secondary-text-color, #727272);
+      color: var(--ha-text-color, #212121);
       margin: 0;
     }
 
@@ -183,7 +189,7 @@ export class UtmCheckView extends LitElement {
       padding: 0;
       margin: 0;
       font-size: 0.8125rem;
-      color: var(--ha-secondary-text-color, #727272);
+      color: var(--ha-text-color, #212121);
     }
 
     .warning-list li {
@@ -293,7 +299,7 @@ export class UtmCheckView extends LitElement {
 
   private _renderError() {
     return html`
-      <div class="status-row">
+      <div class="status-row" role="alert">
         <div class="status-icon warning">
           <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
             <path

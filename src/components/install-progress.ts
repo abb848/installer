@@ -7,6 +7,12 @@ import {
   renderCasitaSad,
 } from "./install-mascot.js";
 import "./progress-bar.js";
+import {
+  LiveStatus,
+  ReducedSvgMotion,
+  ViewAccessibility,
+  reducedMotionStyles,
+} from "../utils/view-accessibility.js";
 
 export interface InstallStage {
   id: string;
@@ -15,7 +21,12 @@ export interface InstallStage {
 
 @customElement("install-progress")
 export class InstallProgress extends LitElement {
+  protected readonly _accessibility = new ViewAccessibility(this);
+  protected readonly _svgMotion = new ReducedSvgMotion(this);
+  private readonly _status = new LiveStatus(this);
+
   static styles = css`
+    ${reducedMotionStyles}
     :host {
       display: flex;
       flex-direction: column;
@@ -161,6 +172,7 @@ export class InstallProgress extends LitElement {
     }
 
     .stage-dot.active {
+      background-color: var(--ha-primary-color, #03a9f4);
       animation: pulse-dot 1s ease-in-out infinite;
     }
 
@@ -210,7 +222,7 @@ export class InstallProgress extends LitElement {
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      color: white;
+      color: var(--ha-primary-color-dark, #004156);
       font-size: 1.25rem;
       font-weight: 500;
       white-space: nowrap;
@@ -322,11 +334,23 @@ export class InstallProgress extends LitElement {
   @property({ attribute: false }) error: string | null = null;
 
   render() {
+    // The live region stays mounted through errors so a retry is announced
+    return html`
+      <p class="sr-only" role="status" aria-atomic="true">
+        ${this._status.ready && !this.error ? this.stageTitle : ""}
+      </p>
+      ${this._renderContent()}
+    `;
+  }
+
+  private _renderContent() {
     if (this.error) {
       return html`
-        <div class="mascot-container">${renderCasitaSad()}</div>
+        <div class="mascot-container" aria-hidden="true">
+          ${renderCasitaSad()}
+        </div>
         <h2>Installation failed</h2>
-        <p class="error-message">${this.error}</p>
+        <p class="error-message" role="alert">${this.error}</p>
       `;
     }
     const hasBubble = this.stage !== "complete" && this.stage !== "error";
@@ -334,7 +358,10 @@ export class InstallProgress extends LitElement {
       (stage) => stage.id === this.stage
     );
     return html`
-      <div class="mascot-container ${hasBubble ? "with-bubble" : ""}">
+      <div
+        class="mascot-container ${hasBubble ? "with-bubble" : ""}"
+        aria-hidden="true"
+      >
         ${this.stage === "complete"
           ? renderCasitaHappy()
           : this.stage === "error"

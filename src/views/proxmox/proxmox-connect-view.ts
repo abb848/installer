@@ -1,4 +1,5 @@
 import { LitElement, html, css } from "lit";
+import { ViewAccessibility } from "../../utils/view-accessibility.js";
 import { customElement, state } from "lit/decorators.js";
 import { proxmoxConnect } from "../../api/commands.js";
 import { wizardState } from "../../state/wizard-state.js";
@@ -8,6 +9,7 @@ import "@home-assistant/webawesome/dist/components/input/input.js";
 
 @customElement("proxmox-connect-view")
 export class ProxmoxConnectView extends LitElement {
+  protected readonly _accessibility = new ViewAccessibility(this);
   static styles = css`
     :host {
       display: flex;
@@ -72,7 +74,7 @@ export class ProxmoxConnectView extends LitElement {
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
-      background-color: #f44336;
+      background-color: var(--ha-error-fill, #b30532);
     }
 
     .status-icon svg {
@@ -94,7 +96,7 @@ export class ProxmoxConnectView extends LitElement {
 
     .status-description {
       font-size: 0.8125rem;
-      color: var(--ha-secondary-text-color, #727272);
+      color: var(--ha-error-color, #b30532);
       margin: 0.25rem 0 0 0;
     }
   `;
@@ -141,8 +143,7 @@ export class ProxmoxConnectView extends LitElement {
     }
 
     if (!this._serverUrl || !this._username || !this._password) {
-      this._error = "Please fill in all fields";
-      return false;
+      return this._validationError("Please fill in all fields");
     }
 
     // Validate URL format - must be HTTPS for security
@@ -150,14 +151,14 @@ export class ProxmoxConnectView extends LitElement {
     try {
       const parsed = new URL(url);
       if (parsed.protocol !== "https:") {
-        this._error =
-          "URL must use HTTPS (for example, https://192.168.1.100:8006)";
-        return false;
+        return this._validationError(
+          "URL must use HTTPS (for example, https://192.168.1.100:8006)"
+        );
       }
     } catch {
-      this._error =
-        "Enter a valid URL (for example, https://192.168.1.100:8006)";
-      return false;
+      return this._validationError(
+        "Enter a valid URL (for example, https://192.168.1.100:8006)"
+      );
     }
 
     this._connecting = true;
@@ -221,6 +222,16 @@ export class ProxmoxConnectView extends LitElement {
     const input = e.target as WaInput;
     this._username = input.value ?? "";
     this._resetConnection();
+  }
+
+  private async _validationError(message: string): Promise<false> {
+    this._error = message;
+    await this.updateComplete;
+    // An identical validation message does not trigger another Lit update.
+    if (this.isConnected) {
+      this.renderRoot.querySelector<HTMLElement>('[role="alert"]')?.focus();
+    }
+    return false;
   }
 
   private _onPasswordChange(e: Event) {
@@ -338,7 +349,7 @@ export class ProxmoxConnectView extends LitElement {
 
   private _renderError() {
     return html`
-      <div class="status-row">
+      <div class="status-row" role="alert">
         <div class="status-icon">
           <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
             <path

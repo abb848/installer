@@ -2,10 +2,19 @@ import { LitElement, html, css, svg, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import { openExternalLink } from "../utils/external-url.js";
 import { renderCasitaHappy } from "./install-mascot.js";
+import {
+  ReducedSvgMotion,
+  ViewAccessibility,
+  reducedMotionStyles,
+} from "../utils/view-accessibility.js";
 
 @customElement("install-success")
 export class InstallSuccess extends LitElement {
+  protected readonly _accessibility = new ViewAccessibility(this);
+  protected readonly _svgMotion = new ReducedSvgMotion(this);
+
   static styles = css`
+    ${reducedMotionStyles}
     :host {
       display: flex;
       flex-direction: column;
@@ -73,7 +82,7 @@ export class InstallSuccess extends LitElement {
       width: 24px;
       height: 24px;
       border-radius: 50%;
-      background-color: var(--ha-primary-color, #03a9f4);
+      background-color: var(--ha-primary-fill, #006787);
       color: white;
       font-size: 0.875rem;
       font-weight: 500;
@@ -149,7 +158,7 @@ export class InstallSuccess extends LitElement {
     }
 
     .app-link:hover {
-      background-color: var(--ha-primary-color, #03a9f4);
+      background-color: var(--ha-primary-fill, #006787);
       border-color: var(--ha-primary-color, #03a9f4);
       color: white;
     }
@@ -214,13 +223,15 @@ export class InstallSuccess extends LitElement {
 
   render() {
     return html`
-      <div class="mascot-container">${renderCasitaHappy()}</div>
-      <h2>You're all set!</h2>
+      <div class="mascot-container" aria-hidden="true">
+        ${renderCasitaHappy()}
+      </div>
+      <div role="alert"><h2>You're all set!</h2></div>
       <p class="subtitle">${this.subtitle}</p>
       <div class="next-steps">
         <p class="next-steps-title">Next steps</p>
         ${this.notice ? html`<p class="notice">${this.notice}</p>` : ""}
-        <ol class="steps-list">
+        <ol class="steps-list" role="list" aria-label="Next steps">
           ${this.steps.map(
             (step, index) => html`
               <li class="step-item">

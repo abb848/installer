@@ -134,6 +134,20 @@ describe("confirm-dialog", () => {
     expect(event).to.exist;
   });
 
+  it("does not confirm twice while the dialog closes", async () => {
+    const el = await fixture<ConfirmDialog>(
+      html`<confirm-dialog open></confirm-dialog>`
+    );
+    let confirms = 0;
+    el.addEventListener("dialog-confirm", () => confirms++);
+    const button = el.shadowRoot!.querySelector<HTMLElement>(
+      "wa-button[variant='danger']"
+    )!;
+    button.click();
+    button.click();
+    expect(confirms).to.equal(1);
+  });
+
   it("closes dialog when cancel button is clicked", async () => {
     const el = await fixture<ConfirmDialog>(html`
       <confirm-dialog open></confirm-dialog>

@@ -1,4 +1,8 @@
 import { LitElement, html, css } from "lit";
+import {
+  ViewAccessibility,
+  reducedMotionStyles,
+} from "../../utils/view-accessibility.js";
 import { customElement, state } from "lit/decorators.js";
 import { getManifest, type Device } from "../../api/index.js";
 import { wizardState } from "../../state/wizard-state.js";
@@ -7,7 +11,9 @@ import "@home-assistant/webawesome/dist/components/button/button.js";
 
 @customElement("minipc-architecture-selection-view")
 export class MiniPCArchitectureSelectionView extends LitElement {
+  protected readonly _accessibility = new ViewAccessibility(this);
   static styles = css`
+    ${reducedMotionStyles}
     :host {
       display: flex;
       flex-direction: column;
@@ -134,7 +140,7 @@ export class MiniPCArchitectureSelectionView extends LitElement {
       right: 8px;
       width: 24px;
       height: 24px;
-      background-color: var(--ha-primary-color, #03a9f4);
+      background-color: var(--ha-primary-fill, #006787);
       border-radius: 50%;
       display: flex;
       align-items: center;
@@ -271,7 +277,7 @@ export class MiniPCArchitectureSelectionView extends LitElement {
               <path d="M13,14H11V10H13M13,18H11V16H13M1,21H23L12,2L1,21Z" />
             </svg>
           </span>
-          <p class="error-message">${this._error}</p>
+          <p class="error-message" role="alert">${this._error}</p>
           <wa-button
             variant="brand"
             appearance="outlined"

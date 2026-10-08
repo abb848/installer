@@ -23,6 +23,8 @@ describe("shared install layouts", () => {
       wizardState.setSelection("deviceConfig", {
         board: "rpi5-64",
         download_url: "https://example.test/image.xz",
+        minimum_storage_bytes: 16_000_000_000,
+        recommended_storage_bytes: 32_000_000_000,
       });
       wizardState.setSelection("proxmoxSession", {
         server_url: "https://pve:8006",

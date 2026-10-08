@@ -499,7 +499,11 @@ export class AppShell extends LitElement {
     if (selection) {
       this._verifyingDrive = true;
       try {
-        found = !!findDrive(await listBlockDevices(), selection);
+        found = !!findDrive(
+          await listBlockDevices(),
+          selection,
+          started.selections.deviceConfig
+        );
       } catch {
         // The scan failed, so the device cannot be confirmed. Treat that the
         // same as a device that is gone.

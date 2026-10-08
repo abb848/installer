@@ -2,7 +2,10 @@ import { expect, fixture, html, waitUntil } from "@open-wc/testing";
 import "../../../src/components/app-shell.js";
 import type { AppShell } from "../../../src/components/app-shell.js";
 import type { ConfirmDialog } from "../../../src/components/confirm-dialog.js";
-import { MOCK_BLOCK_DEVICES } from "../../../src/api/mock-data.js";
+import {
+  MOCK_BLOCK_DEVICES,
+  MOCK_MANIFEST,
+} from "../../../src/api/mock-data.js";
 import { wizardState } from "../../../src/state/wizard-state.js";
 import { storeDriveSelection } from "../../../src/utils/drive-selection.js";
 import { flush, holdDeviceScan } from "../helpers/hold-device-scan.js";
@@ -41,11 +44,7 @@ function selectTargets({ withBoard = true } = {}) {
   wizardState.setSelection("device", "rpi5");
   wizardState.setSelection("deviceName", "Raspberry Pi 5");
   if (withBoard) {
-    wizardState.setSelection("deviceConfig", {
-      board: "rpi5-64",
-      download_url:
-        "https://github.com/home-assistant/operating-system/releases/download/{version}/haos_rpi5-64-{version}.img.xz",
-    });
+    wizardState.setSelection("deviceConfig", MOCK_MANIFEST.devices[0].haos);
   }
   storeDriveSelection(CONNECTED);
 }
@@ -202,6 +201,23 @@ describe("app-shell", () => {
         () => wizardState.currentStep?.id === "drive",
         "the write was not held back"
       );
+    });
+
+    it("rechecks the board minimum before erasing", async () => {
+      fire(shellOf(el), "wizard-next");
+      await waitUntil(() => dialogOf(el).hasAttribute("open"));
+
+      wizardState.setSelection("deviceConfig", {
+        ...MOCK_MANIFEST.devices[0].haos,
+        minimum_storage_bytes: CONNECTED.size * 2,
+        recommended_storage_bytes: CONNECTED.size * 2,
+      });
+      fire(dialogOf(el), "dialog-confirm");
+      await waitUntil(() => wizardState.currentStep?.id === "drive");
+      await waitUntil(
+        () => wizardState.getState().selections.drive === undefined
+      );
+      expect(dialogOf(el).hasAttribute("open")).to.be.false;
     });
   });
 

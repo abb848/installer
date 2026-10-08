@@ -46,8 +46,8 @@ describe("VM writing progress", () => {
         channel.onmessage({
           stage: "writing",
           progress,
-          bytes_processed: progress * 1024,
-          total_bytes: 100 * 1024,
+          bytes_processed: progress * 1000,
+          total_bytes: 100_000,
           message: "Processing image",
         });
         const root = await layout();

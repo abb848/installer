@@ -83,6 +83,10 @@ export interface HaosConfig {
   board: string;
   /** Download URL template */
   download_url: string;
+  /** Minimum nominal target capacity in decimal bytes; allow 5% reserved space. */
+  minimum_storage_bytes: number;
+  /** Recommended nominal target capacity in decimal bytes; same 5% allowance. */
+  recommended_storage_bytes: number;
 }
 
 /** Flash request parameters */

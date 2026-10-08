@@ -80,6 +80,7 @@ fn find_flash_target<'a>(
     devices: &'a [BlockDevice],
     device_id: &str,
     expected: &ExpectedDevice,
+    board: &str,
 ) -> Result<&'a BlockDevice, String> {
     let device = devices.iter().find(|d| d.id == device_id).ok_or_else(|| {
         format!(
@@ -100,6 +101,19 @@ fn find_flash_target<'a>(
             "The drive at {} is no longer the one you selected. It may have been \
              swapped for another device; please select your drive again.",
             device_id
+        ));
+    }
+
+    let config = hai_core::manifest::bundled_manifest()
+        .devices
+        .into_iter()
+        .find(|device| device.haos.board == board)
+        .ok_or_else(|| format!("No storage requirements found for board: {}", board))?
+        .haos;
+    if device.size < config.minimum_reported_storage_bytes() {
+        return Err(format!(
+            "The selected drive is too small. At least a {:.0} GB drive is required.",
+            config.minimum_storage_bytes as f64 / 1_000_000_000.0
         ));
     }
 
@@ -219,7 +233,12 @@ where
         .await
         .map_err(|e| format!("Failed to list devices: {}", e))?;
 
-    let device = find_flash_target(&device_list, &request.device_id, &request.expected_device)?;
+    let device = find_flash_target(
+        &device_list,
+        &request.device_id,
+        &request.expected_device,
+        &request.board,
+    )?;
 
     if image_size > device.size {
         return Err(format!(
@@ -719,28 +738,29 @@ mod tests {
     #[test]
     fn test_find_flash_target_accepts_removable_device() {
         let devices = [flash_target("/dev/sdb", true)];
-        let device = find_flash_target(&devices, "/dev/sdb", &expected()).unwrap();
+        let device = find_flash_target(&devices, "/dev/sdb", &expected(), "rpi5-64").unwrap();
         assert_eq!(device.id, "/dev/sdb");
     }
 
     #[test]
     fn test_find_flash_target_rejects_unknown_device() {
         let devices = [flash_target("/dev/sdb", true)];
-        let err = find_flash_target(&devices, "/dev/sdz", &expected()).unwrap_err();
+        let err = find_flash_target(&devices, "/dev/sdz", &expected(), "rpi5-64").unwrap_err();
         assert!(err.contains("not found"), "{err}");
     }
 
     #[test]
     fn test_find_flash_target_rejects_non_removable_device() {
         let devices = [flash_target("\\\\.\\PhysicalDrive1", false)];
-        let err = find_flash_target(&devices, "\\\\.\\PhysicalDrive1", &expected()).unwrap_err();
+        let err = find_flash_target(&devices, "\\\\.\\PhysicalDrive1", &expected(), "rpi5-64")
+            .unwrap_err();
         assert!(err.contains("not a removable drive"), "{err}");
     }
 
     #[test]
     fn test_find_flash_target_rejects_empty_device_id() {
         let devices = [flash_target("/dev/sdb", true)];
-        let err = find_flash_target(&devices, "", &expected()).unwrap_err();
+        let err = find_flash_target(&devices, "", &expected(), "rpi5-64").unwrap_err();
         assert!(err.contains("not found"), "{err}");
     }
 
@@ -748,7 +768,7 @@ mod tests {
     fn test_find_flash_target_rejects_different_device_at_same_path() {
         let mut device = flash_target("/dev/sdb", true);
         device.model = Some("Extreme".to_string());
-        let err = find_flash_target(&[device], "/dev/sdb", &expected()).unwrap_err();
+        let err = find_flash_target(&[device], "/dev/sdb", &expected(), "rpi5-64").unwrap_err();
         assert!(err.contains("no longer the one you selected"), "{err}");
     }
 
@@ -756,7 +776,43 @@ mod tests {
     fn test_find_flash_target_rejects_unknown_expected_size() {
         let devices = [flash_target("/dev/sdb", true)];
         let unknown = ExpectedDevice::default();
-        assert!(find_flash_target(&devices, "/dev/sdb", &unknown).is_err());
+        assert!(find_flash_target(&devices, "/dev/sdb", &unknown, "rpi5-64").is_err());
+    }
+
+    #[test]
+    fn test_find_flash_target_enforces_nominal_board_minimum() {
+        for size in [
+            8_000_000_000,
+            15_199_999_999,
+            15_200_000_000,
+            15_600_000_000,
+            15_931_539_456,
+            16_000_000_000,
+        ] {
+            let mut device = flash_target("/dev/sdb", true);
+            device.size = size;
+            let expected = ExpectedDevice {
+                size: Some(size),
+                ..Default::default()
+            };
+            let devices = [device];
+            let result = find_flash_target(&devices, "/dev/sdb", &expected, "rpi5-64");
+            if size < 15_200_000_000 {
+                let error = result.unwrap_err();
+                assert!(error.contains("too small"), "{error}");
+                assert!(error.contains("16 GB"), "{error}");
+            } else {
+                assert!(result.is_ok(), "{size}: {result:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_find_flash_target_rejects_missing_board_requirements() {
+        let devices = [flash_target("/dev/sdb", true)];
+        let error =
+            find_flash_target(&devices, "/dev/sdb", &expected(), "unknown-board").unwrap_err();
+        assert!(error.contains("No storage requirements"), "{error}");
     }
 
     struct PreflightBackend {

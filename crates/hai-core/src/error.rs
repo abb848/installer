@@ -32,6 +32,9 @@ pub enum Error {
     #[error("Proxmox API error: {0}")]
     ProxmoxApi(String),
 
+    #[error("Proxmox two-factor authentication: {0}")]
+    ProxmoxTwoFactor(String),
+
     #[error("UTM error: {0}")]
     Utm(String),
 

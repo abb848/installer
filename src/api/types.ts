@@ -194,6 +194,8 @@ export interface ProxmoxCredentials {
   username: string;
   /** Password */
   password: string;
+  /** Optional time-based one-time password from an authenticator app */
+  totp?: string;
 }
 
 /** Proxmox session (authentication result) */

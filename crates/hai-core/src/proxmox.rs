@@ -78,6 +78,104 @@ fn version_meets_minimum(version: (u32, u32, u32), minimum: (u32, u32, u32)) -> 
         || (version.0 == minimum.0 && version.1 == minimum.1 && version.2 >= minimum.2)
 }
 
+fn needs_second_factor(data: &serde_json::Value) -> bool {
+    let flagged = data.get("NeedTFA").is_some_and(|value| {
+        !matches!(
+            value,
+            serde_json::Value::Null | serde_json::Value::Bool(false)
+        ) && value != &serde_json::json!(0)
+    });
+    flagged
+        || data["ticket"]
+            .as_str()
+            .is_some_and(|ticket| ticket.starts_with("PVE:!"))
+}
+
+async fn complete_second_factor(
+    client: &reqwest::Client,
+    auth_url: &str,
+    credentials: &ProxmoxCredentials,
+    data: serde_json::Value,
+) -> Result<serde_json::Value> {
+    if !needs_second_factor(&data) {
+        return Ok(data);
+    }
+
+    // PVE embeds URL-encoded JSON in the signed ticket, as used by its web UI.
+    let ticket = data["ticket"].as_str().unwrap_or_default();
+    let challenge = ticket
+        .strip_prefix("PVE:!tfa!")
+        .and_then(|rest| rest.split(':').next())
+        .and_then(|encoded| urlencoding::decode(encoded).ok())
+        .and_then(|decoded| serde_json::from_str::<serde_json::Value>(&decoded).ok());
+    if challenge.as_ref().and_then(|value| value["totp"].as_bool()) != Some(true) {
+        return Err(Error::ProxmoxTwoFactor(
+            "This account requires a second factor, but Proxmox did not offer TOTP. \
+             This installer supports authenticator app (TOTP) codes only; \
+             WebAuthn, security keys, Yubico OTP, and recovery codes are not supported."
+                .to_string(),
+        ));
+    }
+
+    let code = credentials.totp.as_deref().unwrap_or_default().trim();
+    if code.is_empty() {
+        return Err(Error::ProxmoxTwoFactor(
+            "This account requires an authenticator app code. Enter the current code and try again."
+                .to_string(),
+        ));
+    }
+    if !(2..=16).contains(&code.len()) || !code.bytes().all(|byte| byte.is_ascii_digit()) {
+        return Err(Error::ProxmoxTwoFactor(
+            "Enter a valid numeric authenticator app code.".to_string(),
+        ));
+    }
+
+    let password = format!("totp:{code}");
+    let response = client
+        .post(auth_url)
+        .form(&[
+            ("username", credentials.username.as_str()),
+            ("password", password.as_str()),
+            ("tfa-challenge", ticket),
+        ])
+        .send()
+        .await
+        .map_err(|_| {
+            Error::ProxmoxTwoFactor(
+                "Could not complete the second-factor request. Check your connection and try again."
+                    .to_string(),
+            )
+        })?;
+    if !response.status().is_success() {
+        if response.status().as_u16() != 401 {
+            return Err(Error::ProxmoxTwoFactor(format!(
+                "Proxmox returned HTTP {} while completing the second-factor login. \
+                 Check the server and try again.",
+                response.status()
+            )));
+        }
+        return Err(Error::ProxmoxTwoFactor(
+            "Proxmox rejected the second-factor login. Check your current authenticator app code \
+             and try again. If it still fails, check the account in Proxmox."
+                .to_string(),
+        ));
+    }
+
+    let response: serde_json::Value = response.json().await.map_err(|_| {
+        Error::ProxmoxTwoFactor("Invalid second-factor response from Proxmox.".to_string())
+    })?;
+    let data = response.get("data").ok_or_else(|| {
+        Error::ProxmoxTwoFactor("Missing second-factor response from Proxmox.".to_string())
+    })?;
+    if needs_second_factor(data) {
+        return Err(Error::ProxmoxTwoFactor(
+            "The second-factor login is incomplete. Enter a current authenticator app code and try again."
+                .to_string(),
+        ));
+    }
+    Ok(data.clone())
+}
+
 /// Authenticate with a Proxmox server and verify version requirements.
 ///
 /// This function also verifies the Proxmox version is at least 8.4.1,
@@ -102,6 +200,7 @@ async fn authenticate(credentials: &ProxmoxCredentials) -> Result<ProxmoxSession
         .form(&[
             ("username", credentials.username.as_str()),
             ("password", credentials.password.as_str()),
+            ("new-format", "1"),
         ])
         .send()
         .await
@@ -147,6 +246,7 @@ async fn authenticate(credentials: &ProxmoxCredentials) -> Result<ProxmoxSession
     let data = json.get("data").ok_or_else(|| {
         Error::ProxmoxApi("Invalid response from server: missing 'data' field".to_string())
     })?;
+    let data = complete_second_factor(&client, &auth_url, credentials, data.clone()).await?;
 
     let ticket = data
         .get("ticket")
@@ -1950,6 +2050,7 @@ mod tests {
                 server_url: server.url(),
                 username: "root@pam".to_string(),
                 password: "password".to_string(),
+                totp: None,
             };
 
             let result = authenticate(&credentials).await;
@@ -1962,6 +2063,170 @@ mod tests {
 
             auth_mock.assert_async().await;
             version_mock.assert_async().await;
+        }
+
+        #[tokio::test]
+        #[serial]
+        async fn test_authenticate_two_factor() {
+            let challenge = format!(
+                "PVE:!tfa!{}:12345678::signature",
+                urlencoding::encode(r#"{"totp":true,"recovery":[1,2]}"#)
+            );
+            let unsupported = format!(
+                "PVE:!tfa!{}:12345678::signature",
+                urlencoding::encode(r#"{"webauthn":{},"recovery":[1]}"#)
+            );
+            let complete = serde_json::json!({
+                "ticket": "PVE:root@pam:12345678::complete",
+                "CSRFPreventionToken": "final-csrf",
+            });
+            let partial = serde_json::json!({"ticket": challenge, "NeedTFA": 1});
+
+            for (initial, code, second_status, second_data, error) in [
+                (
+                    partial.clone(),
+                    None,
+                    200,
+                    complete.clone(),
+                    Some("requires an authenticator"),
+                ),
+                (
+                    partial.clone(),
+                    Some("abc123"),
+                    200,
+                    complete.clone(),
+                    Some("valid numeric"),
+                ),
+                (partial.clone(), Some("123456"), 200, complete.clone(), None),
+                (
+                    serde_json::json!({"ticket": challenge}),
+                    Some("123456"),
+                    200,
+                    complete.clone(),
+                    None,
+                ),
+                (
+                    serde_json::json!({"NeedTFA": true}),
+                    None,
+                    200,
+                    complete.clone(),
+                    Some("did not offer TOTP"),
+                ),
+                (
+                    serde_json::json!({"NeedTFA": 1, "ticket": unsupported}),
+                    Some("123456"),
+                    200,
+                    complete.clone(),
+                    Some("not supported"),
+                ),
+                (
+                    serde_json::json!({"ticket": "PVE:!tfa!malformed:time::sig"}),
+                    Some("123456"),
+                    200,
+                    complete.clone(),
+                    Some("did not offer TOTP"),
+                ),
+                (
+                    partial.clone(),
+                    Some("123456"),
+                    401,
+                    serde_json::Value::Null,
+                    Some("rejected"),
+                ),
+                (
+                    partial.clone(),
+                    Some("123456"),
+                    503,
+                    serde_json::Value::Null,
+                    Some("HTTP 503"),
+                ),
+                (
+                    partial.clone(),
+                    Some("123456"),
+                    200,
+                    partial.clone(),
+                    Some("incomplete"),
+                ),
+                (
+                    partial.clone(),
+                    Some("123456"),
+                    200,
+                    serde_json::json!({"ticket": challenge}),
+                    Some("incomplete"),
+                ),
+                (
+                    serde_json::json!({"NeedTFA": 1, "ticket": "PVE:root@pam:time::partial", "CSRFPreventionToken": "partial-csrf"}),
+                    None,
+                    200,
+                    complete.clone(),
+                    Some("did not offer TOTP"),
+                ),
+            ] {
+                let mut server = Server::new_async().await;
+                let first = server
+                    .mock("POST", "/api2/json/access/ticket")
+                    .match_body(mockito::Matcher::AllOf(vec![
+                        mockito::Matcher::UrlEncoded("username".into(), "root@pam".into()),
+                        mockito::Matcher::UrlEncoded("password".into(), "password".into()),
+                        mockito::Matcher::UrlEncoded("new-format".into(), "1".into()),
+                    ]))
+                    .with_header("content-type", "application/json")
+                    .with_body(serde_json::json!({"data": initial}).to_string())
+                    .create_async()
+                    .await;
+                let sends_code = initial["ticket"] == challenge && code == Some("123456");
+                let second = server
+                    .mock("POST", "/api2/json/access/ticket")
+                    .match_header("cookie", mockito::Matcher::Missing)
+                    .match_body(mockito::Matcher::AllOf(vec![
+                        mockito::Matcher::UrlEncoded("username".into(), "root@pam".into()),
+                        mockito::Matcher::UrlEncoded("password".into(), "totp:123456".into()),
+                        mockito::Matcher::UrlEncoded("tfa-challenge".into(), challenge.clone()),
+                    ]))
+                    .with_status(second_status)
+                    .with_header("content-type", "application/json")
+                    .with_body(serde_json::json!({"data": second_data}).to_string())
+                    .expect(usize::from(sends_code))
+                    .create_async()
+                    .await;
+                let version = server
+                    .mock("GET", "/api2/json/version")
+                    .match_header("cookie", "PVEAuthCookie=PVE:root@pam:12345678::complete")
+                    .with_header("content-type", "application/json")
+                    .with_body(r#"{"data":{"version":"8.4.1"}}"#)
+                    .expect(usize::from(error.is_none()))
+                    .create_async()
+                    .await;
+                // Catch any attempt to send the partial ticket to the version API.
+                let partial_version = server
+                    .mock("GET", "/api2/json/version")
+                    .match_header("cookie", format!("PVEAuthCookie={challenge}").as_str())
+                    .expect(0)
+                    .create_async()
+                    .await;
+                let credentials = ProxmoxCredentials {
+                    server_url: server.url(),
+                    username: "root@pam".into(),
+                    password: "password".into(),
+                    totp: code.map(str::to_string),
+                };
+                let result = authenticate(&credentials).await;
+                if let Some(expected) = error {
+                    let err = result.unwrap_err();
+                    assert!(matches!(err, Error::ProxmoxTwoFactor(_)), "{err}");
+                    assert!(err.to_string().contains(expected), "{err}");
+                    assert!(!err.to_string().contains("signature"));
+                    assert!(!err.to_string().contains("123456"));
+                } else {
+                    let session = result.unwrap();
+                    assert_eq!(session.ticket, complete["ticket"]);
+                    assert_eq!(session.csrf_token, "final-csrf");
+                }
+                first.assert_async().await;
+                second.assert_async().await;
+                version.assert_async().await;
+                partial_version.assert_async().await;
+            }
         }
 
         #[tokio::test]
@@ -1981,6 +2246,7 @@ mod tests {
                 server_url: server.url(),
                 username: "root@pam".to_string(),
                 password: "wrong-password".to_string(),
+                totp: None,
             };
 
             let result = authenticate(&credentials).await;
@@ -2012,6 +2278,7 @@ mod tests {
                 server_url: server.url(),
                 username: "user@pam".to_string(),
                 password: "password".to_string(),
+                totp: None,
             };
 
             let result = authenticate(&credentials).await;
@@ -2068,6 +2335,7 @@ mod tests {
                 server_url: server.url(),
                 username: "root@pam".to_string(),
                 password: "password".to_string(),
+                totp: None,
             };
 
             let result = authenticate(&credentials).await;
@@ -2835,6 +3103,7 @@ mod tests {
                 server_url: server.url(),
                 username: "root@pam".to_string(),
                 password: "password".to_string(),
+                totp: None,
             };
 
             let result = authenticate(&credentials).await;
@@ -2873,6 +3142,7 @@ mod tests {
                 server_url: server.url(),
                 username: "root@pam".to_string(),
                 password: "password".to_string(),
+                totp: None,
             };
 
             let result = authenticate(&credentials).await;
@@ -3969,6 +4239,7 @@ mod tests {
                 server_url: server.url(),
                 username: "root@pam".to_string(),
                 password: "password".to_string(),
+                totp: None,
             };
 
             let result = authenticate(&credentials).await;
@@ -4000,6 +4271,7 @@ mod tests {
                 server_url: server.url(),
                 username: "root@pam".to_string(),
                 password: "password".to_string(),
+                totp: None,
             };
 
             let result = authenticate(&credentials).await;
@@ -4045,6 +4317,7 @@ mod tests {
                 server_url: server.url(),
                 username: "root@pam".to_string(),
                 password: "password".to_string(),
+                totp: None,
             };
 
             let result = authenticate(&credentials).await;
@@ -4093,6 +4366,7 @@ mod tests {
                 server_url: server.url(),
                 username: "root@pam".to_string(),
                 password: "password".to_string(),
+                totp: None,
             };
 
             let result = authenticate(&credentials).await;
@@ -4148,6 +4422,7 @@ mod tests {
                 server_url: server.url(),
                 username: "root@pam".to_string(),
                 password: "password".to_string(),
+                totp: None,
             };
 
             let result = authenticate(&credentials).await;
@@ -4179,6 +4454,7 @@ mod tests {
                 server_url: server.url(),
                 username: "root@pam".to_string(),
                 password: "password".to_string(),
+                totp: None,
             };
 
             let result = authenticate(&credentials).await;

@@ -4,6 +4,8 @@ import "../../../../src/views/proxmox/proxmox-connect-view.js";
 import type { ProxmoxConnectView } from "../../../../src/views/proxmox/proxmox-connect-view.js";
 import { wizardState } from "../../../../src/state/wizard-state.js";
 import { findByRole, fullA11ySnapshot } from "../../helpers/a11y.js";
+import { mockTauriIpc, restoreTauriIpc } from "../../tauri-ipc.js";
+import type { ProxmoxCredentials } from "../../../../src/api/types.js";
 
 async function renderView() {
   const el = await fixture<ProxmoxConnectView>(
@@ -32,6 +34,8 @@ describe("proxmox-connect-view", () => {
     wizardState.reset();
   });
 
+  afterEach(() => restoreTauriIpc());
+
   it("gives each credential field the autocomplete hint password managers expect", async () => {
     const { inputs } = await renderView();
 
@@ -48,6 +52,7 @@ describe("proxmox-connect-view", () => {
       { id: "server-url", type: "url", autocomplete: "url" },
       { id: "username", type: "text", autocomplete: "username" },
       { id: "password", type: "password", autocomplete: "current-password" },
+      { id: "totp", type: "text", autocomplete: "one-time-code" },
     ]);
   });
 
@@ -88,6 +93,44 @@ describe("proxmox-connect-view", () => {
     await typeInto(el, inputs[2], "secret");
 
     expect(el.isFormValid()).to.be.true;
+  });
+
+  it("shows the second-factor error, retries with the code, and clears it", async () => {
+    const submitted: ProxmoxCredentials[] = [];
+    mockTauriIpc((cmd, args) => {
+      expect(cmd).to.equal("proxmox_connect");
+      const { credentials } = args as { credentials: ProxmoxCredentials };
+      submitted.push(credentials);
+      if (!credentials.totp) {
+        throw "Proxmox two-factor authentication: Enter the current authenticator app code.";
+      }
+      return {
+        server_url: credentials.server_url,
+        ticket: "complete",
+        csrf_token: "csrf",
+      };
+    });
+    const { el, inputs } = await renderView();
+    await typeInto(el, inputs[0], "https://192.168.1.100:8006");
+    await typeInto(el, inputs[2], "secret");
+    await typeInto(el, inputs[3], "   ");
+    expect(await el.connect()).to.be.false;
+    expect(submitted[0].totp).to.be.undefined;
+    await el.updateComplete;
+    expect(
+      el.shadowRoot!.querySelector(".status-description")!.textContent
+    ).to.include("two-factor");
+    expect(wizardState.getState().selections.proxmoxConnected).to.be.false;
+    expect(wizardState.getState().selections.proxmoxSession).to.be.undefined;
+    await typeInto(el, inputs[3], " 012345 ");
+    expect(await el.connect()).to.be.true;
+    await el.updateComplete;
+    await inputs[3].updateComplete;
+    expect(submitted[1].totp).to.equal("012345");
+    expect(nativeInput(inputs[3]).value).to.equal("");
+    expect(wizardState.getState().selections.proxmoxSession?.ticket).to.equal(
+      "complete"
+    );
   });
 
   it("rejects a server URL that is not HTTPS", async () => {

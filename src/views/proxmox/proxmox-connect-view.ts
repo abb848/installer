@@ -109,6 +109,9 @@ export class ProxmoxConnectView extends LitElement {
   private _password = "";
 
   @state()
+  private _totp = "";
+
+  @state()
   private _connecting = false;
 
   @state()
@@ -165,6 +168,7 @@ export class ProxmoxConnectView extends LitElement {
         server_url: url,
         username: this._username,
         password: this._password,
+        totp: this._totp.trim() || undefined,
       });
 
       this._connected = true;
@@ -188,6 +192,7 @@ export class ProxmoxConnectView extends LitElement {
       wizardState.setSelection("proxmoxConnected", false);
       return false;
     } finally {
+      this._totp = "";
       this._connecting = false;
     }
   }
@@ -221,6 +226,11 @@ export class ProxmoxConnectView extends LitElement {
   private _onPasswordChange(e: Event) {
     const input = e.target as WaInput;
     this._password = input.value ?? "";
+    this._resetConnection();
+  }
+
+  private _onTotpChange(e: Event) {
+    this._totp = (e.target as WaInput).value ?? "";
     this._resetConnection();
   }
 
@@ -301,6 +311,18 @@ export class ProxmoxConnectView extends LitElement {
           password-toggle
           .value=${this._password}
           @input=${this._onPasswordChange}
+          @keydown=${this._onKeyDown}
+          ?disabled=${this._connecting}
+        ></wa-input>
+
+        <wa-input
+          type="text"
+          input-id="totp"
+          label="Authenticator app code (optional)"
+          autocomplete="one-time-code"
+          inputmode="numeric"
+          .value=${this._totp}
+          @input=${this._onTotpChange}
           @keydown=${this._onKeyDown}
           ?disabled=${this._connecting}
         ></wa-input>

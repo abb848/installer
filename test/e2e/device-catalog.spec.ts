@@ -42,7 +42,13 @@ for (const width of [900, 390]) {
         calls++;
         if (calls === 1)
           return new Promise((_resolve, reject) => {
-            bridge.failCatalog = () => reject("Version service unavailable");
+            bridge.failCatalog = () =>
+              reject({
+                code: "network",
+                message: "Version service unavailable",
+                retryable: true,
+                details: {},
+              });
           });
         return {
           ...MOCK_MANIFEST,

@@ -133,6 +133,32 @@ fn device_io_error(io_err: std::io::Error) -> Error {
     }
 }
 
+/// Check known capacity before any destructive disk operation.
+pub fn ensure_image_fits(image_size: u64, drive_size: u64) -> Result<()> {
+    if image_size > drive_size {
+        return Err(Error::ImageTooLarge {
+            written: 0,
+            image_size,
+            drive_size: Some(drive_size),
+        });
+    }
+    Ok(())
+}
+
+// Also compiled in tests, which cover the Windows transfer on every platform
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
+fn device_write_error(error: std::io::Error, written: u64, image_size: u64) -> Error {
+    if error.kind() == std::io::ErrorKind::StorageFull {
+        Error::ImageTooLarge {
+            written,
+            image_size,
+            drive_size: None,
+        }
+    } else {
+        device_io_error(error)
+    }
+}
+
 /// Drive a blocking task while forwarding its progress updates to the
 /// callback, then drain updates buffered after the task finished (e.g. the
 /// final "Write complete" / "Verification complete") so they aren't lost.
@@ -206,6 +232,43 @@ impl DeviceBackend for Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn capacity_check_rejects_only_oversized_images() {
+        ensure_image_fits(1024, 1024).unwrap();
+        ensure_image_fits(512, 1024).unwrap();
+        assert!(matches!(
+            ensure_image_fits(2048, 1024),
+            Err(Error::ImageTooLarge {
+                written: 0,
+                image_size: 2048,
+                drive_size: Some(1024)
+            })
+        ));
+    }
+
+    #[test]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    fn full_disk_write_retains_progress_and_size() {
+        #[cfg(target_os = "linux")]
+        let codes = [28, 28]; // ENOSPC
+        #[cfg(target_os = "windows")]
+        let codes = [39, 112]; // ERROR_HANDLE_DISK_FULL, ERROR_DISK_FULL
+        for code in codes {
+            assert!(matches!(
+                device_write_error(std::io::Error::from_raw_os_error(code), 10, 20),
+                Error::ImageTooLarge {
+                    written: 10,
+                    image_size: 20,
+                    drive_size: None
+                }
+            ));
+        }
+        assert!(matches!(
+            device_write_error(std::io::Error::other("unknown"), 10, 20),
+            Error::Io(_)
+        ));
+    }
 
     #[test]
     #[cfg(not(target_os = "windows"))]

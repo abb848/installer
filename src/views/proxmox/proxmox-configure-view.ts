@@ -1,3 +1,8 @@
+import {
+  installerError,
+  renderErrorHelp,
+  type InstallerError,
+} from "../../utils/installer-error.js";
 import { LitElement, html, css } from "lit";
 import {
   ViewAccessibility,
@@ -31,6 +36,18 @@ import {
   DEFAULT_PROXMOX_VM_ID,
   DEFAULT_PROXMOX_VM_NAME,
 } from "../../state/vm-defaults.js";
+
+/** Lookups report an expired session as its own code, answered with Reconnect */
+const SESSION_EXPIRED = "proxmox_session_expired";
+
+function isSessionExpired(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === SESSION_EXPIRED
+  );
+}
 
 @customElement("proxmox-configure-view")
 export class ProxmoxConfigureView extends LitElement {
@@ -167,7 +184,7 @@ export class ProxmoxConfigureView extends LitElement {
   private _loadingStorage = false;
 
   @state()
-  private _error: string | null = null;
+  private _error: InstallerError | null = null;
 
   @state()
   private _sessionExpired = false;
@@ -256,8 +273,10 @@ export class ProxmoxConfigureView extends LitElement {
 
     if (!session) {
       this._setError({
+        code: SESSION_EXPIRED,
         message: "Connect to Proxmox to continue.",
-        session_expired: true,
+        retryable: false,
+        details: {},
       });
       this._loadingNodes = false;
       return;
@@ -278,8 +297,8 @@ export class ProxmoxConfigureView extends LitElement {
       // from the other lookup, regardless of which one finishes first.
       const failures = results.filter((result) => result.status === "rejected");
       if (failures.length) {
-        const expired = failures.find(
-          (result) => result.reason?.session_expired === true
+        const expired = failures.find((result) =>
+          isSessionExpired(result.reason)
         );
         throw (expired ?? failures[0]).reason;
       }
@@ -357,8 +376,8 @@ export class ProxmoxConfigureView extends LitElement {
         (result): result is PromiseRejectedResult =>
           result.status === "rejected"
       );
-      const expired = failures.find(
-        (result) => result.reason?.session_expired === true
+      const expired = failures.find((result) =>
+        isSessionExpired(result.reason)
       );
       if (!isLatest()) {
         // Session expiry applies to every node, even from a superseded
@@ -412,12 +431,7 @@ export class ProxmoxConfigureView extends LitElement {
       if (!isLatest()) {
         // Session expiry applies to every node, even if this lookup was
         // superseded. Ordinary failures still belong to the old selection.
-        if (
-          typeof error === "object" &&
-          error !== null &&
-          "session_expired" in error &&
-          error.session_expired === true
-        ) {
+        if (isSessionExpired(error)) {
           this._setError(error);
         }
         return;
@@ -436,20 +450,8 @@ export class ProxmoxConfigureView extends LitElement {
   }
 
   private _setError(error: unknown) {
-    this._sessionExpired =
-      typeof error === "object" &&
-      error !== null &&
-      "session_expired" in error &&
-      error.session_expired === true;
-    this._error =
-      typeof error === "string"
-        ? error
-        : typeof error === "object" &&
-            error !== null &&
-            "message" in error &&
-            typeof error.message === "string"
-          ? error.message
-          : "Failed to load Proxmox configuration";
+    this._sessionExpired = isSessionExpired(error);
+    this._error = installerError(error, "Failed to load Proxmox configuration");
     if (this._sessionExpired) {
       wizardState.setSelection("proxmoxSession", undefined);
       wizardState.setSelection("proxmoxConnected", false);
@@ -682,14 +684,19 @@ export class ProxmoxConfigureView extends LitElement {
         <h2>Configure virtual machine</h2>
         <p class="subtitle">Configure your Home Assistant VM on Proxmox</p>
         <div class="config-card">
-          <p class="error-text" role="alert">${this._error}</p>
-          <wa-button
-            variant="brand"
-            @click=${this._sessionExpired ? this._reconnect : this._retry}
-            ?disabled=${this._loadingNodes || this._loadingStorage}
-          >
-            ${this._sessionExpired ? "Reconnect" : "Try again"}
-          </wa-button>
+          <p class="error-text" role="alert" style="overflow-wrap: anywhere;">
+            ${this._error.message}
+          </p>
+          ${renderErrorHelp()}
+          ${this._sessionExpired || this._error.retryable
+            ? html`<wa-button
+                variant="brand"
+                @click=${this._sessionExpired ? this._reconnect : this._retry}
+                ?disabled=${this._loadingNodes || this._loadingStorage}
+              >
+                ${this._sessionExpired ? "Reconnect" : "Try again"}
+              </wa-button>`
+            : ""}
         </div>
       `;
     }

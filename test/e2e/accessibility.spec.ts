@@ -22,6 +22,7 @@ for (const [flow, tag, flag] of [
           "app-shell"
         )! as unknown as HTMLElement & {
           _currentView: string;
+          _installRetryable: boolean;
           updateComplete: Promise<unknown>;
         } & Record<typeof flag, boolean>;
         wizardState.startFlow(flow);
@@ -31,11 +32,18 @@ for (const [flow, tag, flag] of [
         const progress = app.shadowRoot!.querySelector(
           tag
         )! as unknown as HTMLElement & {
-          _error: string | null;
+          _error: unknown;
           updateComplete: Promise<unknown>;
         };
-        progress._error = "Test failure";
+        progress._error = {
+          code: "test_failure",
+          message: "Test failure",
+          retryable: true,
+          details: {},
+        };
         app[flag] = true;
+        // The shell only offers Try again for a retryable failure
+        app._installRetryable = true;
         await progress.updateComplete;
       },
       { flow, tag, flag }
@@ -338,8 +346,14 @@ for (const tag of [
       path: testInfo.outputPath(`${tag}-reduced-motion.png`),
     });
     await page.evaluate((tag) => {
-      (document.querySelector(tag) as HTMLElement & { _error: string })._error =
-        "Mock drive disconnected";
+      (
+        document.querySelector(tag) as HTMLElement & { _error: unknown }
+      )._error = {
+        code: "drive_disconnected",
+        message: "Mock drive disconnected",
+        retryable: false,
+        details: {},
+      };
     }, tag);
     await expect(page.getByRole("alert")).toBeFocused();
     await expect(

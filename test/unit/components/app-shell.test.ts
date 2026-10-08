@@ -138,7 +138,12 @@ describe("app-shell", () => {
     await goToStep(el, "configure");
     await waitUntil(() => shellOf(el).nextDisabled);
     expect(wizardState.getState().selections.proxmoxStorage).to.equal("local");
-    storage.reject({ message: "Temporary failure", session_expired: false });
+    storage.reject({
+      message: "Temporary failure",
+      code: "proxmox_api",
+      retryable: true,
+      details: {},
+    });
     await waitUntil(
       () =>
         !!el
@@ -403,7 +408,7 @@ describe("app-shell", () => {
       // the progress view reports the flash error itself.
       selectTargets({ withBoard: false });
       await goToStep(el, "flash");
-      await waitUntil(() => shellOf(el).nextLabel === "Try again");
+      await waitUntil(() => shellOf(el).nextLabel === "Choose another drive");
 
       fire(shellOf(el), "wizard-cancel");
       await el.updateComplete;

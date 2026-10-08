@@ -116,7 +116,7 @@ fn write_to_device(
         }
 
         dest.write_all(&buffer[..bytes_read])
-            .map_err(device_io_error)?;
+            .map_err(|error| device_write_error(error, bytes_written, total_size))?;
 
         bytes_written += bytes_read as u64;
 
@@ -132,7 +132,8 @@ fn write_to_device(
         }
     }
 
-    dest.sync_all().map_err(device_io_error)?;
+    dest.sync_all()
+        .map_err(|error| device_write_error(error, bytes_written, total_size))?;
 
     // Send final progress
     let _ = progress_tx.send(FlashProgress::new(

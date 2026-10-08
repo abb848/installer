@@ -260,10 +260,6 @@ pub struct GitHubRelease {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
 pub struct FlashResult {
-    /// Whether the operation was successful
-    pub success: bool,
-    /// Error message if failed
-    pub error: Option<String>,
     /// Duration in seconds
     pub duration_secs: u64,
 }
@@ -759,33 +755,11 @@ mod tests {
     // Additional comprehensive tests
     #[test]
     fn test_flash_result_roundtrip() {
-        let result = FlashResult {
-            success: true,
-            error: None,
-            duration_secs: 120,
-        };
+        let result = FlashResult { duration_secs: 120 };
 
         let json = serde_json::to_string(&result).unwrap();
         let deserialized: FlashResult = serde_json::from_str(&json).unwrap();
 
-        assert_eq!(result.success, deserialized.success);
-        assert_eq!(result.error, deserialized.error);
-        assert_eq!(result.duration_secs, deserialized.duration_secs);
-    }
-
-    #[test]
-    fn test_flash_result_with_error() {
-        let result = FlashResult {
-            success: false,
-            error: Some("Device not found".to_string()),
-            duration_secs: 5,
-        };
-
-        let json = serde_json::to_string(&result).unwrap();
-        let deserialized: FlashResult = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(result.success, deserialized.success);
-        assert_eq!(result.error, deserialized.error);
         assert_eq!(result.duration_secs, deserialized.duration_secs);
     }
 

@@ -480,7 +480,7 @@ async fn fetch_release_from_api(api_base_url: &str, version: &str) -> Result<Hao
                 let seconds = rate_limit_wait(&headers, now);
                 let minutes = seconds.div_ceil(60).max(1);
                 let unit = if minutes == 1 { "minute" } else { "minutes" };
-                return Err(Error::DownloadFailed(format!(
+                return Err(Error::RateLimited(format!(
                     "GitHub's request limit has been reached for this network. Wait at least {minutes} {unit}, then try again."
                 )));
             }

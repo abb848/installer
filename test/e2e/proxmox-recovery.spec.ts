@@ -32,7 +32,9 @@ async function mockLookupFailure(
             if (lookupCount === 1) {
               throw {
                 message: expired ? "Session expired" : "Temporary failure",
-                session_expired: expired,
+                code: expired ? "proxmox_session_expired" : "proxmox_api",
+                retryable: !expired,
+                details: {},
               };
             }
             // Hold recovery open so Next's loading state is observable without
@@ -128,7 +130,10 @@ test.describe("Proxmox configuration recovery", () => {
       await mockLookupFailure(page, command, false);
       await connect(page);
       const view = page.locator("proxmox-configure-view");
-      await expect(view.getByRole("alert")).toHaveText("Temporary failure");
+      // The view shows the safe message for the code, not the remote text
+      await expect(view.getByRole("alert")).toHaveText(
+        "Proxmox could not complete the request. Check the server, account permissions, and connection."
+      );
       await expect(
         page.getByRole("button", { name: "Next", exact: true })
       ).toBeDisabled();

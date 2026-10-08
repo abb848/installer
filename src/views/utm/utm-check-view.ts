@@ -1,3 +1,8 @@
+import {
+  installerError,
+  renderErrorHelp,
+  type InstallerError,
+} from "../../utils/installer-error.js";
 import { LitElement, html, css } from "lit";
 import {
   ViewAccessibility,
@@ -217,7 +222,7 @@ export class UtmCheckView extends LitElement {
   private _utmStatus: UtmStatus | null = null;
 
   @state()
-  private _error: string | null = null;
+  private _error: InstallerError | null = null;
 
   connectedCallback() {
     super.connectedCallback();
@@ -235,8 +240,7 @@ export class UtmCheckView extends LitElement {
       // Store UTM installed status in wizard state
       wizardState.setSelection("utmInstalled", status.installed);
     } catch (error) {
-      this._error =
-        error instanceof Error ? error.message : "Failed to check UTM status";
+      this._error = installerError(error, "Failed to check UTM status");
       wizardState.setSelection("utmInstalled", false);
     } finally {
       this._loading = false;
@@ -309,16 +313,21 @@ export class UtmCheckView extends LitElement {
         </div>
         <div class="status-text">
           <p class="status-title">Error checking UTM</p>
-          <p class="status-description">${this._error}</p>
+          <p class="status-description" style="overflow-wrap: anywhere;">
+            ${this._error?.message}
+          </p>
+          ${renderErrorHelp()}
         </div>
       </div>
-      <wa-button
-        variant="brand"
-        appearance="outlined"
-        @click=${this._checkStatus}
-      >
-        ${this._renderRefreshIcon()} Try again
-      </wa-button>
+      ${this._error?.retryable
+        ? html`<wa-button
+            variant="brand"
+            appearance="outlined"
+            @click=${this._checkStatus}
+          >
+            ${this._renderRefreshIcon()} Try again
+          </wa-button>`
+        : ""}
     `;
   }
 

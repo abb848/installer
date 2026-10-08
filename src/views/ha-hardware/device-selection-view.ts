@@ -1,3 +1,8 @@
+import {
+  installerError,
+  renderErrorHelp,
+  type InstallerError,
+} from "../../utils/installer-error.js";
 import { LitElement, html, css } from "lit";
 import {
   ViewAccessibility,
@@ -117,7 +122,7 @@ export class HaHardwareDeviceSelectionView extends LitElement {
   private _loading = true;
 
   @state()
-  private _error: string | null = null;
+  private _error: InstallerError | null = null;
 
   @state()
   private _selectedDeviceId: string | null = null;
@@ -156,8 +161,7 @@ export class HaHardwareDeviceSelectionView extends LitElement {
       }
       wizardState.setSelection("deviceCatalogReady", true);
     } catch (err) {
-      this._error =
-        err instanceof Error ? err.message : "Failed to load devices";
+      this._error = installerError(err, "Failed to load devices");
     } finally {
       this._loading = false;
     }
@@ -177,14 +181,23 @@ export class HaHardwareDeviceSelectionView extends LitElement {
       return html`
         <div class="error">
           <span class="error-icon">⚠️</span>
-          <p class="error-message" role="alert">${this._error}</p>
-          <wa-button
-            variant="brand"
-            appearance="outlined"
-            @click=${this._loadDevices}
+          <p
+            class="error-message"
+            role="alert"
+            style="overflow-wrap: anywhere;"
           >
-            Try again
-          </wa-button>
+            ${this._error?.message}
+          </p>
+          ${renderErrorHelp()}
+          ${this._error.retryable
+            ? html`<wa-button
+                variant="brand"
+                appearance="outlined"
+                @click=${this._loadDevices}
+              >
+                Try again
+              </wa-button>`
+            : ""}
         </div>
       `;
     }

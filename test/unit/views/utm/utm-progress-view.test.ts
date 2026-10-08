@@ -9,8 +9,10 @@ import { wizardState } from "../../../../src/state/wizard-state.js";
 import "../../../../src/views/utm/utm-progress-view.js";
 import "../../../../src/views/utm/utm-configure-view.js";
 import type { UtmProgressView } from "../../../../src/views/utm/utm-progress-view.js";
+import { PollTimeoutError } from "../../../../src/utils/polling.js";
 import {
   deferred,
+  ipcError,
   mockTauriIpc,
   restoreTauriIpc,
   settle,
@@ -311,7 +313,7 @@ describe("utm-progress-view", () => {
     const error = oneEvent(next, "install-error");
     await settle();
     expect(creates).to.equal(1);
-    creation.reject(new Error("Import failed"));
+    creation.reject(ipcError("utm", "Import failed", true));
     await error;
     expect(oldError).to.be.false;
     expect(next.hasError).to.be.true;
@@ -492,7 +494,8 @@ describe("utm-progress-view", () => {
           return "new-vm";
         case "resize_utm_vm_disk":
           resizeAttempts++;
-          if (resizeAttempts === 1) return Promise.reject("resize failed");
+          if (resizeAttempts === 1)
+            throw ipcError("utm", "resize failed", true);
           return undefined;
         case "get_utm_vm_status":
           return { status: "started", ip_address: "192.168.1.100" };
@@ -525,10 +528,16 @@ describe("utm-progress-view", () => {
     expect(resizeAttempts).to.equal(2);
   });
 
-  it("shows Automation settings advice from a Tauri string rejection", async () => {
+  it("shows Automation settings advice from a structured Tauri rejection", async () => {
     const message =
-      "UTM error: Home Assistant Installer is not allowed to control UTM. Open System Settings > Privacy & Security > Automation, enable UTM under Home Assistant Installer, then try again.";
-    mockTauriIpc(() => Promise.reject(message));
+      "Home Assistant Installer is not allowed to control UTM. Open System Settings > Privacy & Security > Automation, enable UTM under Home Assistant Installer, then try again.";
+    mockTauriIpc((cmd) => {
+      if (cmd === "download_utm_image") return "/tmp/haos.qcow2";
+      if (cmd === "create_utm_vm")
+        return Promise.reject(ipcError("utm", message, true));
+      if (cmd === "discard_utm_image") return undefined;
+      throw new Error(`Unexpected IPC command: ${cmd}`);
+    });
 
     const el = mount();
     await oneEvent(el, "install-error");
@@ -538,9 +547,62 @@ describe("utm-progress-view", () => {
     expect(
       el
         .shadowRoot!.querySelector("install-progress")!
-        .shadowRoot!.querySelector(".error-message")!.textContent
+        .shadowRoot!.querySelector(".error-message")!
+        .textContent?.trim()
     ).to.equal(message);
     expect(wizardState.getState().selections.vmId).to.be.undefined;
+  });
+
+  it("does not recreate a VM when creation succeeded but starting failed", async () => {
+    let creations = 0;
+    mockTauriIpc((cmd) => {
+      if (cmd === "download_utm_image") return "/tmp/fixture.qcow2";
+      if (cmd === "discard_utm_image") return;
+      if (cmd === "create_utm_vm") {
+        creations++;
+        return Promise.reject(
+          ipcError(
+            "utm_vm_created",
+            "The VM was created. Open UTM to start it."
+          )
+        );
+      }
+      throw new Error(`Unexpected IPC command: ${cmd}`);
+    });
+    const el = mount();
+    const event = await oneEvent(el, "install-error");
+    expect(event.detail.retryable).to.be.false;
+    el.retry();
+    await el.updateComplete;
+    expect(creations).to.equal(1);
+    expect(
+      el
+        .shadowRoot!.querySelector("install-progress")!
+        .shadowRoot!.querySelector(".error-message")!.textContent
+    ).to.contain("Open UTM to start it");
+  });
+
+  it("allows a timed-out readiness check to resume the existing VM", async () => {
+    wizardState.setSelection("vmId", "existing-vm");
+    wizardState.setSelection("utmDiskResized", true);
+    mockTauriIpc((cmd) => {
+      if (cmd === "get_utm_vm_status")
+        return { status: "started", ip_address: "192.0.2.50" };
+      if (cmd === "check_ha_updated") return true;
+      throw new Error(`Unexpected IPC command: ${cmd}`);
+    });
+    const el = mount();
+    const internal = el as unknown as { _waitForHaReady(): Promise<void> };
+    internal._waitForHaReady = async () => {
+      throw new PollTimeoutError("Try again to keep waiting");
+    };
+    const event = await oneEvent(el, "install-error");
+    expect(event.detail.retryable).to.be.true;
+    internal._waitForHaReady = async () => {};
+    const completed = oneEvent(el, "install-complete");
+    el.retry();
+    await completed;
+    expect(wizardState.getState().selections.vmId).to.equal("existing-vm");
   });
 
   for (const rejection of [undefined, {}, "", "   "]) {
@@ -665,7 +727,7 @@ describe("utm-progress-view", () => {
           expect(wizardState.getState().selections.vmId).to.equal(
             "unique-utm-id"
           );
-          if (++starts === 1) throw new Error("Start failed");
+          if (++starts === 1) throw ipcError("utm", "Start failed", true);
           return undefined;
         case "check_ha_ready":
         case "check_ha_updated":
@@ -739,10 +801,10 @@ describe("utm-progress-view", () => {
     mockTauriIpc((cmd, args) => {
       if (cmd === "download_utm_image")
         return `/tmp/attempt-${++downloads}.qcow2`;
-      if (cmd === "create_utm_vm") return Promise.reject("import failed");
+      if (cmd === "create_utm_vm") throw ipcError("utm", "import failed", true);
       if (cmd === "discard_utm_image") {
         released.push((args as { imagePath: string }).imagePath);
-        return Promise.reject("cleanup failed");
+        throw ipcError("io", "cleanup failed");
       }
       throw new Error(`Unexpected IPC command: ${cmd}`);
     });

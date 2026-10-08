@@ -127,12 +127,19 @@ describe("proxmox-progress-view", () => {
     );
   });
 
-  it("renders a string IPC failure and retries the installation", async () => {
+  // A failed creation can hide a VM that was already created, so the view
+  // never repeats it in place
+  it("renders a creation failure without retrying it in place", async () => {
     let attempts = 0;
     mockTauriIpc((cmd) => {
       expect(cmd).to.equal("proxmox_create_vm");
-      if (++attempts === 1) return Promise.reject("Storage unavailable");
-      return { vm_id: 100, node: "pve", ip_address: "192.0.2.50" };
+      attempts++;
+      return Promise.reject({
+        code: "proxmox_api",
+        message: "Storage unavailable",
+        retryable: false,
+        details: {},
+      });
     });
     const el = mount();
     let completed = 0;
@@ -144,16 +151,13 @@ describe("proxmox-progress-view", () => {
       el
         .shadowRoot!.querySelector("install-progress")!
         .shadowRoot!.querySelector(".error-message")!.textContent
-    ).to.contain("Storage unavailable");
+    ).to.contain("account permissions");
     expect(completed).to.equal(0);
     expect(errors).to.equal(1);
     el.retry();
     await settle();
-    expect(attempts).to.equal(2);
-    expect(el.hasError).to.be.false;
-    expect(completed).to.equal(1);
-    expect(errors).to.equal(1);
-    expect(wizardState.getState().selections.ipAddress).to.equal("192.0.2.50");
+    expect(attempts).to.equal(1);
+    expect(el.hasError).to.be.true;
   });
 
   it("reports an error without starting when there is no session", async () => {

@@ -1,6 +1,17 @@
 import { clearMocks, mockIPC } from "@tauri-apps/api/mocks";
+import type { InstallerError } from "../../src/utils/installer-error.js";
 
 type IpcHandler = (cmd: string, args: unknown) => unknown;
+
+/** The JSON rejection value sent by a Tauri command, with no Error prototype. */
+export function ipcError(
+  code: string,
+  message: string,
+  retryable = false,
+  details: Record<string, unknown> = {}
+): InstallerError {
+  return { code, message, retryable, details };
+}
 
 /**
  * Route `src/api/commands.ts` through a Tauri IPC mock instead of its

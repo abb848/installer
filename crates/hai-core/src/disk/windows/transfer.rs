@@ -16,6 +16,7 @@ pub(super) fn validate_sizes(image_size: u64, disk_size: u64) -> Result<()> {
         return Err(Error::ImageTooLarge {
             written: 0,
             image_size,
+            drive_size: Some(disk_size),
         });
     }
     if image_size == 0 || disk_size < 2 * METADATA_SIZE as u64 {
@@ -83,9 +84,10 @@ pub(super) fn transfer(
     while written < body_size {
         let count = (body_size - written).min(buffer.len() as u64) as usize;
         source.read_exact(&mut buffer[..count])?;
+        // A full device reports how much of the image fit
         device
             .write_all(&buffer[..count])
-            .map_err(device_io_error)?;
+            .map_err(|error| device_write_error(error, written, image_size))?;
         written += count as u64;
         if written - last_progress >= PROGRESS_UPDATE_INTERVAL {
             last_progress = written;
@@ -97,7 +99,9 @@ pub(super) fn transfer(
             ));
         }
     }
-    device.sync_all().map_err(device_io_error)?;
+    device
+        .sync_all()
+        .map_err(|error| device_write_error(error, written, image_size))?;
 
     if verify {
         let _ = progress.send(FlashProgress::new(
@@ -435,7 +439,7 @@ mod tests {
         .unwrap_err();
         assert!(matches!(
             error,
-            Error::ImageTooLarge { written: 0, image_size: size } if size == image_size
+            Error::ImageTooLarge { written: 0, image_size: size, .. } if size == image_size
         ));
         assert!(disk.events.is_empty());
         assert!(disk.bytes.get_ref().iter().all(|&byte| byte == 0xaa));

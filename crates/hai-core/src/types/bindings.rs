@@ -94,12 +94,7 @@ fn optional_values_serialize_as_required_nullable_fields() {
         })
         .unwrap(),
         serde_json::to_value(ExpectedDevice::default()).unwrap(),
-        serde_json::to_value(FlashResult {
-            success: true,
-            error: None,
-            duration_secs: 1,
-        })
-        .unwrap(),
+        serde_json::to_value(FlashResult { duration_secs: 1 }).unwrap(),
         serde_json::to_value(UtmStatus {
             installed: false,
             path: None,
@@ -124,7 +119,6 @@ fn optional_values_serialize_as_required_nullable_fields() {
             ProxmoxNode::decl(&config),
             &["cpu_usage", "memory_used", "memory_total"][..],
         ),
-        (&values[3], FlashResult::decl(&config), &["error"][..]),
         (
             &values[4],
             UtmStatus::decl(&config),

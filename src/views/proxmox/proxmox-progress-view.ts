@@ -1,3 +1,7 @@
+import {
+  installerError,
+  type InstallerError,
+} from "../../utils/installer-error.js";
 import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { wizardState, type WizardState } from "../../state/wizard-state.js";
@@ -71,7 +75,7 @@ export class ProxmoxProgressView extends LitElement {
   private _totalBytes = 0;
 
   @state()
-  private _error: string | null = null;
+  private _error: InstallerError | null = null;
 
   @state()
   private _isInstalling = false;
@@ -88,6 +92,7 @@ export class ProxmoxProgressView extends LitElement {
 
   /** Retry the install operation */
   retry(): void {
+    if (!this._error?.retryable) return;
     this._error = null;
     this._stage = "downloading";
     this._progress = 0;
@@ -203,13 +208,7 @@ export class ProxmoxProgressView extends LitElement {
         return;
       }
 
-      this._setError(
-        typeof error === "string"
-          ? error
-          : error instanceof Error
-            ? error.message
-            : "Failed to create virtual machine"
-      );
+      this._setError(error);
     } finally {
       // A newer attempt may own the component by now (cancel, then retry)
       if (this._abortController === controller) {
@@ -219,12 +218,13 @@ export class ProxmoxProgressView extends LitElement {
     }
   }
 
-  /** Show an error, and tell the app shell so it shows Cancel and Try again. */
-  private _setError(message: string) {
+  /** Show an error and tell the shell whether a retry is safe. */
+  private _setError(error: unknown) {
     this._stage = "error";
-    this._error = message;
+    this._error = installerError(error, "Failed to create virtual machine");
     this.dispatchEvent(
       new CustomEvent("install-error", {
+        detail: { retryable: this._error.retryable },
         bubbles: true,
         composed: true,
       })
@@ -260,7 +260,7 @@ export class ProxmoxProgressView extends LitElement {
         .stageStartBytes=${this._stageStartBytes}
         .indeterminate=${this._isIndeterminate(stage)}
         .measurable=${this._hasMeasurableProgress(stage)}
-        .error=${this._error}
+        .error=${this._error?.message ?? null}
       ></install-progress>
     `;
   }

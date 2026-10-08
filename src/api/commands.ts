@@ -194,8 +194,6 @@ async function simulateFlashProgress(
   });
 
   return {
-    success: true,
-    error: null,
     duration_secs: 45,
   };
 }

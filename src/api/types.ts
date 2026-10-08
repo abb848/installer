@@ -165,14 +165,6 @@ digest: string | null, };
 
 export type FlashResult = {
 /**
- * Whether the operation was successful
- */
-success: boolean,
-/**
- * Error message if failed
- */
-error: string | null,
-/**
  * Duration in seconds
  */
 duration_secs: number, };

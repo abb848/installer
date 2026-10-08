@@ -32,7 +32,7 @@ describe("shared install layouts", () => {
         csrf_token: "test",
       });
       let channel!: Channel<FlashProgress>;
-      let reject!: (reason: Error) => void;
+      let reject!: (reason: unknown) => void;
       let attempts = 0;
       mockTauriIpc((cmd, args) => {
         if (
@@ -101,7 +101,13 @@ describe("shared install layouts", () => {
         flow === "sbc" ? "flash-error" : "install-error",
         () => errors++
       );
-      reject(new Error("Test failure"));
+      // A retryable failure whose code has no fixed text keeps its message
+      reject({
+        code: "test_failure",
+        message: "Test failure",
+        retryable: true,
+        details: {},
+      });
       await settle();
       expect(errors).to.equal(1);
       expect(

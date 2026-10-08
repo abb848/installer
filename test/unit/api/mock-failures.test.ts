@@ -8,13 +8,13 @@ describe("browser mock failures", () => {
     restoreTauriIpc();
   });
 
-  for (const [scenario, operation] of [
-    ["flash-write", "flash"],
-    ["flash-disconnected", "flash"],
-    ["proxmox-install", "proxmox"],
-    ["utm-create", "utm"],
+  for (const [scenario, operation, code, retryable] of [
+    ["flash-write", "flash", "device_busy", true],
+    ["flash-disconnected", "flash", "drive_disconnected", false],
+    ["proxmox-install", "proxmox", "proxmox_api", false],
+    ["utm-create", "utm", "utm", true],
   ] as const) {
-    it(`rejects ${scenario} once with a string`, () => {
+    it(`rejects ${scenario} once like a native command error`, () => {
       sessionStorage.setItem("hai:mock-failure", scenario);
       let rejection: unknown;
       try {
@@ -22,7 +22,8 @@ describe("browser mock failures", () => {
       } catch (error) {
         rejection = error;
       }
-      expect(rejection).to.be.a("string");
+      expect(rejection).to.include({ code, retryable });
+      expect(rejection).to.have.property("message").that.is.a("string");
       expect(sessionStorage.getItem("hai:mock-failure")).to.equal(null);
       expect(() => failMockOperation(operation)).not.to.throw();
     });

@@ -1,5 +1,6 @@
 //! Process-wide ownership of the active flash, including its blocking disk writer.
 
+use crate::command_error::CommandError;
 use std::future::Future;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -21,14 +22,14 @@ impl Drop for FlashGuard {
 }
 
 impl FlashState {
-    pub(crate) async fn run<F, T>(&self, operation: F) -> Result<T, String>
+    pub(crate) async fn run<F, T>(&self, operation: F) -> Result<T, CommandError>
     where
-        F: Future<Output = Result<T, String>> + Send + 'static,
+        F: Future<Output = Result<T, CommandError>> + Send + 'static,
         T: Send + 'static,
     {
         self.active
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .map_err(|_| ALREADY_FLASHING.to_string())?;
+            .map_err(|_| CommandError::new("operation_in_progress", ALREADY_FLASHING, false))?;
         let guard = FlashGuard(Arc::clone(&self.active));
 
         // Dropping the IPC waiter only detaches this task. It must finish awaiting
@@ -38,7 +39,7 @@ impl FlashState {
             operation.await
         })
         .await
-        .map_err(|err| format!("Flash task failed: {err}"))?
+        .map_err(|_| CommandError::new("internal", "The installation task stopped unexpectedly. Check the drive before starting again.", false))?
     }
 }
 
@@ -54,9 +55,9 @@ mod tests {
         assert_eq!(state.run(async { Ok(42) }).await.unwrap(), 42);
         assert_eq!(
             state
-                .run(async { Err::<(), _>("write failed".into()) })
+                .run(async { Err::<(), _>(CommandError::new("io", "write failed", false)) })
                 .await,
-            Err("write failed".into())
+            Err(CommandError::new("io", "write failed", false))
         );
         state.run(async { Ok(()) }).await.unwrap();
     }
@@ -79,9 +80,19 @@ mod tests {
         started_rx.await.unwrap();
         assert_eq!(
             state
-                .run(async { Err::<(), _>("must not start a second download".into()) })
+                .run(async {
+                    Err::<(), _>(CommandError::new(
+                        "io",
+                        "must not start a second download",
+                        false,
+                    ))
+                })
                 .await,
-            Err(ALREADY_FLASHING.into())
+            Err(CommandError::new(
+                "operation_in_progress",
+                ALREADY_FLASHING,
+                false
+            ))
         );
         finish_tx.send(()).unwrap();
         first.await.unwrap().unwrap();
@@ -105,7 +116,7 @@ mod tests {
                             started_tx.send(()).unwrap();
                             finish_rx.recv().unwrap();
                             if writer_fails {
-                                Err("write failed".to_string())
+                                Err(CommandError::new("io", "write failed", false))
                             } else {
                                 Ok(())
                             }
@@ -122,7 +133,11 @@ mod tests {
             assert!(first.await.unwrap_err().is_cancelled());
             assert_eq!(
                 state.run(async { Ok(()) }).await,
-                Err(ALREADY_FLASHING.into())
+                Err(CommandError::new(
+                    "operation_in_progress",
+                    ALREADY_FLASHING,
+                    false
+                ))
             );
 
             finish_tx.send(()).unwrap();

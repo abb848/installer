@@ -4,6 +4,7 @@
 //! It uses hai-core for business logic and provides Tauri command wrappers.
 
 mod backend;
+mod command_error;
 mod commands;
 mod flash_state;
 

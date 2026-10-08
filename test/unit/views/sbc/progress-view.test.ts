@@ -88,83 +88,97 @@ describe("progress-view", () => {
       stage: "complete",
       progress: 100,
     });
-    attempts[0].result.resolve({
-      success: true,
-      error: null,
-      duration_secs: 1,
-    });
+    attempts[0].result.resolve({ duration_secs: 1 });
     await settle();
     expect(completed).to.equal(1);
     expect(errors).to.equal(0);
     expect(el.hasError).to.be.false;
   });
 
-  for (const message of ["Write failed: I/O error", "Drive disconnected"]) {
-    it(`shows a string IPC failure and retries after ${message}`, async () => {
-      const { el, attempts } = mockFlash();
-      let completed = 0;
-      let errors = 0;
-      el.addEventListener("flash-complete", () => completed++);
-      el.addEventListener("flash-error", () => errors++);
-      attempts[0].result.reject(message);
-      await settle();
-      expect(el.hasError).to.be.true;
-      expect(
-        el
-          .shadowRoot!.querySelector("install-progress")!
-          .shadowRoot!.querySelector(".error-message")!.textContent
-      ).to.contain(
-        message === "Drive disconnected"
-          ? "Please reconnect it and try again"
-          : message
-      );
-      expect(errors).to.equal(1);
-      expect(completed).to.equal(0);
-      el.retry();
-      await settle();
-      expect(attempts).to.have.length(2);
-      expect(attempts[1].request).to.deep.equal(attempts[0].request);
-      expect(el.hasError).to.be.false;
-      expect(
-        el
-          .shadowRoot!.querySelector("install-progress")!
-          .shadowRoot!.querySelector(".error-message")
-      ).to.equal(null);
-      attempts[1].progressChannel.onmessage({
-        stage: "complete",
-        progress: 100,
-        bytes_processed: 2048,
-        total_bytes: 2048,
-        message: "Complete",
-      });
-      attempts[1].result.resolve({
-        success: true,
-        error: null,
-        duration_secs: 1,
-      });
-      await settle();
-      expect(completed).to.equal(1);
-      expect(errors).to.equal(1);
-    });
-  }
-
-  it("reports an unsuccessful result without advancing", async () => {
+  // Commands reject with structured errors; only retryable ones may retry here
+  it("shows a retryable write failure and retries the same request", async () => {
     const { el, attempts } = mockFlash();
-    let completed = false;
-    el.addEventListener("flash-complete", () => {
-      completed = true;
+    let completed = 0;
+    let errors = 0;
+    el.addEventListener("flash-complete", () => completed++);
+    el.addEventListener("flash-error", () => errors++);
+    attempts[0].result.reject({
+      code: "device_busy",
+      message: "Write failed: I/O error",
+      retryable: true,
+      details: {},
     });
-    attempts[0].result.resolve({
-      success: false,
-      duration_secs: 1,
-      error: "Verification failed",
+    await settle();
+    expect(el.hasError).to.be.true;
+    expect(
+      el
+        .shadowRoot!.querySelector("install-progress")!
+        .shadowRoot!.querySelector(".error-message")!.textContent
+    ).to.contain("The drive is in use");
+    expect(errors).to.equal(1);
+    expect(completed).to.equal(0);
+    el.retry();
+    await settle();
+    expect(attempts).to.have.length(2);
+    expect(attempts[1].request).to.deep.equal(attempts[0].request);
+    expect(el.hasError).to.be.false;
+    expect(
+      el
+        .shadowRoot!.querySelector("install-progress")!
+        .shadowRoot!.querySelector(".error-message")
+    ).to.equal(null);
+    attempts[1].progressChannel.onmessage({
+      stage: "complete",
+      progress: 100,
+      bytes_processed: 2048,
+      total_bytes: 2048,
+      message: "Complete",
+    });
+    attempts[1].result.resolve({ duration_secs: 1 });
+    await settle();
+    expect(completed).to.equal(1);
+    expect(errors).to.equal(1);
+  });
+
+  it("does not retry a disconnected drive in place", async () => {
+    const { el, attempts } = mockFlash();
+    attempts[0].result.reject({
+      code: "drive_disconnected",
+      message: "Drive disconnected",
+      retryable: false,
+      details: {},
     });
     await settle();
     expect(
       el
         .shadowRoot!.querySelector("install-progress")!
         .shadowRoot!.querySelector(".error-message")!.textContent
-    ).to.contain("Verification failed");
+    ).to.contain("select your drive again");
+    el.retry();
+    await settle();
+    expect(attempts).to.have.length(1);
+    expect(el.hasError).to.be.true;
+  });
+
+  it("reports a failed verification without advancing", async () => {
+    const { el, attempts } = mockFlash();
+    let completed = false;
+    el.addEventListener("flash-complete", () => {
+      completed = true;
+    });
+    // Failures reject with a structured error; there is no unsuccessful result
+    attempts[0].result.reject({
+      code: "verification_failed",
+      message: "Verification failed",
+      retryable: false,
+      details: {},
+    });
+    await settle();
+    expect(
+      el
+        .shadowRoot!.querySelector("install-progress")!
+        .shadowRoot!.querySelector(".error-message")!.textContent
+    ).to.contain("could not be verified");
     expect(completed).to.be.false;
   });
 

@@ -8,7 +8,12 @@ import {
 import { wizardState } from "../../../../src/state/wizard-state.js";
 import "../../../../src/views/utm/utm-check-view.js";
 import type { UtmCheckView } from "../../../../src/views/utm/utm-check-view.js";
-import { mockTauriIpc, restoreTauriIpc, settle } from "../../tauri-ipc.js";
+import {
+  ipcError,
+  mockTauriIpc,
+  restoreTauriIpc,
+  settle,
+} from "../../tauri-ipc.js";
 
 describe("utm-check-view", () => {
   beforeEach(() => {
@@ -24,7 +29,7 @@ describe("utm-check-view", () => {
     mockTauriIpc((cmd) => {
       expect(cmd).to.equal("check_utm_status");
       return ++attempts === 1
-        ? Promise.reject("Status check failed")
+        ? Promise.reject(ipcError("utm", "Status check failed", true))
         : { installed: true, path: "/Applications/UTM.app", version: "4.5.0" };
     });
     const el = fixtureSync(html`<utm-check-view></utm-check-view>`);
@@ -90,7 +95,13 @@ describe("utm-check-view artwork", () => {
   it("uses problem artwork alongside the error and retry control", async () => {
     bridge.__TAURI__ = {};
     bridge.__TAURI_INTERNALS__ = {
-      invoke: () => Promise.reject(new Error("Mock check failed")),
+      invoke: () =>
+        Promise.reject({
+          code: "utm",
+          message: "Mock check failed",
+          retryable: true,
+          details: {},
+        }),
     };
     const el = await fixture<UtmCheckView>(
       html`<utm-check-view></utm-check-view>`

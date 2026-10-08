@@ -189,10 +189,24 @@ The Tauri desktop application with thin command wrappers.
 Commands are thin wrappers that:
 1. Call hai-core functions
 2. Adapt progress callbacks to Tauri channels
-3. Convert errors to strings for frontend
+3. Convert errors to a serializable `CommandError` for the frontend
+
+Rejected commands return `{ code, message, retryable, details }`, not JavaScript
+`Error` instances. Each core error variant has a stable snake-case code;
+`image_too_large` includes `image_size`, `written`, and nullable `drive_size` in
+`details`. Raw network URLs and Proxmox response bodies are not serialized.
+Installer-authored Proxmox corrective guidance uses `proxmox_action_required`,
+separate from untrusted API failure text. Read-only queries can be retried after
+permissions or services recover; unsupported methods remain non-retryable.
+`src/utils/installer-error.ts` maps codes to user-facing guidance and supplies
+fixed help/report links. Only explicitly retryable errors expose Try again;
+VM creation with an uncertain outcome must not be retried automatically.
+
+Successful flashing returns only `duration_secs`; failures reject.
 
 ```rust
-use hai_core::{devices, FlashProgress, ProgressCallback};
+use crate::{backend::Backend, command_error::CommandError};
+use hai_core::{BlockDevice, DeviceBackend, FlashProgress, ProgressCallback};
 use tauri::ipc::Channel;
 
 struct TauriProgressAdapter(Channel<FlashProgress>);
@@ -204,10 +218,10 @@ impl ProgressCallback for TauriProgressAdapter {
 }
 
 #[tauri::command]
-pub async fn list_block_devices() -> Result<Vec<BlockDevice>, String> {
-    hai_core::devices::list_block_devices()
+pub async fn list_block_devices() -> Result<Vec<BlockDevice>, CommandError> {
+    Backend.list_devices()
         .await
-        .map_err(|e| e.to_string())
+        .map_err(CommandError::from)
 }
 ```
 

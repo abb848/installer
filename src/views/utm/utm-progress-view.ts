@@ -1,3 +1,7 @@
+import {
+  installerError,
+  type InstallerError,
+} from "../../utils/installer-error.js";
 import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { wizardState, type WizardState } from "../../state/wizard-state.js";
@@ -20,6 +24,7 @@ import {
   DEFAULT_UTM_VM_NAME,
 } from "../../state/vm-defaults.js";
 import {
+  PollTimeoutError,
   isCancelled,
   pollUntil,
   throwIfCancelled,
@@ -93,7 +98,7 @@ export class UtmProgressView extends LitElement {
   private _totalBytes = 0;
 
   @state()
-  private _error: string | null = null;
+  private _error: InstallerError | null = null;
 
   @state()
   private _isInstalling = false;
@@ -131,6 +136,7 @@ export class UtmProgressView extends LitElement {
    * of being run again - see `_startInstall`.
    */
   retry(): void {
+    if (!this._error?.retryable) return;
     this._error = null;
     this._stage = "downloading";
     this._progress = 0;
@@ -268,14 +274,20 @@ export class UtmProgressView extends LitElement {
       }
 
       this._stage = "error";
-      this._error =
-        error instanceof Error
-          ? error.message
-          : typeof error === "string" && error.trim()
-            ? error
-            : "Failed to create virtual machine";
+      this._error = installerError(
+        error instanceof PollTimeoutError
+          ? {
+              code: "timeout",
+              message: error.message,
+              retryable: true,
+              details: {},
+            }
+          : error,
+        "Failed to create virtual machine"
+      );
       this.dispatchEvent(
         new CustomEvent("install-error", {
+          detail: { retryable: this._error.retryable },
           bubbles: true,
           composed: true,
         })
@@ -434,7 +446,7 @@ export class UtmProgressView extends LitElement {
         .indeterminate=${this._isIndeterminate(stage)}
         .measurable=${this._hasMeasurableProgress(stage)}
         .hideEmptyDetails=${true}
-        .error=${this._error}
+        .error=${this._error?.message ?? null}
       ></install-progress>
     `;
   }

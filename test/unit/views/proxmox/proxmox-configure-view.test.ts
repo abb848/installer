@@ -424,7 +424,12 @@ describe("proxmox-configure-view", () => {
         expect(wizardState.getState().selections.proxmoxConfigureReady).to.be
           .true;
       } else if (outcome === "retry failure last") {
-        newer.reject({ message: "Temporary failure", session_expired: false });
+        newer.reject({
+          message: "Temporary failure",
+          code: "proxmox_api",
+          retryable: true,
+          details: {},
+        });
         await settle();
         el.shadowRoot!.querySelector("wa-button")!.click();
         await settle();
@@ -435,15 +440,27 @@ describe("proxmox-configure-view", () => {
       } else if (outcome === "detached view") {
         el.remove();
       }
-      older.reject({ message: "Session expired", session_expired: true });
+      older.reject({
+        message: "Session expired",
+        code: "proxmox_session_expired",
+        retryable: false,
+        details: {},
+      });
       await settle();
       if (outcome === "retry failure last") {
         retryNodes.reject({
           message: "Temporary failure",
-          session_expired: false,
+          code: "proxmox_api",
+          retryable: true,
+          details: {},
         });
       } else if (outcome === "newer failure last") {
-        newer.reject({ message: "Temporary failure", session_expired: false });
+        newer.reject({
+          message: "Temporary failure",
+          code: "proxmox_api",
+          retryable: true,
+          details: {},
+        });
       } else if (outcome !== "newer success first") {
         newer.resolve(storages);
       }
@@ -553,7 +570,12 @@ describe("proxmox-configure-view", () => {
       mockTauriIpc((cmd) => {
         calls.push(cmd);
         if (failing && cmd === failingCommand) {
-          throw { message: "Temporary failure", session_expired: false };
+          throw {
+            message: "Temporary failure",
+            code: "proxmox_api",
+            retryable: true,
+            details: {},
+          };
         }
         switch (cmd) {
           case "proxmox_list_nodes":
@@ -580,7 +602,8 @@ describe("proxmox-configure-view", () => {
         <proxmox-configure-view></proxmox-configure-view>
       `);
       await waitUntil(() => !!el.shadowRoot!.querySelector("[role=alert]"));
-      expect(el.shadowRoot!.textContent).to.contain("Temporary failure");
+      // Remote details stay out of the view; the code picks a safe message
+      expect(el.shadowRoot!.textContent).to.contain("account permissions");
       expect(wizardState.getState().selections.proxmoxConfigureReady).to.be
         .false;
       expect(wizardState.getState().selections.proxmoxSession).to.exist;
@@ -622,7 +645,9 @@ describe("proxmox-configure-view", () => {
         if (cmd === failingCommand) {
           throw {
             message: "Session expired. Please reconnect.",
-            session_expired: true,
+            code: "proxmox_session_expired",
+            retryable: false,
+            details: {},
           };
         }
         if (cmd === "proxmox_list_nodes")
@@ -685,12 +710,16 @@ describe("proxmox-configure-view", () => {
           const rejectExpired = () =>
             expired.reject({
               message: "Session expired",
-              session_expired: true,
+              code: "proxmox_session_expired",
+              retryable: false,
+              details: {},
             });
           const rejectTemporary = () =>
             temporary.reject({
               message: "Temporary failure",
-              session_expired: false,
+              code: "proxmox_api",
+              retryable: true,
+              details: {},
             });
 
           (expiredFirst ? rejectExpired : rejectTemporary)();
@@ -736,7 +765,12 @@ describe("proxmox-configure-view", () => {
       <proxmox-configure-view></proxmox-configure-view>
     `);
     el.remove();
-    nodes.reject({ message: "Expired", session_expired: true });
+    nodes.reject({
+      message: "Expired",
+      code: "proxmox_session_expired",
+      retryable: false,
+      details: {},
+    });
     await settle();
     expect(wizardState.getState().selections.proxmoxSession).to.exist;
   });
@@ -757,7 +791,12 @@ describe("proxmox-configure-view", () => {
     wizardState.setSelection("proxmoxStorage", "local-lvm");
     const session = wizardState.getState().selections.proxmoxSession;
     mockTauriIpc(() => {
-      throw { message: "Session expired", session_expired: true };
+      throw {
+        message: "Session expired",
+        code: "proxmox_session_expired",
+        retryable: false,
+        details: {},
+      };
     });
     const el = await fixture<ProxmoxConfigureView>(html`
       <proxmox-configure-view></proxmox-configure-view>

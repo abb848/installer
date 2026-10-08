@@ -185,7 +185,7 @@ async fn authenticate(credentials: &ProxmoxCredentials) -> Result<ProxmoxSession
     // Validate URL format (skip in tests to allow mockito HTTP server)
     #[cfg(not(test))]
     if !credentials.server_url.starts_with("https://") {
-        return Err(Error::ProxmoxApi(
+        return Err(Error::ProxmoxActionRequired(
             "Server URL must start with https://".to_string(),
         ));
     }
@@ -207,12 +207,12 @@ async fn authenticate(credentials: &ProxmoxCredentials) -> Result<ProxmoxSession
         .await
         .map_err(|e| {
             if e.is_timeout() {
-                Error::ProxmoxApi(
+                Error::ProxmoxActionRequired(
                     "Connection timed out. Please check the server URL and network connectivity."
                         .to_string(),
                 )
             } else if e.is_connect() {
-                Error::ProxmoxApi(
+                Error::ProxmoxActionRequired(
                     "Failed to connect to Proxmox server. Please verify the URL is correct."
                         .to_string(),
                 )
@@ -224,11 +224,11 @@ async fn authenticate(credentials: &ProxmoxCredentials) -> Result<ProxmoxSession
     if !response.status().is_success() {
         let status = response.status();
         if status.as_u16() == 401 {
-            return Err(Error::ProxmoxApi(
+            return Err(Error::ProxmoxActionRequired(
                 "Authentication failed. Please check your username and password.".to_string(),
             ));
         } else if status.as_u16() == 403 {
-            return Err(Error::ProxmoxApi(
+            return Err(Error::ProxmoxActionRequired(
                 "Access denied. The user may not have sufficient permissions.".to_string(),
             ));
         }
@@ -302,11 +302,16 @@ async fn authenticate(credentials: &ProxmoxCredentials) -> Result<ProxmoxSession
     })?;
 
     if !version_meets_minimum(version, MIN_PROXMOX_VERSION) {
-        return Err(Error::ProxmoxApi(format!(
-            "Proxmox VE version {} is not supported. \
+        return Err(Error::ProxmoxActionRequired(format!(
+            "Proxmox VE version {}.{}.{} is not supported. \
              This installer requires Proxmox VE {}.{}.{} or later for disk image import. \
              Please upgrade your Proxmox installation.",
-            version_str, MIN_PROXMOX_VERSION.0, MIN_PROXMOX_VERSION.1, MIN_PROXMOX_VERSION.2
+            version.0,
+            version.1,
+            version.2,
+            MIN_PROXMOX_VERSION.0,
+            MIN_PROXMOX_VERSION.1,
+            MIN_PROXMOX_VERSION.2
         )));
     }
 
@@ -333,15 +338,15 @@ async fn list_nodes(session: &ProxmoxSession) -> Result<Vec<ProxmoxNode>> {
         .await
         .map_err(|e| {
             if e.is_timeout() {
-                Error::ProxmoxApi(
+                Error::ProxmoxActionRequired(
                     "Connection timed out while listing nodes. Please check network connectivity."
                         .to_string(),
                 )
             } else if e.is_connect() {
-                Error::ProxmoxApi(format!(
-                    "Failed to connect to Proxmox server at {}",
-                    session.server_url
-                ))
+                Error::ProxmoxActionRequired(
+                    "Could not connect to Proxmox. Check the server URL and network connection."
+                        .into(),
+                )
             } else {
                 Error::ProxmoxApi(format!("Network error while listing nodes: {}", e))
             }
@@ -352,7 +357,7 @@ async fn list_nodes(session: &ProxmoxSession) -> Result<Vec<ProxmoxNode>> {
         if status.as_u16() == 401 {
             return Err(Error::ProxmoxSessionExpired);
         } else if status.as_u16() == 403 {
-            return Err(Error::ProxmoxApi(
+            return Err(Error::ProxmoxActionRequired(
                 "Access denied. Your user may not have permission to list nodes.".to_string(),
             ));
         }
@@ -561,14 +566,14 @@ fn select_import_storage(storage_list: &[ProxmoxStorage], required_bytes: u64) -
     }
 
     if !too_small.is_empty() {
-        return Err(Error::ProxmoxApi(format!(
+        return Err(Error::ProxmoxActionRequired(format!(
             "Not enough free space for the {} MB image on import storage: {}. Free up space or enable 'import' on another storage.",
             required_bytes / 1_000_000,
             too_small.join(", ")
         )));
     }
 
-    Err(Error::ProxmoxApi(
+    Err(Error::ProxmoxActionRequired(
         "No active storage with 'import' content type found. Enable 'import' on an active directory storage in PVE."
             .to_string(),
     ))
@@ -611,7 +616,7 @@ async fn uploadable_import_storages(
     }
 
     if allowed.is_empty() && !denied.is_empty() {
-        return Err(Error::ProxmoxApi(format!(
+        return Err(Error::ProxmoxActionRequired(format!(
             "Your Proxmox user cannot both upload to and read from any import storage (needs Datastore.AllocateTemplate plus one of Datastore.Allocate, Datastore.AllocateSpace, or Datastore.Audit on: {}).",
             denied.join(", ")
         )));
@@ -631,21 +636,21 @@ fn check_disk_storage(
         .iter()
         .find(|storage| storage.name == disk_storage)
         .ok_or_else(|| {
-            Error::ProxmoxApi(format!(
+            Error::ProxmoxActionRequired(format!(
                 "Storage '{}' was not found on this node.",
                 disk_storage
             ))
         })?;
 
     if !storage.active {
-        return Err(Error::ProxmoxApi(format!(
+        return Err(Error::ProxmoxActionRequired(format!(
             "Storage '{}' is not active.",
             disk_storage
         )));
     }
 
     if !storage.content.iter().any(|content| content == "images") {
-        return Err(Error::ProxmoxApi(format!(
+        return Err(Error::ProxmoxActionRequired(format!(
             "Storage '{}' cannot hold VM disks. Enable the 'Disk image' content type on it in PVE.",
             disk_storage
         )));
@@ -654,7 +659,7 @@ fn check_disk_storage(
     // Proxmox disk sizes like "32G" are GiB.
     let required_bytes = u64::from(disk_size_gb) * 1024 * 1024 * 1024;
     if storage.available < required_bytes {
-        return Err(Error::ProxmoxApi(format!(
+        return Err(Error::ProxmoxActionRequired(format!(
             "Not enough free space on '{}' for the {} GB disk ({} GB free).",
             disk_storage,
             disk_size_gb,
@@ -681,19 +686,11 @@ async fn ensure_vm_id_free(session: &ProxmoxSession, vm_id: u32) -> Result<()> {
         )));
     }
 
-    // Proxmox rejects a taken or invalid ID with 400; pass its reason on when it gives one.
-    let body = response.text().await.unwrap_or_default();
-    let reason = serde_json::from_str::<serde_json::Value>(&body)
-        .ok()
-        .and_then(|json| Some(json.get("errors")?.get("vmid")?.as_str()?.to_string()));
-
-    Err(Error::ProxmoxApi(match reason {
-        Some(reason) => format!(
-            "VM ID {} can't be used ({}). Choose a different ID.",
-            vm_id, reason
-        ),
-        None => format!("VM ID {} can't be used. Choose a different ID.", vm_id),
-    }))
+    // Keep the corrective action without exposing arbitrary server response data.
+    Err(Error::ProxmoxActionRequired(format!(
+        "VM ID {} can't be used. Choose a different ID.",
+        vm_id
+    )))
 }
 
 /// Call `/cluster/nextid`; with `vm_id` set, Proxmox checks that ID cluster-wide instead of picking one.
@@ -720,13 +717,13 @@ async fn send_nextid_request(
 /// Fail early if the node is missing from the cluster or not online.
 fn check_node_online(nodes: &[ProxmoxNode], node: &str) -> Result<()> {
     let found = nodes.iter().find(|n| n.name == node).ok_or_else(|| {
-        Error::ProxmoxApi(format!("Node '{}' was not found in the cluster.", node))
+        Error::ProxmoxActionRequired(format!("Node '{}' was not found in the cluster.", node))
     })?;
 
     if found.status != "online" {
-        return Err(Error::ProxmoxApi(format!(
-            "Node '{}' is {}, not online.",
-            node, found.status
+        return Err(Error::ProxmoxActionRequired(format!(
+            "Node '{}' is offline. Choose an online node or start it in Proxmox.",
+            node
         )));
     }
 
@@ -793,7 +790,7 @@ fn ensure_privileges(granted: &HashSet<String>, path: &str, required: &[&str]) -
         return Ok(());
     }
 
-    Err(Error::ProxmoxApi(format!(
+    Err(Error::ProxmoxActionRequired(format!(
         "Your Proxmox user is missing {} on {}.",
         missing.join(", "),
         path
@@ -1962,7 +1959,7 @@ mod tests {
             ..storage("local-lvm", true, &["images"])
         }];
         match check_disk_storage(&storage_list, "local-lvm", 32) {
-            Err(Error::ProxmoxApi(msg)) => {
+            Err(Error::ProxmoxActionRequired(msg)) => {
                 assert!(msg.contains("Not enough free space"), "{}", msg);
                 assert!(msg.contains("32 GB"), "{}", msg);
                 assert!(msg.contains("20 GB free"), "{}", msg);
@@ -1975,7 +1972,7 @@ mod tests {
     fn test_check_disk_storage_rejects_missing_storage() {
         let storage_list = vec![storage("local-lvm", true, &["images"])];
         match check_disk_storage(&storage_list, "ceph-pool", 32) {
-            Err(Error::ProxmoxApi(msg)) => assert!(msg.contains("not found"), "{}", msg),
+            Err(Error::ProxmoxActionRequired(msg)) => assert!(msg.contains("not found"), "{}", msg),
             other => panic!("Expected not-found error, got {:?}", other),
         }
     }
@@ -1984,7 +1981,9 @@ mod tests {
     fn test_check_disk_storage_rejects_inactive_storage() {
         let storage_list = vec![storage("local-lvm", false, &["images"])];
         match check_disk_storage(&storage_list, "local-lvm", 32) {
-            Err(Error::ProxmoxApi(msg)) => assert!(msg.contains("not active"), "{}", msg),
+            Err(Error::ProxmoxActionRequired(msg)) => {
+                assert!(msg.contains("not active"), "{}", msg)
+            }
             other => panic!("Expected inactive error, got {:?}", other),
         }
     }
@@ -1994,7 +1993,9 @@ mod tests {
         // The import storage is a common wrong pick: it's active but can't hold VM disks.
         let storage_list = vec![storage("local", true, &["iso", "import"])];
         match check_disk_storage(&storage_list, "local", 32) {
-            Err(Error::ProxmoxApi(msg)) => assert!(msg.contains("Disk image"), "{}", msg),
+            Err(Error::ProxmoxActionRequired(msg)) => {
+                assert!(msg.contains("Disk image"), "{}", msg)
+            }
             other => panic!("Expected missing-images error, got {:?}", other),
         }
     }
@@ -2032,7 +2033,7 @@ mod tests {
         ];
 
         match select_import_storage(&storage_list, 0) {
-            Err(Error::ProxmoxApi(msg)) => assert!(msg.contains("import"), "{}", msg),
+            Err(Error::ProxmoxActionRequired(msg)) => assert!(msg.contains("import"), "{}", msg),
             other => panic!("Expected no-import-storage error, got {:?}", other),
         }
     }
@@ -2073,7 +2074,7 @@ mod tests {
             ..storage("small-import", true, &["import"])
         }];
         match select_import_storage(&storage_list, 1_000_000_000) {
-            Err(Error::ProxmoxApi(msg)) => {
+            Err(Error::ProxmoxActionRequired(msg)) => {
                 assert!(msg.contains("Not enough free space"), "{}", msg);
                 assert!(msg.contains("small-import"), "{}", msg);
             }
@@ -2091,7 +2092,7 @@ mod tests {
         assert!(ensure_privileges(&granted, "/vms/100", &["VM.Allocate"]).is_ok());
 
         match ensure_privileges(&granted, "/vms/100", &["VM.Allocate", "VM.Config.CPU"]) {
-            Err(Error::ProxmoxApi(msg)) => {
+            Err(Error::ProxmoxActionRequired(msg)) => {
                 assert!(msg.contains("VM.Config.CPU"), "{}", msg);
                 assert!(msg.contains("/vms/100"), "{}", msg);
                 assert!(!msg.contains("VM.Allocate"), "{}", msg);
@@ -2120,7 +2121,7 @@ mod tests {
     fn test_check_node_online_rejects_offline_node() {
         let nodes = vec![node("pve", "online"), node("pve2", "offline")];
         match check_node_online(&nodes, "pve2") {
-            Err(Error::ProxmoxApi(msg)) => assert!(msg.contains("offline"), "{}", msg),
+            Err(Error::ProxmoxActionRequired(msg)) => assert!(msg.contains("offline"), "{}", msg),
             other => panic!("Expected offline error, got {:?}", other),
         }
     }
@@ -2129,7 +2130,7 @@ mod tests {
     fn test_check_node_online_rejects_missing_node() {
         let nodes = vec![node("pve", "online")];
         match check_node_online(&nodes, "pve3") {
-            Err(Error::ProxmoxApi(msg)) => assert!(msg.contains("not found"), "{}", msg),
+            Err(Error::ProxmoxActionRequired(msg)) => assert!(msg.contains("not found"), "{}", msg),
             other => panic!("Expected not-found error, got {:?}", other),
         }
     }
@@ -2411,7 +2412,7 @@ mod tests {
             let result = authenticate(&credentials).await;
             assert!(result.is_err());
 
-            if let Err(Error::ProxmoxApi(msg)) = result {
+            if let Err(Error::ProxmoxActionRequired(msg)) = result {
                 assert!(msg.contains("Authentication failed"));
             } else {
                 panic!("Expected ProxmoxApi error for 401");
@@ -2443,7 +2444,7 @@ mod tests {
             let result = authenticate(&credentials).await;
             assert!(result.is_err());
 
-            if let Err(Error::ProxmoxApi(msg)) = result {
+            if let Err(Error::ProxmoxActionRequired(msg)) = result {
                 assert!(msg.contains("Access denied"));
             } else {
                 panic!("Expected ProxmoxApi error for 403");
@@ -2500,7 +2501,7 @@ mod tests {
             let result = authenticate(&credentials).await;
             assert!(result.is_err());
 
-            if let Err(Error::ProxmoxApi(msg)) = result {
+            if let Err(Error::ProxmoxActionRequired(msg)) = result {
                 assert!(msg.contains("not supported"));
                 assert!(msg.contains("8.4.1"));
             } else {
@@ -2714,7 +2715,7 @@ mod tests {
                 .await;
 
             match ensure_vm_id_free(&test_session(&server), 101).await {
-                Err(Error::ProxmoxApi(msg)) => {
+                Err(Error::ProxmoxActionRequired(msg)) => {
                     assert_eq!(msg, "VM ID 101 can't be used. Choose a different ID.");
                 }
                 other => panic!("Expected taken-ID error, got {:?}", other),
@@ -2738,9 +2739,10 @@ mod tests {
                 .await;
 
             match ensure_vm_id_free(&test_session(&server), 101).await {
-                Err(Error::ProxmoxApi(msg)) => {
+                Err(Error::ProxmoxActionRequired(msg)) => {
                     assert!(msg.contains("101"), "{}", msg);
-                    assert!(msg.contains("already exists"), "{}", msg);
+                    assert!(msg.contains("Choose a different ID"), "{}", msg);
+                    assert!(!msg.contains("already exists"), "{}", msg);
                 }
                 other => panic!("Expected taken-ID error, got {:?}", other),
             }
@@ -3106,7 +3108,7 @@ mod tests {
             let vm_mock = mock_privileges(&mut server, "/vms/100", &["VM.Audit"]).await;
 
             match ensure_user_can_create_vm(&test_session(&server), &vm_config(true)).await {
-                Err(Error::ProxmoxApi(msg)) => {
+                Err(Error::ProxmoxActionRequired(msg)) => {
                     assert!(msg.contains("VM.Allocate"), "{}", msg);
                     assert!(msg.contains("VM.PowerMgmt"), "{}", msg);
                     assert!(!msg.contains("VM.Audit"), "{}", msg);
@@ -3145,7 +3147,7 @@ mod tests {
                 mock_privileges(&mut server, "/sdn/zones/localnetwork/vmbr0", &[]).await;
 
             match ensure_user_can_create_vm(&test_session(&server), &vm_config(false)).await {
-                Err(Error::ProxmoxApi(msg)) => {
+                Err(Error::ProxmoxActionRequired(msg)) => {
                     assert!(msg.contains("SDN.Use"), "{}", msg);
                     assert!(msg.contains("vmbr0"), "{}", msg);
                 }
@@ -3206,7 +3208,7 @@ mod tests {
             let storage_list = vec![storage("local", true, &["iso", "import"])];
 
             match uploadable_import_storages(&test_session(&server), &storage_list).await {
-                Err(Error::ProxmoxApi(msg)) => {
+                Err(Error::ProxmoxActionRequired(msg)) => {
                     assert!(msg.contains("Datastore.AllocateTemplate"), "{}", msg);
                     assert!(msg.contains("local"), "{}", msg);
                 }
@@ -3412,7 +3414,9 @@ mod tests {
             };
 
             match pre_install_checks(&test_session(&server), &config, 400_000_000).await {
-                Err(Error::ProxmoxApi(msg)) => assert!(msg.contains("offline"), "{}", msg),
+                Err(Error::ProxmoxActionRequired(msg)) => {
+                    assert!(msg.contains("offline"), "{}", msg)
+                }
                 other => panic!("Expected offline node error, got {:?}", other),
             }
 
@@ -3676,7 +3680,7 @@ mod tests {
             let result = list_nodes(&session).await;
             assert!(result.is_err());
 
-            if let Err(Error::ProxmoxApi(msg)) = result {
+            if let Err(Error::ProxmoxActionRequired(msg)) = result {
                 assert!(msg.contains("Access denied") || msg.contains("permission"));
             } else {
                 panic!("Expected ProxmoxApi error for 403");

@@ -183,6 +183,14 @@ fn vm_status(vm_id: &str) -> Result<VmStatusInfo> {
 }
 
 #[cfg(any(target_os = "macos", test))]
+fn created_vm_start_error(name: &str, error: Error) -> Error {
+    Error::UtmVmCreated(format!(
+        "The virtual machine '{name}' was created, but the installer could not confirm it started. \
+         Open UTM to start it or remove it before installing again. {error}"
+    ))
+}
+
+#[cfg(any(target_os = "macos", test))]
 fn applescript_error(stderr: &str) -> Error {
     // osascript reports the numeric Apple Event error after the localized message.
     if stderr.trim().ends_with("(-1743)") {
@@ -478,7 +486,10 @@ end tell"#,
 
         let vm_id = run_applescript(&script)?;
 
-        finish_vm_creation(config, vm_id, progress_callback, start_vm)
+        finish_vm_creation(config, vm_id, progress_callback, |vm_id| {
+            // The VM exists now, so a failed start must not invite a blind retry
+            start_vm(vm_id).map_err(|error| created_vm_start_error(&config.name, error))
+        })
     }
 }
 
@@ -511,6 +522,19 @@ impl UtmBackend for Backend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failure_starting_a_created_vm_cannot_be_retried_as_creation() {
+        let error =
+            created_vm_start_error("My home", Error::Utm("Enable Automation access".into()));
+        let Error::UtmVmCreated(message) = error else {
+            panic!("expected created-VM error")
+        };
+        assert!(message.contains("My home"));
+        assert!(message.contains("Open UTM"));
+        assert!(message.contains("Enable Automation access"));
+        assert!(!message.contains("importing"));
+    }
 
     #[test]
     fn test_applescript_automation_denied() {

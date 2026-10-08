@@ -936,11 +936,11 @@ async fn upload_image_to_proxmox<P: ProgressCallback>(
     progress_callback: &P,
     storage_name: &str,
 ) -> Result<String> {
-    use futures_util::stream;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::sync::Arc;
+    use futures_util::TryStreamExt;
     use tokio::fs::File;
     use tokio::io::AsyncReadExt;
+    use tokio::sync::watch;
+    use tokio_util::io::ReaderStream;
 
     // Get the filename from the path
     let filename = local_path
@@ -954,11 +954,10 @@ async fn upload_image_to_proxmox<P: ProgressCallback>(
         progress: 0,
         bytes_processed: 0,
         total_bytes: 0,
-        message: format!("Reading {} for upload...", filename),
+        message: format!("Preparing {} for upload...", filename),
     });
 
-    // Read the file into memory
-    let mut file = File::open(local_path)
+    let file = File::open(local_path)
         .await
         .map_err(|e| Error::ProxmoxApi(format!("Failed to open image file: {}", e)))?;
 
@@ -967,11 +966,6 @@ async fn upload_image_to_proxmox<P: ProgressCallback>(
         .await
         .map_err(|e| Error::ProxmoxApi(format!("Failed to get file metadata: {}", e)))?
         .len();
-
-    let mut file_contents = Vec::with_capacity(file_size as usize);
-    file.read_to_end(&mut file_contents)
-        .await
-        .map_err(|e| Error::ProxmoxApi(format!("Failed to read image file: {}", e)))?;
 
     progress_callback.on_progress(FlashProgress {
         stage: FlashStage::Writing,
@@ -996,35 +990,21 @@ async fn upload_image_to_proxmox<P: ProgressCallback>(
     // Create client with longer timeout for large uploads
     let client = create_client(1800)?; // 30 minutes
 
-    // Create a chunked stream that reports upload progress
-    let chunk_size = 256 * 1024; // 256KB chunks
-    let bytes_sent = Arc::new(AtomicU64::new(0));
-
-    // Convert file contents to owned chunks for streaming
-    let chunks: Vec<Vec<u8>> = file_contents
-        .chunks(chunk_size)
-        .map(|c| c.to_vec())
-        .collect();
-    let total_chunks = chunks.len();
-
-    // Track last progress update
-    let last_progress_bytes = Arc::new(AtomicU64::new(0));
-    let last_progress_bytes_clone = Arc::clone(&last_progress_bytes);
-
-    let progress_stream = stream::iter(chunks.into_iter().enumerate().map(
-        move |(chunk_idx, chunk)| {
-            let chunk_len = chunk.len() as u64;
-            let sent = bytes_sent.fetch_add(chunk_len, Ordering::SeqCst) + chunk_len;
-            let last_update = last_progress_bytes_clone.load(Ordering::SeqCst);
-
-            // Send progress update every PROGRESS_UPDATE_INTERVAL bytes or at the end
-            if sent - last_update >= PROGRESS_UPDATE_INTERVAL || chunk_idx == total_chunks - 1 {
-                last_progress_bytes_clone.store(sent, Ordering::SeqCst);
+    // The body owns the file; a watch channel keeps progress bounded while the
+    // caller retains its borrowed callback. Reads follow HTTP backpressure.
+    let (progress_tx, mut progress_rx) = watch::channel(0_u64);
+    let mut bytes_sent = 0;
+    let mut last_progress_bytes = 0;
+    let progress_stream =
+        ReaderStream::with_capacity(file.take(file_size), 256 * 1024).inspect_ok(move |chunk| {
+            bytes_sent += chunk.len() as u64;
+            if bytes_sent - last_progress_bytes >= PROGRESS_UPDATE_INTERVAL
+                || bytes_sent == file_size
+            {
+                progress_tx.send_replace(bytes_sent);
+                last_progress_bytes = bytes_sent;
             }
-
-            Ok::<_, std::io::Error>(chunk)
-        },
-    ));
+        });
 
     // Create the multipart part with streaming body
     let body = reqwest::Body::wrap_stream(progress_stream);
@@ -1037,14 +1017,44 @@ async fn upload_image_to_proxmox<P: ProgressCallback>(
         .text("content", "import")
         .part("filename", file_part);
 
-    let response = client
+    let request = client
         .post(&url)
         .header("Cookie", format!("PVEAuthCookie={}", session.ticket))
         .header("CSRFPreventionToken", &session.csrf_token)
         .multipart(form)
-        .send()
-        .await
-        .map_err(|e| Error::ProxmoxApi(format!("Failed to upload image: {}", e)))?;
+        .send();
+    tokio::pin!(request);
+    let mut progress_open = true;
+    let response = loop {
+        tokio::select! {
+            biased;
+            changed = progress_rx.changed(), if progress_open => {
+                if changed.is_err() {
+                    progress_open = false;
+                    continue;
+                }
+                let bytes_sent = *progress_rx.borrow_and_update();
+                progress_callback.on_progress(FlashProgress {
+                    stage: FlashStage::Writing,
+                    progress: 5 + (bytes_sent as f64 / file_size.max(1) as f64 * 90.0) as u8,
+                    bytes_processed: bytes_sent,
+                    total_bytes: file_size,
+                    message: format!("Uploading {} to Proxmox...", filename),
+                });
+            }
+            response = &mut request => {
+                break response.map_err(|error| {
+                    let mut message = format!("Failed to upload image: {error}");
+                    let mut source = std::error::Error::source(&error);
+                    while let Some(cause) = source {
+                        message.push_str(&format!(": {cause}"));
+                        source = cause.source();
+                    }
+                    Error::ProxmoxApi(message)
+                })?;
+            }
+        }
+    };
 
     let status = response.status();
     let response_text = response.text().await.unwrap_or_default();
@@ -4771,6 +4781,19 @@ mod tests {
             // Mocking a non-default storage proves the upload URL uses the supplied name.
             let upload_mock = server
                 .mock("POST", "/api2/json/nodes/pve/storage/local-import/upload")
+                .match_header("cookie", "PVEAuthCookie=test-ticket")
+                .match_header("CSRFPreventionToken", "test-csrf")
+                .match_request(|request| {
+                    let body = request.body().unwrap();
+                    request
+                        .header("content-length")
+                        .first()
+                        .and_then(|value| value.to_str().ok())
+                        == Some(body.len().to_string().as_str())
+                        && String::from_utf8_lossy(body).contains("test image content")
+                        && String::from_utf8_lossy(body).contains("filename=\"test-image.qcow2\"")
+                        && String::from_utf8_lossy(body).contains("\r\n\r\nimport\r\n")
+                })
                 .with_status(200)
                 .with_header("content-type", "application/json")
                 .with_body(r#"{"data": "UPID:pve:00000001:00000002:00000003:imgup:root@pam:"}"#)
@@ -4806,10 +4829,139 @@ mod tests {
 
             // Verify progress updates were sent
             let updates = callback.get_updates();
-            assert!(!updates.is_empty());
+            assert!(updates.iter().any(|update| {
+                update.bytes_processed == 18 && update.message.starts_with("Uploading ")
+            }));
+            assert_eq!(updates.last().unwrap().progress, 100);
 
             upload_mock.assert_async().await;
             task_mock.assert_async().await;
+        }
+
+        #[tokio::test]
+        async fn test_upload_image_to_proxmox_backpressure_and_disconnect() {
+            use tokio::io::AsyncReadExt;
+
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let session = ProxmoxSession {
+                server_url: format!("http://{}", listener.local_addr().unwrap()),
+                ticket: "test-ticket".into(),
+                csrf_token: "test-csrf".into(),
+            };
+            let temp_dir = tempfile::tempdir().unwrap();
+            let path = temp_dir.path().join("large.qcow2");
+            let size = 128 * 1024 * 1024;
+            std::fs::File::create(&path).unwrap().set_len(size).unwrap();
+            let callback = TestProgressCallback::new();
+
+            let server = async {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut received = 0;
+                let mut buffer = [0; 64 * 1024];
+                while received < PROGRESS_UPDATE_INTERVAL + 1024 * 1024 {
+                    let count = socket.read(&mut buffer).await.unwrap();
+                    assert_ne!(count, 0);
+                    received += count as u64;
+                }
+                // Stop consuming the body, leaving most of the file unsent.
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                let updates = callback.get_updates();
+                let live: Vec<_> = updates
+                    .iter()
+                    .filter(|update| update.bytes_processed > 0)
+                    .collect();
+                assert!(!live.is_empty(), "progress must arrive before a response");
+                assert!(live.iter().all(|update| update.bytes_processed < size / 2));
+                assert!(live.iter().all(|update| update.total_bytes == size));
+                assert!(live
+                    .iter()
+                    .all(|update| update.progress > 5 && update.progress < 95));
+                // Dropping the socket makes the in-flight request fail.
+            };
+            let upload = upload_image_to_proxmox(&session, "pve", &path, &callback, "local");
+            let (_, result) = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+                tokio::join!(server, upload)
+            })
+            .await
+            .expect("upload must not hang after the peer disconnects");
+            assert!(
+                matches!(result, Err(Error::ProxmoxApi(message)) if message.contains("Failed to upload image"))
+            );
+            let updates = callback.get_updates();
+            assert!(updates.iter().all(|update| update.progress < 100));
+            assert!(updates.windows(2).all(|pair| {
+                pair[0].bytes_processed <= pair[1].bytes_processed
+                    && pair[0].progress <= pair[1].progress
+            }));
+        }
+
+        #[tokio::test]
+        async fn test_upload_image_to_proxmox_short_file() {
+            struct TruncateOnUpload<'a>(&'a std::path::Path);
+            impl ProgressCallback for TruncateOnUpload<'_> {
+                fn on_progress(&self, progress: FlashProgress) {
+                    assert!(progress.progress < 100);
+                    if progress.progress == 5 {
+                        std::fs::OpenOptions::new()
+                            .write(true)
+                            .open(self.0)
+                            .unwrap()
+                            .set_len(0)
+                            .unwrap();
+                    }
+                }
+            }
+
+            let mut server = Server::new_async().await;
+            let upload_mock = server
+                .mock("POST", "/api2/json/nodes/pve/storage/local/upload")
+                .expect(0)
+                .create_async()
+                .await;
+            let session = ProxmoxSession {
+                server_url: server.url(),
+                ticket: "test-ticket".into(),
+                csrf_token: "test-csrf".into(),
+            };
+            let temp_dir = tempfile::tempdir().unwrap();
+            let path = temp_dir.path().join("short.qcow2");
+            std::fs::write(&path, b"test image content").unwrap();
+            let callback = TruncateOnUpload(&path);
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                upload_image_to_proxmox(&session, "pve", &path, &callback, "local"),
+            )
+            .await
+            .expect("short body must fail without waiting for the upload timeout");
+            assert!(
+                matches!(result, Err(Error::ProxmoxApi(message)) if message.contains("Failed to upload image"))
+            );
+            upload_mock.assert_async().await;
+        }
+
+        #[cfg(target_os = "linux")]
+        #[tokio::test]
+        async fn test_upload_image_to_proxmox_read_error() {
+            let server = Server::new_async().await;
+            let session = ProxmoxSession {
+                server_url: server.url(),
+                ticket: "test-ticket".into(),
+                csrf_token: "test-csrf".into(),
+            };
+            // Linux can open a directory as a file, but reading it fails.
+            let temp_dir = tempfile::tempdir().unwrap();
+            std::fs::write(temp_dir.path().join("image.qcow2"), b"image").unwrap();
+            let path = temp_dir.path().to_path_buf();
+            let callback = TestProgressCallback::new();
+            let error = upload_image_to_proxmox(&session, "pve", &path, &callback, "local")
+                .await
+                .unwrap_err();
+            let cause = std::io::Error::from_raw_os_error(libc::EISDIR).to_string();
+            assert!(error.to_string().contains(&cause), "{error}");
+            assert!(callback
+                .get_updates()
+                .iter()
+                .all(|update| update.progress < 100));
         }
 
         #[tokio::test]

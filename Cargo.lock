@@ -1671,6 +1671,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
+ "tokio-util",
  "urlencoding",
  "windows-sys 0.61.2",
  "xz2",

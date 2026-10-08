@@ -27,7 +27,7 @@ type InstallStage =
   | "error";
 
 // Stages that have measurable progress (0-100%)
-const MEASURABLE_STAGES: InstallStage[] = ["downloading"];
+const MEASURABLE_STAGES: InstallStage[] = ["downloading", "writing"];
 
 // Stages that use indeterminate progress (waiting for something, or unknown total size)
 const INDETERMINATE_STAGES: InstallStage[] = [
@@ -262,12 +262,18 @@ export class ProxmoxProgressView extends LitElement {
 
   /** Check if the current stage uses indeterminate progress */
   private _isIndeterminate(stage: InstallStage): boolean {
-    return INDETERMINATE_STAGES.includes(stage);
+    return (
+      INDETERMINATE_STAGES.includes(stage) &&
+      !this._hasMeasurableProgress(stage)
+    );
   }
 
   /** Check if the current stage has measurable progress */
   private _hasMeasurableProgress(stage: InstallStage): boolean {
-    return MEASURABLE_STAGES.includes(stage);
+    return (
+      MEASURABLE_STAGES.includes(stage) &&
+      (stage === "downloading" || this._totalBytes > 0)
+    );
   }
 
   private _getStageTitle(stage: string): string {

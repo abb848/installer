@@ -391,7 +391,7 @@ export class InstallProgress extends LitElement {
                     >${this.showUnknownBytes && this.indeterminate
                       ? formatBytes(this.bytesProcessed)
                       : this.measurable && this.totalBytes > 0
-                        ? `${formatBytes(this.bytesProcessed)} / ${formatBytes(this.totalBytes)}`
+                        ? `${formatBytes(this.bytesProcessed)} / ${formatBytes(this.totalBytes)}${this.stage === "extracting" ? " compressed" : ""}`
                         : ""}</span
                   >
                   <span class="speed"

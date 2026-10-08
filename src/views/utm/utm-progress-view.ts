@@ -38,7 +38,7 @@ type InstallStage =
   | "error";
 
 // Stages that have measurable progress (0-100%)
-const MEASURABLE_STAGES: InstallStage[] = ["downloading"];
+const MEASURABLE_STAGES: InstallStage[] = ["downloading", "extracting"];
 
 // Stages that use indeterminate progress (waiting for something, or unknown total size)
 const INDETERMINATE_STAGES: InstallStage[] = [
@@ -110,12 +110,18 @@ export class UtmProgressView extends LitElement {
 
   /** Check if a stage uses indeterminate progress */
   private _isIndeterminate(stage: InstallStage): boolean {
-    return INDETERMINATE_STAGES.includes(stage);
+    return (
+      INDETERMINATE_STAGES.includes(stage) &&
+      !this._hasMeasurableProgress(stage)
+    );
   }
 
   /** Check if a stage has measurable progress (0-100%) */
   private _hasMeasurableProgress(stage: InstallStage): boolean {
-    return MEASURABLE_STAGES.includes(stage);
+    return (
+      MEASURABLE_STAGES.includes(stage) &&
+      (stage === "downloading" || this._totalBytes > 0)
+    );
   }
 
   /**

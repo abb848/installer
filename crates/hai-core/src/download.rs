@@ -635,10 +635,45 @@ fn read_xz(decoder: &mut impl std::io::Read, buffer: &mut [u8]) -> Result<usize>
     })
 }
 
+/// Reports extraction progress from the compressed bytes the decoder consumed.
+///
+/// Both passes of `extract_archive` read the whole archive, so each one fills
+/// half of the bar. The byte counter stays within the archive size, and 100%
+/// is left to the caller for when the output is synced and in place.
+struct ExtractionProgress<'a> {
+    sender: &'a std::sync::mpsc::Sender<FlashProgress>,
+    archive_size: u64,
+    last_percent: u8,
+}
+
+impl ExtractionProgress<'_> {
+    fn report(&mut self, pass: u64, consumed: u64) {
+        if self.archive_size == 0 {
+            return;
+        }
+
+        let consumed = consumed.min(self.archive_size);
+        let bytes_processed = (pass * self.archive_size + consumed) / 2;
+        let percent = ((bytes_processed as f64 / self.archive_size as f64 * 100.0) as u8).min(99);
+        if percent == self.last_percent {
+            return;
+        }
+
+        self.last_percent = percent;
+        let _ = self.sender.send(FlashProgress {
+            stage: FlashStage::Extracting,
+            progress: percent,
+            bytes_processed,
+            total_bytes: self.archive_size,
+            message: "Extracting image...".to_string(),
+        });
+    }
+}
+
 fn extract_archive(
     archive: &Path,
     destination: &Path,
-    progress: &std::sync::mpsc::Sender<u64>,
+    progress: &std::sync::mpsc::Sender<FlashProgress>,
     mut available_space: impl FnMut(&Path) -> std::io::Result<u64>,
     max_extracted_size: u64,
 ) -> Result<u64> {
@@ -648,6 +683,11 @@ fn extract_archive(
     })?;
     let available = available_space(directory)?;
     let mut input = std::fs::File::open(archive)?;
+    let mut progress = ExtractionProgress {
+        sender: progress,
+        archive_size: input.metadata()?.len(),
+        last_percent: 0,
+    };
     let mut buffer = [0; 64 * 1024];
     let mut expected_size = 0;
     {
@@ -660,6 +700,7 @@ fn extract_archive(
                 break;
             }
             expected_size += count as u64;
+            progress.report(0, decoder.total_in());
             check_space(directory, expected_size, available)?;
             if expected_size > max_extracted_size {
                 return Err(Error::ExtractionFailed(
@@ -673,7 +714,6 @@ fn extract_archive(
     let mut decoder = xz_decoder(&mut input)?;
     let mut output = tempfile::NamedTempFile::new_in(directory)?;
     let mut extracted = 0;
-    let mut last_progress = 0;
     loop {
         let count = read_xz(&mut decoder, &mut buffer)?;
         if count == 0 {
@@ -686,10 +726,7 @@ fn extract_archive(
             ));
         }
         output.write_all(&buffer[..count])?;
-        if extracted - last_progress >= PROGRESS_UPDATE_INTERVAL {
-            let _ = progress.send(extracted);
-            last_progress = extracted;
-        }
+        progress.report(1, decoder.total_in());
     }
     if extracted != expected_size {
         return Err(Error::ExtractionFailed(
@@ -728,17 +765,19 @@ async fn extract_xz_owned<P: ProgressCallback>(
 ) -> Result<()> {
     use std::sync::mpsc;
 
-    // Keep progress indeterminate during the bounded validation/size scan.
+    // Progress is measured against the compressed archive, which is the only
+    // size known up front. An empty or unreadable size keeps it indeterminate.
+    let archive_size = std::fs::metadata(archive_path).map_or(0, |metadata| metadata.len());
     progress_callback.on_progress(FlashProgress {
         stage: FlashStage::Extracting,
         progress: 0,
         bytes_processed: 0,
-        total_bytes: 0,
+        total_bytes: archive_size,
         message: "Extracting image...".to_string(),
     });
 
     // Create channel for progress updates
-    let (progress_tx, progress_rx) = mpsc::channel::<u64>();
+    let (progress_tx, progress_rx) = mpsc::channel();
 
     let archive_path_clone = archive_path.to_path_buf();
     let dest_path_clone = dest_path.to_path_buf();
@@ -762,16 +801,7 @@ async fn extract_xz_owned<P: ProgressCallback>(
     // Forward progress updates while waiting for extraction to complete
     loop {
         match progress_rx.recv_timeout(std::time::Duration::from_millis(100)) {
-            Ok(bytes_extracted) => {
-                // Use 0 for total_bytes to signal indeterminate progress
-                progress_callback.on_progress(FlashProgress {
-                    stage: FlashStage::Extracting,
-                    progress: 0, // Indeterminate
-                    bytes_processed: bytes_extracted,
-                    total_bytes: 0,
-                    message: "Extracting image...".to_string(),
-                });
-            }
+            Ok(progress) => progress_callback.on_progress(progress),
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if extract_handle.is_finished() {
                     break;
@@ -783,15 +813,15 @@ async fn extract_xz_owned<P: ProgressCallback>(
         }
     }
 
-    let final_size = extract_handle
+    extract_handle
         .await
         .map_err(|e| Error::ExtractionFailed(e.to_string()))??;
 
     progress_callback.on_progress(FlashProgress {
         stage: FlashStage::Extracting,
         progress: 100,
-        bytes_processed: final_size,
-        total_bytes: final_size,
+        bytes_processed: archive_size,
+        total_bytes: archive_size,
         message: "Extraction complete".to_string(),
     });
 
@@ -1070,7 +1100,8 @@ mod tests {
                 .to_string();
                 assert!(error.contains("need 10 bytes, but only 9 bytes"));
                 assert!(readings.next().is_none(), "every space guard must run");
-                assert!(rx.try_recv().is_err());
+                // The measuring pass fills at most half the bar; writing never started.
+                assert!(rx.try_iter().all(|progress| progress.progress <= 50));
                 assert_eq!(std::fs::read(&archive).unwrap(), data);
                 if existing_destination {
                     assert_eq!(std::fs::read(&destination).unwrap(), b"previous image");
@@ -1962,56 +1993,117 @@ mod tests {
     }
 
     #[tokio::test]
-    #[serial]
     async fn test_extract_xz_with_progress() {
         use std::io::Write;
-        use std::sync::{Arc, Mutex};
+        use std::sync::Mutex;
 
         struct TestProgressCallback {
-            calls: Arc<Mutex<Vec<FlashProgress>>>,
+            calls: Mutex<Vec<FlashProgress>>,
+            destination: PathBuf,
+            expected: Vec<u8>,
         }
 
         impl crate::ProgressCallback for TestProgressCallback {
             fn on_progress(&self, progress: FlashProgress) {
+                if progress.progress == 100 {
+                    assert_eq!(std::fs::read(&self.destination).unwrap(), self.expected);
+                }
                 self.calls.lock().unwrap().push(progress);
             }
         }
 
-        let cache_dir = get_cache_dir().unwrap();
-        // Create larger content to trigger progress updates (> 10MB)
-        let test_content = vec![0u8; 11 * 1024 * 1024]; // 11MB
-        let extracted_path = cache_dir.join("test_extracted_large.img");
-        let archive_path = cache_dir.join("test_archive_large.img.xz");
+        let mut seed = 1u32;
+        let incompressible: Vec<u8> = (0..256 * 1024)
+            .map(|_| {
+                seed ^= seed << 13;
+                seed ^= seed >> 17;
+                seed ^= seed << 5;
+                seed as u8
+            })
+            .collect();
+        for content in [
+            Vec::new(),
+            b"tiny".to_vec(),
+            vec![0u8; 11 * 1024 * 1024],
+            incompressible,
+        ] {
+            let directory = tempfile::tempdir().unwrap();
+            let archive_path = directory.path().join("image.xz");
+            let mut encoder = xz2::write::XzEncoder::new(Vec::new(), 1);
+            encoder.write_all(&content).unwrap();
+            let archive = encoder.finish().unwrap();
+            std::fs::write(&archive_path, &archive).unwrap();
+            let callback = TestProgressCallback {
+                calls: Mutex::new(Vec::new()),
+                destination: directory.path().join("image.img"),
+                expected: content,
+            };
 
-        // Create XZ compressed file
-        {
-            let file = std::fs::File::create(&archive_path).unwrap();
-            let mut encoder = xz2::write::XzEncoder::new(file, 1); // Use compression level 1 for speed
-            encoder.write_all(&test_content).unwrap();
-            encoder.finish().unwrap();
+            extract_xz(&archive_path, &callback.destination, &callback)
+                .await
+                .unwrap();
+
+            let calls = callback.calls.lock().unwrap();
+            assert_eq!(calls.first().unwrap().progress, 0);
+            assert_eq!(calls.last().unwrap().progress, 100);
+            assert_eq!(calls.last().unwrap().bytes_processed, archive.len() as u64);
+            assert!(calls[..calls.len() - 1].iter().all(|p| p.progress < 100));
+            assert!(calls.iter().all(|p| {
+                p.stage == FlashStage::Extracting
+                    && p.total_bytes == archive.len() as u64
+                    && p.bytes_processed <= p.total_bytes
+            }));
+            assert!(calls.windows(2).all(|pair| {
+                pair[0].progress <= pair[1].progress
+                    && pair[0].bytes_processed <= pair[1].bytes_processed
+            }));
+            if callback.expected.len() > 64 * 1024 {
+                assert!(calls.iter().any(|p| p.progress > 0 && p.progress < 99));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_extract_xz_failure_never_reports_complete() {
+        use std::io::Write;
+        use std::sync::Mutex;
+
+        #[derive(Default)]
+        struct Progress(Mutex<Vec<FlashProgress>>);
+        impl crate::ProgressCallback for Progress {
+            fn on_progress(&self, progress: FlashProgress) {
+                self.0.lock().unwrap().push(progress);
+            }
         }
 
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let callback = TestProgressCallback {
-            calls: calls.clone(),
-        };
-
-        // Extract with progress tracking
-        let result = extract_xz(&archive_path, &extracted_path, &callback).await;
-        assert!(result.is_ok());
-
-        // Verify we got progress callbacks
-        let progress_calls = calls.lock().unwrap();
-        assert!(!progress_calls.is_empty());
-        assert!(progress_calls.iter().any(|p| p.progress == 0)); // Start
-        assert!(progress_calls.iter().any(|p| p.progress == 100)); // End
-        assert!(progress_calls
-            .iter()
-            .all(|p| p.stage == FlashStage::Extracting));
-
-        // Cleanup
-        std::fs::remove_file(&archive_path).unwrap();
-        std::fs::remove_file(&extracted_path).unwrap();
+        for failure in ["truncated", "empty", "destination"] {
+            let directory = tempfile::tempdir().unwrap();
+            let archive_path = directory.path().join("image.xz");
+            let destination = directory.path().join("image.img");
+            let mut encoder = xz2::write::XzEncoder::new(Vec::new(), 1);
+            encoder.write_all(&vec![0u8; 256 * 1024]).unwrap();
+            let mut archive = encoder.finish().unwrap();
+            if failure == "truncated" {
+                archive.truncate(archive.len() - 16);
+            } else if failure == "empty" {
+                archive.clear();
+            } else {
+                std::fs::create_dir(&destination).unwrap();
+            }
+            std::fs::write(&archive_path, &archive).unwrap();
+            let callback = Progress::default();
+            assert!(extract_xz(&archive_path, &destination, &callback)
+                .await
+                .is_err());
+            assert!(callback.0.lock().unwrap().iter().all(|p| p.progress < 100));
+            if failure != "destination" {
+                assert!(!archive_path.exists());
+                assert!(!destination.exists());
+            } else {
+                assert!(archive_path.exists());
+                assert!(destination.is_dir());
+            }
+        }
     }
 
     #[tokio::test]

@@ -27,7 +27,11 @@ type InstallStage =
   | "error";
 
 // Stages that have measurable progress (0-100%)
-const MEASURABLE_STAGES: InstallStage[] = ["downloading", "writing"];
+const MEASURABLE_STAGES: InstallStage[] = [
+  "downloading",
+  "extracting",
+  "writing",
+];
 
 // Stages that use indeterminate progress (waiting for something, or unknown total size)
 const INDETERMINATE_STAGES: InstallStage[] = [

@@ -492,7 +492,7 @@ describe("utm-progress-view", () => {
           return "new-vm";
         case "resize_utm_vm_disk":
           resizeAttempts++;
-          if (resizeAttempts === 1) throw new Error("resize failed");
+          if (resizeAttempts === 1) return Promise.reject("resize failed");
           return undefined;
         case "get_utm_vm_status":
           return { status: "started", ip_address: "192.168.1.100" };
@@ -739,10 +739,10 @@ describe("utm-progress-view", () => {
     mockTauriIpc((cmd, args) => {
       if (cmd === "download_utm_image")
         return `/tmp/attempt-${++downloads}.qcow2`;
-      if (cmd === "create_utm_vm") throw new Error("import failed");
+      if (cmd === "create_utm_vm") return Promise.reject("import failed");
       if (cmd === "discard_utm_image") {
         released.push((args as { imagePath: string }).imagePath);
-        throw new Error("cleanup failed");
+        return Promise.reject("cleanup failed");
       }
       throw new Error(`Unexpected IPC command: ${cmd}`);
     });

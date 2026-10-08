@@ -1,4 +1,5 @@
 import { invoke, Channel } from "@tauri-apps/api/core";
+import { failMockOperation } from "./mock-failures.js";
 import type {
   BlockDevice,
   DeviceManifest,
@@ -172,6 +173,8 @@ async function simulateFlashProgress(
         total_bytes: showBytes ? totalBytes : 0,
         message,
       });
+
+      if (stage === "writing" && step === 0) failMockOperation("flash");
 
       await new Promise((resolve) => setTimeout(resolve, delay));
     }
@@ -375,6 +378,7 @@ async function simulateUtmDownload(
  */
 export async function createUtmVm(config: UtmVmConfig): Promise<string> {
   if (MOCK_ALLOWED && isBrowserOnly()) {
+    failMockOperation("utm");
     // Simulate VM creation
     await new Promise((resolve) => setTimeout(resolve, 2000));
     return "mock-vm-id-12345";
@@ -657,6 +661,8 @@ async function simulateProxmoxInstall(
         total_bytes: 0,
         message,
       });
+
+      if (stage === "writing" && step === 0) failMockOperation("proxmox");
 
       await new Promise((resolve) => setTimeout(resolve, delay));
     }

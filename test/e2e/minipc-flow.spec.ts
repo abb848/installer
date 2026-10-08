@@ -5,7 +5,7 @@ import { test, expect } from "@playwright/test";
 test.describe("Mini PC Flow - Setup Method Selection", () => {
   test.beforeEach(async ({ page }) => {
     // Use mock mode to avoid real API calls
-    await page.goto("/?mock=true");
+    await page.goto("/");
     // Navigate to path selection
     await page.locator("welcome-view").locator("wa-button").click();
     await expect(page.locator("path-selection-view")).toBeVisible();
@@ -167,7 +167,7 @@ test.describe("Mini PC Flow - Setup Method Selection", () => {
 
 test.describe("Mini PC Flow - Architecture Selection", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/?mock=true");
+    await page.goto("/");
     await page.locator("welcome-view").locator("wa-button").click();
     await page.locator('option-card[title="Generic (mini) PC"]').click();
 
@@ -250,6 +250,10 @@ test.describe("Mini PC Flow - Architecture Selection", () => {
     await expect(armOption.locator(".option-examples")).toContainText(
       "Ampere-based servers"
     );
+    await expect(armOption).toContainText("UEFI firmware");
+    await expect(armOption).toContainText(
+      "A Raspberry Pi or ODROID has its own option"
+    );
     await expect(armOption).not.toContainText("Apple Silicon");
 
     // The pointer to the VM flow is only for someone sitting at a Mac
@@ -293,7 +297,7 @@ test.describe("Mini PC Flow - Navigation", () => {
   test("can navigate through Mini PC flow steps up to drive selection", async ({
     page,
   }) => {
-    await page.goto("/?mock=true");
+    await page.goto("/");
 
     // Step 1: Welcome
     await page.locator("welcome-view").locator("wa-button").click();
@@ -337,7 +341,7 @@ test.describe("Mini PC Flow - Navigation", () => {
   test("can navigate through Mini PC flow with ARM64 architecture", async ({
     page,
   }) => {
-    await page.goto("/?mock=true");
+    await page.goto("/");
 
     // Navigate to path selection
     await page.locator("welcome-view").locator("wa-button").click();

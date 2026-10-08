@@ -127,6 +127,35 @@ describe("proxmox-progress-view", () => {
     );
   });
 
+  it("renders a string IPC failure and retries the installation", async () => {
+    let attempts = 0;
+    mockTauriIpc((cmd) => {
+      expect(cmd).to.equal("proxmox_create_vm");
+      if (++attempts === 1) return Promise.reject("Storage unavailable");
+      return { vm_id: 100, node: "pve", ip_address: "192.0.2.50" };
+    });
+    const el = mount();
+    let completed = 0;
+    let errors = 0;
+    el.addEventListener("install-complete", () => completed++);
+    el.addEventListener("install-error", () => errors++);
+    await settle();
+    expect(
+      el
+        .shadowRoot!.querySelector("install-progress")!
+        .shadowRoot!.querySelector(".error-message")!.textContent
+    ).to.contain("Storage unavailable");
+    expect(completed).to.equal(0);
+    expect(errors).to.equal(1);
+    el.retry();
+    await settle();
+    expect(attempts).to.equal(2);
+    expect(el.hasError).to.be.false;
+    expect(completed).to.equal(1);
+    expect(errors).to.equal(1);
+    expect(wizardState.getState().selections.ipAddress).to.equal("192.0.2.50");
+  });
+
   it("reports an error without starting when there is no session", async () => {
     wizardState.startFlow("proxmox");
 

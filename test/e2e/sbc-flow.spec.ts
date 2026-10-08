@@ -8,7 +8,7 @@ const nextButton = (page: Page) =>
   page.locator("wizard-shell").locator(".footer-right wa-button");
 
 async function openConfirmation(page: Page) {
-  await page.goto("/?mock=true");
+  await page.goto("/");
   await page.locator("welcome-view").locator("wa-button").click();
   await page
     .locator('option-card[title="Raspberry Pi & other boards"]')

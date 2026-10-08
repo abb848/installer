@@ -3,7 +3,7 @@ import { test, expect, type Page } from "@playwright/test";
 test.describe("Proxmox Installation Flow", () => {
   test.beforeEach(async ({ page }) => {
     // Use mock mode to avoid actual Proxmox connections
-    await page.goto("/?mock=true");
+    await page.goto("/");
     await page.locator("welcome-view").locator("wa-button").click();
     await expect(page.locator("path-selection-view")).toBeVisible();
     // Select Proxmox Server option

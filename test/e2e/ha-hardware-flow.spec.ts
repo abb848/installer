@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 
 test("hides the unfinished Home Assistant hardware flow", async ({ page }) => {
-  await page.goto("/?mock=true");
+  await page.goto("/");
   await page.locator("welcome-view").locator("wa-button").click();
 
   const pathSelection = page.locator("path-selection-view");

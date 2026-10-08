@@ -234,7 +234,7 @@ test.describe("Wizard Flow", () => {
 test.describe("SBC Device Selection", () => {
   test.beforeEach(async ({ page }) => {
     // Navigate to SBC flow
-    await page.goto("/?mock=true");
+    await page.goto("/");
     await page.locator("welcome-view").locator("wa-button").click();
     await expect(page.locator("path-selection-view")).toBeVisible();
     await page
@@ -291,7 +291,7 @@ test.describe("SBC Device Selection", () => {
 test.describe("SBC Drive Selection", () => {
   test.beforeEach(async ({ page }) => {
     // Navigate to drive selection step
-    await page.goto("/?mock=true");
+    await page.goto("/");
     await page.locator("welcome-view").locator("wa-button").click();
     await expect(page.locator("path-selection-view")).toBeVisible();
     await page
@@ -395,7 +395,7 @@ test.describe("SBC Drive Selection", () => {
 test.describe("SBC Confirmation", () => {
   test.beforeEach(async ({ page }) => {
     // Navigate to confirmation step
-    await page.goto("/?mock=true");
+    await page.goto("/");
     await page.locator("welcome-view").locator("wa-button").click();
     await expect(page.locator("path-selection-view")).toBeVisible();
     await page
@@ -554,7 +554,7 @@ test.describe("SBC Confirmation", () => {
 test.describe("SBC Flashing", () => {
   test.beforeEach(async ({ page }) => {
     // Navigate to flash step
-    await page.goto("/?mock=true");
+    await page.goto("/");
     await page.locator("welcome-view").locator("wa-button").click();
     await expect(page.locator("path-selection-view")).toBeVisible();
     await page
@@ -667,7 +667,7 @@ test.describe("SBC Flashing", () => {
 test.describe("SBC Success", () => {
   test.beforeEach(async ({ page }) => {
     // Navigate to success step
-    await page.goto("/?mock=true");
+    await page.goto("/");
     await page.locator("welcome-view").locator("wa-button").click();
     await expect(page.locator("path-selection-view")).toBeVisible();
     await page

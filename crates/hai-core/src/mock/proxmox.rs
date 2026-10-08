@@ -4,8 +4,8 @@
 use std::time::Duration;
 
 use crate::types::{
-    FlashProgress, FlashStage, ProxmoxCredentials, ProxmoxNode, ProxmoxSession, ProxmoxStorage,
-    ProxmoxVmConfig, ProxmoxVmResult,
+    FlashProgress, FlashStage, ProxmoxBridge, ProxmoxCredentials, ProxmoxNode, ProxmoxSession,
+    ProxmoxStorage, ProxmoxVmConfig, ProxmoxVmResult,
 };
 use crate::{ProgressCallback, ProxmoxBackend, Result};
 
@@ -66,6 +66,18 @@ impl ProxmoxBackend for BackendMock {
                 active: true,
             },
         ])
+    }
+
+    async fn list_bridges(
+        &self,
+        _session: &ProxmoxSession,
+        _node: &str,
+    ) -> Result<Vec<ProxmoxBridge>> {
+        Ok(vec![ProxmoxBridge {
+            name: "vmbr0".to_string(),
+            network_type: "bridge".to_string(),
+            comments: None,
+        }])
     }
 
     async fn get_next_vm_id(&self, _session: &ProxmoxSession) -> Result<u32> {

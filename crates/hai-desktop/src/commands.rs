@@ -9,7 +9,7 @@ use hai_core::download::TemporaryImage;
 use hai_core::{
     BlockDevice, DeviceBackend, DeviceManifest, ExpectedDevice, FlashProgress, FlashRequest,
     FlashResult, FlashStage, HaosRelease, HostBackend, ImageFormat, ProgressCallback,
-    ProxmoxBackend, ProxmoxCredentials, ProxmoxNode, ProxmoxSession, ProxmoxStorage,
+    ProxmoxBackend, ProxmoxBridge, ProxmoxCredentials, ProxmoxNode, ProxmoxSession, ProxmoxStorage,
     ProxmoxVmConfig, ProxmoxVmResult, ReleaseSource, SystemInfo, UtmBackend, VmStatusInfo,
 };
 use tauri::ipc::Channel;
@@ -561,6 +561,18 @@ pub async fn proxmox_list_storage(
 ) -> Result<Vec<ProxmoxStorage>, ProxmoxLookupError> {
     Backend
         .list_storage(&session, &node)
+        .await
+        .map_err(Into::into)
+}
+
+/// List bridges and SDN VNets available on a Proxmox node.
+#[tauri::command]
+pub async fn proxmox_list_bridges(
+    session: ProxmoxSession,
+    node: String,
+) -> Result<Vec<ProxmoxBridge>, ProxmoxLookupError> {
+    Backend
+        .list_bridges(&session, &node)
         .await
         .map_err(Into::into)
 }
@@ -1392,6 +1404,23 @@ mod mock_tests {
                 "{outcome}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn proxmox_list_bridges_returns_mock_bridge() {
+        let session = ProxmoxSession {
+            server_url: "https://proxmox.example:8006".to_string(),
+            ticket: "mock-ticket".to_string(),
+            csrf_token: "mock-csrf-token".to_string(),
+        };
+        let bridges = proxmox_list_bridges(session, "pve".to_string())
+            .await
+            .unwrap();
+
+        assert_eq!(bridges.len(), 1);
+        assert_eq!(bridges[0].name, "vmbr0");
+        assert_eq!(bridges[0].network_type, "bridge");
+        assert_eq!(bridges[0].comments, None);
     }
 
     /// A request for `device_id` whose `expected_device` matches what the mock

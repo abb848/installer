@@ -64,6 +64,10 @@ async function mockLookupFailure(
               ];
             case "proxmox_get_next_vm_id":
               return 123;
+            case "proxmox_list_bridges":
+              return [
+                { name: "vmbr0", network_type: "bridge", comments: null },
+              ];
             case "get_haos_release":
               return { version: "18.0", assets: [] };
             default:

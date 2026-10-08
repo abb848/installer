@@ -12,6 +12,7 @@ import type {
   ProxmoxSession,
   ProxmoxStorage,
   ProxmoxVmConfig,
+  ProxmoxBridge,
   ProxmoxVmResult,
   SystemInfo,
   UtmStatus,
@@ -547,6 +548,20 @@ export async function proxmoxListStorage(
     ];
   }
   return invoke<ProxmoxStorage[]>("proxmox_list_storage", { session, node });
+}
+
+/** List bridges and eligible SDN VNets on the selected node. */
+export async function proxmoxListBridges(
+  session: ProxmoxSession,
+  node: string
+): Promise<ProxmoxBridge[]> {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
+    return [
+      { name: "vmbr0", network_type: "bridge", comments: null },
+      { name: "vmbr1", network_type: "bridge", comments: "LAN" },
+    ];
+  }
+  return invoke<ProxmoxBridge[]>("proxmox_list_bridges", { session, node });
 }
 
 /**

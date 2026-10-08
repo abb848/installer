@@ -126,6 +126,13 @@ pub trait ProxmoxBackend {
     /// List cluster nodes.
     async fn list_nodes(&self, session: &ProxmoxSession) -> Result<Vec<ProxmoxNode>>;
 
+    /// List the node's bridges, including eligible SDN VNets.
+    async fn list_bridges(
+        &self,
+        session: &ProxmoxSession,
+        node: &str,
+    ) -> Result<Vec<ProxmoxBridge>>;
+
     /// List storage available on a node.
     async fn list_storage(
         &self,

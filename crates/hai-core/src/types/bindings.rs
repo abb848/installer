@@ -22,6 +22,7 @@ fn typescript() -> String {
         ProxmoxCredentials::decl(&config),
         ProxmoxSession::decl(&config),
         ProxmoxNode::decl(&config),
+        ProxmoxBridge::decl(&config),
         ProxmoxStorage::decl(&config),
         ProxmoxVmConfig::decl(&config),
         ProxmoxVmResult::decl(&config),

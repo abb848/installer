@@ -141,6 +141,7 @@ export class ProxmoxProgressView extends LitElement {
     const config: ProxmoxVmConfig = {
       node: selections.proxmoxNode || DEFAULT_PROXMOX_NODE,
       storage: selections.proxmoxStorage || DEFAULT_PROXMOX_STORAGE,
+      bridge: selections.proxmoxBridge ?? "",
       vm_id: selections.proxmoxVmId ?? DEFAULT_PROXMOX_VM_ID,
       name: selections.vmName || DEFAULT_PROXMOX_VM_NAME,
       cpu_cores: selections.cpuCores ?? DEFAULT_CPU_CORES,

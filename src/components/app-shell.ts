@@ -261,7 +261,9 @@ export class AppShell extends LitElement {
         return (
           !selections.proxmoxConfigureReady ||
           !selections.proxmoxNode ||
-          !selections.proxmoxStorage
+          !selections.proxmoxStorage ||
+          !selections.proxmoxBridge ||
+          !selections.proxmoxBridgeReady
         );
       }
     }

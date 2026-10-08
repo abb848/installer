@@ -131,6 +131,8 @@ describe("app-shell", () => {
         return [{ name: "pve", status: "online" }];
       if (cmd === "proxmox_get_next_vm_id") return 100;
       if (cmd === "proxmox_list_storage") return storage.promise;
+      if (cmd === "proxmox_list_bridges")
+        return [{ name: "vmbr0", network_type: "bridge", comments: null }];
       throw new Error(cmd);
     });
     await goToStep(el, "configure");
@@ -152,6 +154,8 @@ describe("app-shell", () => {
         return [
           { name: "local", active: true, content: ["images"], available: 100 },
         ];
+      if (cmd === "proxmox_list_bridges")
+        return [{ name: "vmbr0", network_type: "bridge", comments: null }];
       throw new Error(cmd);
     });
     (

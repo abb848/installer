@@ -22,11 +22,11 @@ async function mount(): Promise<ProxmoxConfigureView> {
   const el = await fixture<ProxmoxConfigureView>(html`
     <proxmox-configure-view></proxmox-configure-view>
   `);
-  // Both dropdowns only render once their lookups have finished, which is
+  // All dropdowns only render once their lookups have finished, which is
   // also when the view saves what it settled on
   await waitUntil(
-    () => el.shadowRoot!.querySelectorAll(".select-dropdown").length === 2,
-    "the node and storage dropdowns never loaded",
+    () => el.shadowRoot!.querySelectorAll(".select-dropdown").length === 3,
+    "the node, storage and bridge dropdowns never loaded",
     { timeout: 4000 }
   );
   await el.updateComplete;
@@ -54,6 +54,8 @@ describe("proxmox-configure-view", () => {
   it("lists a node that has no CPU stats", async () => {
     mockTauriIpc((cmd) => {
       switch (cmd) {
+        case "proxmox_list_bridges":
+          return [{ name: "vmbr0", network_type: "bridge", comments: null }];
         case "proxmox_list_nodes":
           return [
             {
@@ -161,6 +163,8 @@ describe("proxmox-configure-view", () => {
     const storage = deferred<ProxmoxStorage[]>();
     mockTauriIpc((cmd) => {
       switch (cmd) {
+        case "proxmox_list_bridges":
+          return [{ name: "vmbr0", network_type: "bridge", comments: null }];
         case "proxmox_list_nodes":
           return [{ name: "pve", status: "online" }];
         case "proxmox_get_next_vm_id":
@@ -213,6 +217,8 @@ describe("proxmox-configure-view", () => {
     let firstLookup = true;
     mockTauriIpc((cmd, args) => {
       switch (cmd) {
+        case "proxmox_list_bridges":
+          return [{ name: "vmbr0", network_type: "bridge", comments: null }];
         case "proxmox_list_nodes":
           return [
             { name: "pve", status: "online" },
@@ -272,6 +278,8 @@ describe("proxmox-configure-view", () => {
     let firstLookup = true;
     mockTauriIpc((cmd, args) => {
       switch (cmd) {
+        case "proxmox_list_bridges":
+          return [{ name: "vmbr0", network_type: "bridge", comments: null }];
         case "proxmox_list_nodes":
           return [
             { name: "pve", status: "online" },
@@ -362,6 +370,8 @@ describe("proxmox-configure-view", () => {
               ? older.promise
               : newer.promise;
         }
+        if (cmd === "proxmox_list_bridges")
+          return [{ name: "vmbr0", network_type: "bridge", comments: null }];
         throw new Error(`Unexpected IPC command: ${cmd}`);
       });
       const el = await mount();
@@ -429,6 +439,8 @@ describe("proxmox-configure-view", () => {
     wizardState.setSelection("proxmoxStorage", "retired-storage");
     mockTauriIpc((cmd) => {
       switch (cmd) {
+        case "proxmox_list_bridges":
+          return [{ name: "vmbr0", network_type: "bridge", comments: null }];
         case "proxmox_list_nodes":
           return [{ name: "pve", status: "online" }];
         case "proxmox_get_next_vm_id":
@@ -459,6 +471,8 @@ describe("proxmox-configure-view", () => {
     wizardState.setSelection("proxmoxStorage", "local-lvm");
     mockTauriIpc((cmd) => {
       switch (cmd) {
+        case "proxmox_list_bridges":
+          return [{ name: "vmbr0", network_type: "bridge", comments: null }];
         case "proxmox_list_nodes":
           return [{ name: "pve", status: "online" }];
         case "proxmox_get_next_vm_id":
@@ -523,6 +537,8 @@ describe("proxmox-configure-view", () => {
               },
             ];
         }
+        if (cmd === "proxmox_list_bridges")
+          return [{ name: "vmbr0", network_type: "bridge", comments: null }];
         throw new Error(`Unexpected IPC command: ${cmd}`);
       });
       const el = await fixture<ProxmoxConfigureView>(html`
@@ -552,6 +568,7 @@ describe("proxmox-configure-view", () => {
         "proxmox_list_nodes",
         "proxmox_get_next_vm_id",
         "proxmox_list_storage",
+        "proxmox_list_bridges",
       ]);
       const selections = wizardState.getState().selections;
       expect(selections.proxmoxStorage).to.equal("local");
@@ -576,6 +593,8 @@ describe("proxmox-configure-view", () => {
         if (cmd === "proxmox_list_nodes")
           return [{ name: "pve", status: "online" }];
         if (cmd === "proxmox_get_next_vm_id") return 100;
+        if (cmd === "proxmox_list_bridges")
+          return [{ name: "vmbr0", network_type: "bridge", comments: null }];
         throw new Error(`Unexpected IPC command: ${cmd}`);
       });
       const el = await fixture<ProxmoxConfigureView>(html`
@@ -619,6 +638,10 @@ describe("proxmox-configure-view", () => {
             ) {
               return temporary.promise;
             }
+            if (cmd === "proxmox_list_bridges")
+              return [
+                { name: "vmbr0", network_type: "bridge", comments: null },
+              ];
             throw new Error(`Unexpected IPC command: ${cmd}`);
           });
           const el = await fixture<ProxmoxConfigureView>(html`
@@ -670,6 +693,8 @@ describe("proxmox-configure-view", () => {
     mockTauriIpc((cmd) => {
       if (cmd === "proxmox_list_nodes") return nodes.promise;
       if (cmd === "proxmox_get_next_vm_id") return 100;
+      if (cmd === "proxmox_list_bridges")
+        return [{ name: "vmbr0", network_type: "bridge", comments: null }];
       throw new Error(`Unexpected IPC command: ${cmd}`);
     });
     const el = await fixture<ProxmoxConfigureView>(html`

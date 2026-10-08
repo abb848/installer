@@ -73,6 +73,8 @@ test.describe("Proxmox TOTP login", () => {
                 available: 100000000000,
               },
             ];
+          if (cmd === "proxmox_list_bridges")
+            return [{ name: "vmbr0", network_type: "bridge", comments: null }];
           throw new Error(`Unexpected command: ${cmd}`);
         },
       };

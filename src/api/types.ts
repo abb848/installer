@@ -231,6 +231,8 @@ memory_used: number | null,
  */
 memory_total: number | null, };
 
+export type ProxmoxBridge = { name: string, network_type: string, comments: string | null, };
+
 export type ProxmoxStorage = {
 /**
  * Storage name
@@ -266,6 +268,10 @@ node: string,
  * Target storage name
  */
 storage: string,
+/**
+ * Network bridge or SDN VNet selected on the target node
+ */
+bridge: string,
 /**
  * VM ID (e.g., 100)
  */

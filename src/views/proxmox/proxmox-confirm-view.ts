@@ -187,6 +187,9 @@ export class ProxmoxConfirmView extends LitElement {
             <p class="summary-label">Proxmox server</p>
             <p class="summary-value">Node: ${node}</p>
             <p class="summary-detail">Storage: ${storage}</p>
+            <p class="summary-detail">
+              Network bridge: ${selections.proxmoxBridge}
+            </p>
           </div>
         </div>
 

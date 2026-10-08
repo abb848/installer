@@ -22,8 +22,9 @@
 
 use crate::error::{Error, Result};
 use crate::types::{
-    FlashProgress, FlashStage, HaosImage, HaosRelease, ImageFormat, ProxmoxCredentials,
-    ProxmoxNode, ProxmoxSession, ProxmoxStorage, ProxmoxVmConfig, ProxmoxVmResult,
+    FlashProgress, FlashStage, HaosImage, HaosRelease, ImageFormat, ProxmoxBridge,
+    ProxmoxCredentials, ProxmoxNode, ProxmoxSession, ProxmoxStorage, ProxmoxVmConfig,
+    ProxmoxVmResult,
 };
 use crate::{Backend, ProgressCallback, ProxmoxBackend, ReleaseSource};
 use std::collections::HashSet;
@@ -391,6 +392,94 @@ async fn list_nodes(session: &ProxmoxSession) -> Result<Vec<ProxmoxNode>> {
     Ok(nodes)
 }
 
+/// Proxmox's pve-bridge-id format, restricted to ASCII identifiers.
+fn valid_bridge_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+        && name != "."
+        && name != ".."
+}
+
+fn valid_sdn_zone(zone: &str) -> bool {
+    (2..=8).contains(&zone.len())
+        && zone.as_bytes()[0].is_ascii_alphabetic()
+        && zone.bytes().all(|b| b.is_ascii_alphanumeric())
+}
+
+/// `any_bridge` includes Linux/OVS bridges and access-filtered, node-local running SDN VNets.
+async fn list_bridges(session: &ProxmoxSession, node: &str) -> Result<Vec<ProxmoxBridge>> {
+    let client = create_client(30)?;
+    let response = client
+        .get(format!(
+            "{}/api2/json/nodes/{}/network?type=any_bridge",
+            session.server_url.trim_end_matches('/'),
+            urlencoding::encode(node)
+        ))
+        .header("Cookie", format!("PVEAuthCookie={}", session.ticket))
+        .send()
+        .await
+        .map_err(|e| Error::ProxmoxApi(format!("Failed to list network bridges: {}", e)))?;
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(Error::ProxmoxSessionExpired);
+    }
+    if !response.status().is_success() {
+        return Err(Error::ProxmoxApi(format!(
+            "Failed to list network bridges: {}",
+            response.status()
+        )));
+    }
+    let json: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| Error::ProxmoxApi(format!("Failed to parse network bridges: {}", e)))?;
+    let data = json.get("data").and_then(|v| v.as_array()).ok_or_else(|| {
+        Error::ProxmoxApi("Invalid network response: missing 'data' array".to_string())
+    })?;
+    let mut bridges = Vec::new();
+    for item in data {
+        let network_type = item.get("type").and_then(|v| v.as_str()).unwrap_or("");
+        if !matches!(network_type, "bridge" | "OVSBridge" | "vnet") {
+            continue;
+        }
+        let name = item
+            .get("iface")
+            .and_then(|v| v.as_str())
+            .filter(|name| valid_bridge_name(name))
+            .ok_or_else(|| {
+                Error::ProxmoxApi(
+                    "Invalid network bridge identifier returned by Proxmox".to_string(),
+                )
+            })?;
+        bridges.push(ProxmoxBridge {
+            name: name.to_string(),
+            network_type: network_type.to_string(),
+            comments: item
+                .get("comments")
+                .and_then(|v| v.as_str())
+                .map(str::to_string),
+        });
+    }
+    bridges.sort_by(|a, b| a.name.cmp(&b.name));
+    bridges.dedup_by(|a, b| a.name == b.name);
+    Ok(bridges)
+}
+
+async fn ensure_bridge_available(
+    session: &ProxmoxSession,
+    config: &ProxmoxVmConfig,
+) -> Result<ProxmoxBridge> {
+    if !valid_bridge_name(&config.bridge) {
+        return Err(Error::ProxmoxApi(
+            "Select a valid network bridge before continuing.".to_string(),
+        ));
+    }
+    list_bridges(session, &config.node).await?.into_iter()
+        .find(|bridge| bridge.name == config.bridge)
+        .ok_or_else(|| Error::ProxmoxApi(format!("Network bridge '{}' is no longer available on node '{}'. Return to configuration and select a network bridge.", config.bridge, config.node)))
+}
+
 /// List available storage on a node
 async fn list_storage(session: &ProxmoxSession, node: &str) -> Result<Vec<ProxmoxStorage>> {
     let client = create_client(30)?;
@@ -644,9 +733,6 @@ fn check_node_online(nodes: &[ProxmoxNode], node: &str) -> Result<()> {
     Ok(())
 }
 
-/// Network bridge the VM's network card is attached to.
-const VM_BRIDGE: &str = "vmbr0";
-
 /// Privileges Proxmox checks on `/vms/{id}` for the options `create_vm_with_disk` sends.
 const VM_CREATE_PRIVILEGES: &[&str] = &[
     "VM.Allocate",
@@ -730,8 +816,51 @@ async fn ensure_user_can_create_vm(
         &required,
     )?;
 
-    // Plain bridges are checked under the built-in `localnetwork` SDN zone.
-    let bridge_path = format!("/sdn/zones/localnetwork/{}", VM_BRIDGE);
+    ensure_bridge_access(session, config).await
+}
+
+async fn ensure_bridge_access(session: &ProxmoxSession, config: &ProxmoxVmConfig) -> Result<()> {
+    let bridge = ensure_bridge_available(session, config).await?;
+    let zone = if bridge.network_type == "vnet" {
+        // GuestHelpers::check_vnet_access checks the edited config, even when
+        // a zone move has not been applied. Do not request running=1 here.
+        let client = create_client(30)?;
+        let response = client
+            .get(format!(
+                "{}/api2/json/cluster/sdn/vnets/{}",
+                session.server_url.trim_end_matches('/'),
+                urlencoding::encode(&bridge.name)
+            ))
+            .header("Cookie", format!("PVEAuthCookie={}", session.ticket))
+            .send()
+            .await
+            .map_err(|e| {
+                Error::ProxmoxApi(format!("Failed to check SDN VNet configuration: {}", e))
+            })?;
+        if response.status() == reqwest::StatusCode::FORBIDDEN {
+            return Err(Error::ProxmoxApi(format!("Cannot read SDN VNet '{}'. Grant SDN.Audit on this VNet so its network permissions can be checked.", bridge.name)));
+        }
+        if !response.status().is_success() {
+            return Err(Error::ProxmoxApi(format!(
+                "Cannot read the selected SDN VNet's configuration: {}",
+                response.status()
+            )));
+        }
+        let json: serde_json::Value = response.json().await.map_err(|e| {
+            Error::ProxmoxApi(format!("Failed to parse SDN VNet configuration: {}", e))
+        })?;
+        json.get("data")
+            .and_then(|v| v.get("zone"))
+            .and_then(|v| v.as_str())
+            .filter(|zone| valid_sdn_zone(zone))
+            .ok_or_else(|| {
+                Error::ProxmoxApi("Missing or invalid SDN zone for the selected VNet".to_string())
+            })?
+            .to_string()
+    } else {
+        "localnetwork".to_string()
+    };
+    let bridge_path = format!("/sdn/zones/{}/{}", zone, bridge.name);
     ensure_privileges(
         &fetch_privileges(session, &bridge_path).await?,
         &bridge_path,
@@ -1119,6 +1248,12 @@ async fn create_vm_with_disk(
         return Err(error);
     }
 
+    // Networks and ACLs can change during the download/upload.
+    if let Err(error) = ensure_bridge_access(session, config).await {
+        // No create request was sent, so the uploaded source is unused.
+        *source_unused = true;
+        return Err(error);
+    }
     let url = format!(
         "{}/api2/json/nodes/{}/qemu",
         session.server_url.trim_end_matches('/'),
@@ -1153,7 +1288,7 @@ async fn create_vm_with_disk(
             ("ostype", "l26".to_string()), // Linux 2.6/3.x/4.x/5.x/6.x kernel
             ("efidisk0", efidisk0_spec),  // EFI disk for UEFI
             ("scsi0", scsi0_spec),        // Main disk with import
-            ("net0", format!("virtio,bridge={}", VM_BRIDGE)), // VirtIO network
+            ("net0", format!("virtio,bridge={}", config.bridge)), // VirtIO network
             ("agent", "enabled=1".to_string()), // QEMU guest agent
             ("boot", "order=scsi0".to_string()), // Boot from main disk
         ])
@@ -1294,7 +1429,7 @@ async fn import_and_cleanup_image(
         &mut source_unused,
     )
     .await;
-    // The request was rejected or the import task has stopped. Cleanup is
+    // Creation was prevented/rejected or the import task stopped. Cleanup is
     // best effort and must never replace the original installation result.
     if source_unused {
         if let Err(error) =
@@ -1651,6 +1786,14 @@ impl ProxmoxBackend for Backend {
 
     async fn get_next_vm_id(&self, session: &ProxmoxSession) -> Result<u32> {
         get_next_vm_id(session).await
+    }
+
+    async fn list_bridges(
+        &self,
+        session: &ProxmoxSession,
+        node: &str,
+    ) -> Result<Vec<ProxmoxBridge>> {
+        list_bridges(session, node).await
     }
 
     async fn create_vm<P: ProgressCallback>(
@@ -2660,10 +2803,258 @@ mod tests {
                 name: "homeassistant".to_string(),
                 node: "pve".to_string(),
                 storage: "local-lvm".to_string(),
+                bridge: "vmbr0".to_string(),
                 cpu_cores: 2,
                 memory_mb: 4096,
                 disk_size_gb: 32,
                 auto_start,
+            }
+        }
+
+        async fn mock_bridges(server: &mut Server, data: serde_json::Value) -> mockito::Mock {
+            server
+                .mock("GET", "/api2/json/nodes/pve/network")
+                .match_query(Matcher::UrlEncoded(
+                    "type".to_string(),
+                    "any_bridge".to_string(),
+                ))
+                .match_header("Cookie", "PVEAuthCookie=test-ticket")
+                .with_header("content-type", "application/json")
+                .with_body(serde_json::json!({"data": data}).to_string())
+                .create_async()
+                .await
+        }
+
+        async fn mock_default_bridge(server: &mut Server) -> mockito::Mock {
+            mock_bridges(
+                server,
+                serde_json::json!([{"iface":"vmbr0", "type":"bridge"}]),
+            )
+            .await
+        }
+
+        #[tokio::test]
+        async fn test_list_bridges_includes_node_local_sdn_and_ovs() {
+            let mut server = Server::new_async().await;
+            let network = mock_bridges(
+                &mut server,
+                serde_json::json!([
+                    {"iface":"vmbr1", "type":"OVSBridge"},
+                    {"iface":"lan", "type":"vnet", "comments":"Home network", "active":"1"},
+                    {"iface":"vmbr0", "type":"bridge"},
+                    {"iface":"eth0", "type":"eth"}
+                ]),
+            )
+            .await;
+            let bridges = list_bridges(&test_session(&server), "pve").await.unwrap();
+            assert_eq!(
+                bridges.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
+                ["lan", "vmbr0", "vmbr1"]
+            );
+            assert_eq!(bridges[0].network_type, "vnet");
+            assert_eq!(bridges[0].comments.as_deref(), Some("Home network"));
+            network.assert_async().await;
+        }
+
+        #[tokio::test]
+        async fn test_list_bridges_empty_or_permission_filtered() {
+            let mut server = Server::new_async().await;
+            let network = mock_bridges(&mut server, serde_json::json!([])).await;
+            assert!(list_bridges(&test_session(&server), "pve")
+                .await
+                .unwrap()
+                .is_empty());
+            assert!(
+                ensure_bridge_available(&test_session(&server), &vm_config(false))
+                    .await
+                    .unwrap_err()
+                    .to_string()
+                    .contains("no longer available")
+            );
+            network.expect(2).assert_async().await;
+        }
+
+        #[tokio::test]
+        async fn test_list_bridges_errors() {
+            for (status, body) in [
+                (401, ""),
+                (403, ""),
+                (500, ""),
+                (200, "{}"),
+                (200, "invalid"),
+                (
+                    200,
+                    r#"{"data":[{"iface":"vmbr0,tag=10","type":"bridge"}]}"#,
+                ),
+            ] {
+                let mut server = Server::new_async().await;
+                let network = server
+                    .mock("GET", "/api2/json/nodes/pve/network")
+                    .match_query(Matcher::Any)
+                    .with_status(status)
+                    .with_body(body)
+                    .create_async()
+                    .await;
+                let error = list_bridges(&test_session(&server), "pve")
+                    .await
+                    .unwrap_err();
+                // An expired session offers reconnecting, like the other lookups
+                if status == 401 {
+                    assert!(matches!(error, Error::ProxmoxSessionExpired));
+                } else {
+                    assert!(matches!(error, Error::ProxmoxApi(_)));
+                }
+                network.assert_async().await;
+            }
+        }
+
+        #[tokio::test]
+        async fn test_bridge_validation_rejects_net0_and_path_injection_before_create() {
+            let server = Server::new_async().await;
+            for name in [
+                "",
+                "vmbr0,tag=10",
+                "vmbr0\n",
+                "../vmbr0",
+                "..",
+                "vmbr0&firewall=0",
+                "vmbr0/100",
+            ] {
+                let mut config = vm_config(false);
+                config.bridge = name.to_string();
+                let error = create_vm_with_disk(
+                    &test_session(&server),
+                    &config,
+                    "image.qcow2",
+                    "local",
+                    &mut false,
+                )
+                .await
+                .unwrap_err();
+                assert!(
+                    error.to_string().contains("valid network bridge"),
+                    "{error}"
+                );
+            }
+        }
+
+        #[tokio::test]
+        async fn test_selected_bridge_permission_path() {
+            let mut server = Server::new_async().await;
+            let network = mock_bridges(
+                &mut server,
+                serde_json::json!([{"iface":"vmbr1", "type":"bridge"}]),
+            )
+            .await;
+            let permissions =
+                mock_privileges(&mut server, "/sdn/zones/localnetwork/vmbr1", &["SDN.Use"]).await;
+            let mut config = vm_config(false);
+            config.bridge = "vmbr1".to_string();
+            ensure_bridge_access(&test_session(&server), &config)
+                .await
+                .unwrap();
+            network.assert_async().await;
+            permissions.assert_async().await;
+        }
+
+        #[tokio::test]
+        async fn test_sdn_permission_uses_edited_zone_and_requires_use() {
+            for privileges in [vec!["SDN.Use"], vec!["SDN.Audit"], vec![]] {
+                let mut server = Server::new_async().await;
+                let network = mock_bridges(
+                    &mut server,
+                    serde_json::json!([{"iface":"lan", "type":"vnet"}]),
+                )
+                .await;
+                // A pending move means the running zone differs from the
+                // edited zone that Proxmox checks during VM creation.
+                let running = server
+                    .mock("GET", "/api2/json/cluster/sdn/vnets/lan")
+                    .match_query(Matcher::UrlEncoded("running".to_string(), "1".to_string()))
+                    .with_body(r#"{"data":{"zone":"oldzone"}}"#)
+                    .expect(0)
+                    .create_async()
+                    .await;
+                let vnet = server
+                    .mock("GET", "/api2/json/cluster/sdn/vnets/lan")
+                    .with_body(r#"{"data":{"vnet":"lan","type":"vnet","zone":"home"}}"#)
+                    .create_async()
+                    .await;
+                let permissions =
+                    mock_privileges(&mut server, "/sdn/zones/home/lan", &privileges).await;
+                let mut config = vm_config(false);
+                config.bridge = "lan".to_string();
+                let result = ensure_bridge_access(&test_session(&server), &config).await;
+                assert_eq!(result.is_ok(), privileges.contains(&"SDN.Use"));
+                network.assert_async().await;
+                vnet.assert_async().await;
+                running.assert_async().await;
+                permissions.assert_async().await;
+            }
+        }
+
+        #[tokio::test]
+        async fn test_sdn_metadata_failure_is_not_treated_as_local_bridge() {
+            for status in [401, 403, 500] {
+                let mut server = Server::new_async().await;
+                let network = mock_bridges(
+                    &mut server,
+                    serde_json::json!([{"iface":"lan", "type":"vnet"}]),
+                )
+                .await;
+                let vnet = server
+                    .mock("GET", "/api2/json/cluster/sdn/vnets/lan")
+                    .match_query(Matcher::Any)
+                    .with_status(status)
+                    .create_async()
+                    .await;
+                let mut config = vm_config(false);
+                config.bridge = "lan".to_string();
+                let error = ensure_bridge_access(&test_session(&server), &config)
+                    .await
+                    .unwrap_err();
+                assert!(matches!(error, Error::ProxmoxApi(_)));
+                network.assert_async().await;
+                vnet.assert_async().await;
+            }
+        }
+
+        #[tokio::test]
+        async fn test_invalid_sdn_zone_never_reaches_permissions_or_create() {
+            for zone in [
+                "",
+                "..",
+                "../home",
+                "home/lan",
+                "home,tag=10",
+                "localnetwork",
+            ] {
+                let mut server = Server::new_async().await;
+                let network = mock_bridges(
+                    &mut server,
+                    serde_json::json!([{"iface":"lan", "type":"vnet"}]),
+                )
+                .await;
+                let vnet = server
+                    .mock("GET", "/api2/json/cluster/sdn/vnets/lan")
+                    .match_query(Matcher::Any)
+                    .with_body(serde_json::json!({"data":{"zone":zone}}).to_string())
+                    .create_async()
+                    .await;
+                let mut config = vm_config(false);
+                config.bridge = "lan".to_string();
+                let error = create_vm_with_disk(
+                    &test_session(&server),
+                    &config,
+                    "image.qcow2",
+                    "local",
+                    &mut false,
+                )
+                .await
+                .unwrap_err();
+                assert!(error.to_string().contains("invalid SDN zone"), "{error}");
+                network.assert_async().await;
+                vnet.assert_async().await;
             }
         }
 
@@ -2691,6 +3082,7 @@ mod tests {
         #[serial]
         async fn test_ensure_user_can_create_vm_allowed() {
             let mut server = Server::new_async().await;
+            let _network = mock_default_bridge(&mut server).await;
 
             let mut vm_privileges = VM_CREATE_PRIVILEGES.to_vec();
             vm_privileges.push("VM.PowerMgmt");
@@ -2729,6 +3121,7 @@ mod tests {
         #[serial]
         async fn test_ensure_user_can_create_vm_needs_power_only_for_auto_start() {
             let mut server = Server::new_async().await;
+            let _network = mock_default_bridge(&mut server).await;
 
             let vm_mock = mock_privileges(&mut server, "/vms/100", VM_CREATE_PRIVILEGES).await;
             let bridge_mock =
@@ -2745,6 +3138,7 @@ mod tests {
         #[serial]
         async fn test_ensure_user_can_create_vm_needs_bridge_access() {
             let mut server = Server::new_async().await;
+            let _network = mock_default_bridge(&mut server).await;
 
             let vm_mock = mock_privileges(&mut server, "/vms/100", VM_CREATE_PRIVILEGES).await;
             let bridge_mock =
@@ -2826,6 +3220,7 @@ mod tests {
         #[serial]
         async fn test_create_vm_digest_failure_after_healthy_preflight() {
             let mut server = Server::new_async().await;
+            let _network = mock_default_bridge(&mut server).await;
 
             struct ImageSource {
                 cache: tempfile::TempDir,
@@ -2953,6 +3348,7 @@ mod tests {
                 name: "homeassistant".to_string(),
                 node: "pve".to_string(),
                 storage: "local-lvm".to_string(),
+                bridge: "vmbr0".to_string(),
                 cpu_cores: 2,
                 memory_mb: 4096,
                 disk_size_gb: 32,
@@ -3008,6 +3404,7 @@ mod tests {
                 name: "homeassistant".to_string(),
                 node: "pve".to_string(),
                 storage: "local-lvm".to_string(),
+                bridge: "vmbr0".to_string(),
                 cpu_cores: 2,
                 memory_mb: 4096,
                 disk_size_gb: 32,
@@ -3552,6 +3949,13 @@ mod tests {
         async fn check_create_vm_with_disk_size(disk_size_gb: u32) {
             let mut server = Server::new_async().await;
             let requests = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let network = mock_bridges(
+                &mut server,
+                serde_json::json!([{"iface":"vmbr1", "type":"bridge"}]),
+            )
+            .await;
+            let permissions =
+                mock_privileges(&mut server, "/sdn/zones/localnetwork/vmbr1", &["SDN.Use"]).await;
 
             let vm_create_mock = server
                 .mock("POST", "/api2/json/nodes/pve/qemu")
@@ -3561,10 +3965,13 @@ mod tests {
                     Matcher::Regex("test-csrf".to_string()),
                 )
                 // The import source must use the selected storage, not a hardcoded "local".
-                .match_body(Matcher::UrlEncoded(
-                    "scsi0".to_string(),
-                    "local-lvm:0,import-from=local-import:import/test-image.qcow2".to_string(),
-                ))
+                .match_body(Matcher::AllOf(vec![
+                    Matcher::UrlEncoded(
+                        "scsi0".to_string(),
+                        "local-lvm:0,import-from=local-import:import/test-image.qcow2".to_string(),
+                    ),
+                    Matcher::UrlEncoded("net0".to_string(), "virtio,bridge=vmbr1".to_string()),
+                ]))
                 .with_status(200)
                 .with_header("content-type", "application/json")
                 .with_body(
@@ -3630,6 +4037,7 @@ mod tests {
                 name: "test-vm".to_string(),
                 node: "pve".to_string(),
                 storage: "local-lvm".to_string(),
+                bridge: "vmbr0".to_string(),
                 cpu_cores: 2,
                 memory_mb: 2048,
                 disk_size_gb,
@@ -3638,7 +4046,10 @@ mod tests {
 
             let result = create_vm_with_disk(
                 &session,
-                &config,
+                &ProxmoxVmConfig {
+                    bridge: "vmbr1".to_string(),
+                    ..config
+                },
                 "test-image.qcow2",
                 "local-import",
                 &mut false,
@@ -3647,6 +4058,8 @@ mod tests {
             assert!(result.is_ok());
 
             vm_create_mock.assert_async().await;
+            network.assert_async().await;
+            permissions.assert_async().await;
             task_mock.assert_async().await;
             resize_mock.assert_async().await;
             resize_task_mock.assert_async().await;
@@ -3666,6 +4079,7 @@ mod tests {
                 memory_mb: 2048,
                 disk_size_gb,
                 auto_start: true,
+                bridge: "vmbr0".into(),
             }
         }
 
@@ -3714,6 +4128,15 @@ mod tests {
                 ),
             ] {
                 let mut server = Server::new_async().await;
+                // Creating the VM first rechecks the selected bridge
+                let _network = mock_bridges(
+                    &mut server,
+                    serde_json::json!([{"iface":"vmbr0", "type":"bridge"}]),
+                )
+                .await;
+                let _permissions =
+                    mock_privileges(&mut server, "/sdn/zones/localnetwork/vmbr0", &["SDN.Use"])
+                        .await;
                 let create_mock = server
                     .mock("POST", "/api2/json/nodes/pve/qemu")
                     .with_header("content-type", "application/json")
@@ -3782,6 +4205,15 @@ mod tests {
         async fn test_disk_resize_requires_successful_import() {
             for body in [r#"{"data":null}"#, r#"{"data":"create-task"}"#] {
                 let mut server = Server::new_async().await;
+                // Creating the VM first rechecks the selected bridge
+                let _network = mock_bridges(
+                    &mut server,
+                    serde_json::json!([{"iface":"vmbr0", "type":"bridge"}]),
+                )
+                .await;
+                let _permissions =
+                    mock_privileges(&mut server, "/sdn/zones/localnetwork/vmbr0", &["SDN.Use"])
+                        .await;
                 let create_mock = server
                     .mock("POST", "/api2/json/nodes/pve/qemu")
                     .with_header("content-type", "application/json")
@@ -3824,6 +4256,9 @@ mod tests {
         #[serial]
         async fn test_create_vm_with_disk_error() {
             let mut server = Server::new_async().await;
+            let _network = mock_default_bridge(&mut server).await;
+            let _permissions =
+                mock_privileges(&mut server, "/sdn/zones/localnetwork/vmbr0", &["SDN.Use"]).await;
 
             let vm_create_mock = server
                 .mock("POST", "/api2/json/nodes/pve/qemu")
@@ -3843,6 +4278,7 @@ mod tests {
                 name: "test-vm".to_string(),
                 node: "pve".to_string(),
                 storage: "local-lvm".to_string(),
+                bridge: "vmbr0".to_string(),
                 cpu_cores: 2,
                 memory_mb: 2048,
                 disk_size_gb: 32,
@@ -3889,6 +4325,74 @@ mod tests {
         }
 
         #[tokio::test]
+        async fn failed_bridge_recheck_deletes_unused_import_without_creating_vm() {
+            for bridge_removed in [true, false] {
+                let mut server = Server::new_async().await;
+                let session = test_session(&server);
+                let config = vm_config(false);
+                let initial_network = mock_default_bridge(&mut server).await;
+                let initial_permissions =
+                    mock_privileges(&mut server, "/sdn/zones/localnetwork/vmbr0", &["SDN.Use"])
+                        .await;
+                ensure_bridge_access(&session, &config).await.unwrap();
+                initial_network.assert_async().await;
+                initial_permissions.assert_async().await;
+                initial_network.remove_async().await;
+                initial_permissions.remove_async().await;
+
+                // Simulate a network change after the image has been uploaded.
+                let network = mock_bridges(
+                    &mut server,
+                    if bridge_removed {
+                        serde_json::json!([])
+                    } else {
+                        serde_json::json!([{"iface":"vmbr0", "type":"bridge"}])
+                    },
+                )
+                .await;
+                let permissions =
+                    mock_privileges(&mut server, "/sdn/zones/localnetwork/vmbr0", &[]).await;
+                let create = server
+                    .mock("POST", "/api2/json/nodes/pve/qemu")
+                    .expect(0)
+                    .create_async()
+                    .await;
+                let delete = server.mock("DELETE", "/api2/json/nodes/pve/storage/local-import/content/local-import%3Aimport%2Fhai-image-unique.qcow2")
+                    .match_header("cookie", "PVEAuthCookie=test-ticket")
+                    .match_header("CSRFPreventionToken", "test-csrf")
+                    .with_body(r#"{"data":"delete-task"}"#).create_async().await;
+                let cleanup_task = server
+                    .mock("GET", "/api2/json/nodes/pve/tasks/delete-task/status")
+                    .with_body(r#"{"data":{"status":"stopped","exitstatus":"OK"}}"#)
+                    .create_async()
+                    .await;
+                let error = import_and_cleanup_image(
+                    &session,
+                    &config,
+                    "hai-image-unique.qcow2",
+                    "local-import",
+                )
+                .await
+                .unwrap_err();
+                assert!(
+                    error.to_string().contains(if bridge_removed {
+                        "no longer available"
+                    } else {
+                        "SDN.Use"
+                    }),
+                    "{error}"
+                );
+                network.assert_async().await;
+                if !bridge_removed {
+                    permissions.assert_async().await;
+                }
+                create.assert_async().await;
+                delete.assert_async().await;
+                cleanup_task.assert_async().await;
+            }
+        }
+
+        #[tokio::test]
         async fn import_cleanup_waits_for_completion_and_preserves_install_result() {
             use std::sync::{
                 atomic::{AtomicBool, Ordering},
@@ -3896,6 +4400,10 @@ mod tests {
             };
             for cleanup_status in [200, 403, 500] {
                 let mut server = Server::new_async().await;
+                let network = mock_default_bridge(&mut server).await;
+                let permissions =
+                    mock_privileges(&mut server, "/sdn/zones/localnetwork/vmbr0", &["SDN.Use"])
+                        .await;
                 let completed = Arc::new(AtomicBool::new(false));
                 let task_completed = completed.clone();
                 let create = server
@@ -3945,6 +4453,7 @@ mod tests {
                     name: "test-vm".into(),
                     node: "pve".into(),
                     storage: "local-lvm".into(),
+                    bridge: "vmbr0".into(),
                     cpu_cores: 2,
                     memory_mb: 2048,
                     disk_size_gb: 32,
@@ -3964,6 +4473,8 @@ mod tests {
                 resize_task.assert_async().await;
                 delete.assert_async().await;
                 cleanup_task.assert_async().await;
+                network.assert_async().await;
+                permissions.assert_async().await;
             }
         }
 
@@ -3985,6 +4496,10 @@ mod tests {
                 ),
             ] {
                 let mut server = Server::new_async().await;
+                let network = mock_default_bridge(&mut server).await;
+                let permissions =
+                    mock_privileges(&mut server, "/sdn/zones/localnetwork/vmbr0", &["SDN.Use"])
+                        .await;
                 server
                     .mock("POST", "/api2/json/nodes/pve/qemu")
                     .with_status(create_status)
@@ -4013,6 +4528,7 @@ mod tests {
                     name: "test-vm".into(),
                     node: "pve".into(),
                     storage: "local-lvm".into(),
+                    bridge: "vmbr0".into(),
                     cpu_cores: 2,
                     memory_mb: 2048,
                     disk_size_gb: 32,
@@ -4027,6 +4543,8 @@ mod tests {
                 .await
                 .is_err());
                 delete.assert_async().await;
+                network.assert_async().await;
+                permissions.assert_async().await;
             }
         }
 

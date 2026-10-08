@@ -341,6 +341,15 @@ pub struct ProxmoxStorage {
     pub active: bool,
 }
 
+/// A node-local Linux bridge, Open vSwitch bridge, or SDN VNet.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(ts_rs::TS))]
+pub struct ProxmoxBridge {
+    pub name: String,
+    pub network_type: String,
+    pub comments: Option<String>,
+}
+
 /// Configuration for creating a Proxmox VM
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(test, derive(ts_rs::TS))]
@@ -349,6 +358,8 @@ pub struct ProxmoxVmConfig {
     pub node: String,
     /// Target storage name
     pub storage: String,
+    /// Network bridge or SDN VNet selected on the target node
+    pub bridge: String,
     /// VM ID (e.g., 100)
     pub vm_id: u32,
     /// VM name
@@ -953,6 +964,7 @@ mod tests {
             name: "homeassistant".to_string(),
             node: "pve".to_string(),
             storage: "local-lvm".to_string(),
+            bridge: "vmbr0".to_string(),
             cpu_cores: 4,
             memory_mb: 4096,
             disk_size_gb: 32,

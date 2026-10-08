@@ -32,6 +32,9 @@ pub enum Error {
     #[error("Proxmox API error: {0}")]
     ProxmoxApi(String),
 
+    #[error("Proxmox session expired or invalid. Please reconnect to Proxmox.")]
+    ProxmoxSessionExpired,
+
     #[error("Proxmox two-factor authentication: {0}")]
     ProxmoxTwoFactor(String),
 

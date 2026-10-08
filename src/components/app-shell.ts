@@ -250,7 +250,11 @@ export class AppShell extends LitElement {
     // Proxmox flow
     if (flow === "proxmox") {
       if (stepId === "configure") {
-        return !selections.proxmoxNode || !selections.proxmoxStorage;
+        return (
+          !selections.proxmoxConfigureReady ||
+          !selections.proxmoxNode ||
+          !selections.proxmoxStorage
+        );
       }
     }
 

@@ -56,6 +56,8 @@ export interface WizardSelections {
   proxmoxNode?: string;
   proxmoxStorage?: string;
   proxmoxVmId?: number;
+  /** Node and storage selections were verified by the current configure view. */
+  proxmoxConfigureReady?: boolean;
 
   [key: string]: unknown;
 }

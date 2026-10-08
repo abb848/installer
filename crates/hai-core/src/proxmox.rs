@@ -349,9 +349,7 @@ async fn list_nodes(session: &ProxmoxSession) -> Result<Vec<ProxmoxNode>> {
     if !response.status().is_success() {
         let status = response.status();
         if status.as_u16() == 401 {
-            return Err(Error::ProxmoxApi(
-                "Authentication expired or invalid. Please reconnect to Proxmox.".to_string(),
-            ));
+            return Err(Error::ProxmoxSessionExpired);
         } else if status.as_u16() == 403 {
             return Err(Error::ProxmoxApi(
                 "Access denied. Your user may not have permission to list nodes.".to_string(),
@@ -409,6 +407,10 @@ async fn list_storage(session: &ProxmoxSession, node: &str) -> Result<Vec<Proxmo
         .send()
         .await
         .map_err(|e| Error::ProxmoxApi(format!("Failed to list storage: {}", e)))?;
+
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(Error::ProxmoxSessionExpired);
+    }
 
     if !response.status().is_success() {
         return Err(Error::ProxmoxApi(format!(
@@ -793,6 +795,10 @@ async fn recheck_before_upload(
 /// Get the next available VM ID on the Proxmox server.
 async fn get_next_vm_id(session: &ProxmoxSession) -> Result<u32> {
     let response = send_nextid_request(session, None).await?;
+
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(Error::ProxmoxSessionExpired);
+    }
 
     if !response.status().is_success() {
         return Err(Error::ProxmoxApi(format!(
@@ -2432,15 +2438,41 @@ mod tests {
             };
 
             let result = list_nodes(&session).await;
-            assert!(result.is_err());
-
-            if let Err(Error::ProxmoxApi(msg)) = result {
-                assert!(msg.contains("expired") || msg.contains("Authentication"));
-            } else {
-                panic!("Expected ProxmoxApi error for 401");
-            }
+            assert!(matches!(result, Err(Error::ProxmoxSessionExpired)));
 
             nodes_mock.assert_async().await;
+        }
+
+        #[tokio::test]
+        #[serial]
+        async fn test_storage_and_vm_id_auth_expired() {
+            let mut server = Server::new_async().await;
+            let storage_mock = server
+                .mock("GET", "/api2/json/nodes/pve/storage")
+                .with_status(401)
+                .create_async()
+                .await;
+            let vm_id_mock = server
+                .mock("GET", "/api2/json/cluster/nextid")
+                .with_status(401)
+                .create_async()
+                .await;
+            let session = ProxmoxSession {
+                server_url: server.url(),
+                ticket: "expired-ticket".to_string(),
+                csrf_token: "test-csrf".to_string(),
+            };
+
+            assert!(matches!(
+                list_storage(&session, "pve").await,
+                Err(Error::ProxmoxSessionExpired)
+            ));
+            assert!(matches!(
+                get_next_vm_id(&session).await,
+                Err(Error::ProxmoxSessionExpired)
+            ));
+            storage_mock.assert_async().await;
+            vm_id_mock.assert_async().await;
         }
 
         #[tokio::test]

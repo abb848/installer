@@ -8,6 +8,7 @@ import {
   ViewAccessibility,
   reducedMotionStyles,
 } from "../../utils/view-accessibility.js";
+import { InstallDiagnostics } from "../../utils/diagnostics.js";
 import { customElement, state } from "lit/decorators.js";
 import { checkUtmStatus } from "../../api/commands.js";
 import type { UtmStatus } from "../../api/types.js";
@@ -240,6 +241,7 @@ export class UtmCheckView extends LitElement {
       // Store UTM installed status in wizard state
       wizardState.setSelection("utmInstalled", status.installed);
     } catch (error) {
+      if (this.isConnected) new InstallDiagnostics("utm").fail(error);
       this._error = installerError(error, "Failed to check UTM status");
       wizardState.setSelection("utmInstalled", false);
     } finally {

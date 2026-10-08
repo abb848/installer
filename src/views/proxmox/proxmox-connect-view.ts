@@ -5,6 +5,7 @@ import {
 } from "../../utils/installer-error.js";
 import { LitElement, html, css } from "lit";
 import { ViewAccessibility } from "../../utils/view-accessibility.js";
+import { InstallDiagnostics } from "../../utils/diagnostics.js";
 import { customElement, state } from "lit/decorators.js";
 import { proxmoxConnect } from "../../api/commands.js";
 import { wizardState } from "../../state/wizard-state.js";
@@ -170,6 +171,8 @@ export class ProxmoxConnectView extends LitElement {
 
     this._connecting = true;
     this._error = null;
+    const diagnostics = new InstallDiagnostics("proxmox");
+    diagnostics.advance("connecting");
 
     try {
       const session = await proxmoxConnect({
@@ -180,6 +183,7 @@ export class ProxmoxConnectView extends LitElement {
       });
 
       this._connected = true;
+      diagnostics.advance("complete");
 
       // Store session in wizard state
       wizardState.setSelection("proxmoxSession", session);
@@ -187,6 +191,7 @@ export class ProxmoxConnectView extends LitElement {
       wizardState.setSelection("proxmoxConnected", true);
       return true;
     } catch (error) {
+      if (this.isConnected) diagnostics.fail(error);
       this._error = installerError(error, "Failed to connect to Proxmox");
       wizardState.setSelection("proxmoxConnected", false);
       return false;

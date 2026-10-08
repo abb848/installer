@@ -3,6 +3,10 @@ import {
   type InstallerError,
 } from "../../utils/installer-error.js";
 import { LitElement, html, css } from "lit";
+import {
+  InstallDiagnostics,
+  logFrontendError,
+} from "../../utils/diagnostics.js";
 import { customElement, state } from "lit/decorators.js";
 import { wizardState, type WizardState } from "../../state/wizard-state.js";
 import {
@@ -104,6 +108,7 @@ export class UtmProgressView extends LitElement {
   private _isInstalling = false;
 
   private _stageStartTime: number | null = null;
+  private _diagnostics?: InstallDiagnostics;
   private _stageStartBytes: number = 0;
   private _unsubscribe?: () => void;
   private _abortController?: AbortController;
@@ -180,6 +185,7 @@ export class UtmProgressView extends LitElement {
     const { signal } = controller;
 
     this._isInstalling = true;
+    this._diagnostics = new InstallDiagnostics("utm");
     this._error = null;
 
     const selections = this._wizardState.selections;
@@ -252,6 +258,7 @@ export class UtmProgressView extends LitElement {
       throwIfCancelled(signal);
 
       // Complete
+      this._diagnostics?.advance("complete");
       this._stage = "complete";
       this._progress = 100;
 
@@ -273,6 +280,7 @@ export class UtmProgressView extends LitElement {
         return;
       }
 
+      this._diagnostics?.fail(error);
       this._stage = "error";
       this._error = installerError(
         error instanceof PollTimeoutError
@@ -302,7 +310,7 @@ export class UtmProgressView extends LitElement {
         try {
           await discardUtmImage(imagePath);
         } catch (error) {
-          console.warn("Could not release temporary UTM image", error);
+          logFrontendError(error);
         }
       }
     }
@@ -358,6 +366,7 @@ export class UtmProgressView extends LitElement {
 
   /** Move to an indeterminate stage, clearing the previous stage's progress */
   private _startStage(stage: InstallStage) {
+    this._diagnostics?.advance(stage);
     this._stage = stage;
     this._progress = 0;
     this._stageStartTime = null;
@@ -367,6 +376,7 @@ export class UtmProgressView extends LitElement {
 
   /** Download the HAOS qcow2 image, reporting download and extract progress */
   private async _downloadImage(signal: AbortSignal): Promise<string> {
+    this._diagnostics?.advance("downloading");
     this._stage = "downloading";
     this._progress = 0;
     this._stageStartTime = Date.now();
@@ -379,6 +389,7 @@ export class UtmProgressView extends LitElement {
 
       // Track stage changes
       if (progress.stage === "extracting" && this._stage === "downloading") {
+        this._diagnostics?.advance("extracting");
         this._stage = "extracting";
         this._stageStartTime = Date.now();
         this._stageStartBytes = progress.bytes_processed;

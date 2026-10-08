@@ -8,6 +8,7 @@ import {
   ViewAccessibility,
   reducedMotionStyles,
 } from "../../utils/view-accessibility.js";
+import { InstallDiagnostics } from "../../utils/diagnostics.js";
 import { customElement, state } from "lit/decorators.js";
 import { getManifest, type Device } from "../../api/index.js";
 import { wizardState } from "../../state/wizard-state.js";
@@ -232,6 +233,7 @@ export class MiniPCArchitectureSelectionView extends LitElement {
       }
       wizardState.setSelection("deviceCatalogReady", true);
     } catch (err) {
+      if (this.isConnected) new InstallDiagnostics("flash").fail(err);
       this._error = installerError(err, "Failed to load architectures");
     } finally {
       this._loading = false;

@@ -3,6 +3,9 @@
 
 import "@home-assistant/webawesome/dist/styles/themes/default.css";
 import "./components/app-shell.js";
+import { installErrorLogging } from "./utils/diagnostics.js";
+
+installErrorLogging();
 
 // Web Awesome's dark theme is gated on a `wa-dark` class rather than
 // prefers-color-scheme, so sync it with the OS color scheme ourselves. This

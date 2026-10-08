@@ -28,6 +28,7 @@ import "../views/proxmox/proxmox-success-view.js";
 // Import components
 import "./wizard-shell.js";
 import "./confirm-dialog.js";
+import "./diagnostics-actions.js";
 
 // Import state
 import {
@@ -64,6 +65,13 @@ export class AppShell extends LitElement {
 
     :host > * {
       flex: 1;
+    }
+
+    diagnostics-actions {
+      position: absolute;
+      bottom: 1rem;
+      left: 1rem;
+      z-index: 1;
     }
   `;
 
@@ -115,6 +123,9 @@ export class AppShell extends LitElement {
     return html`
       ${this._renderView()}
       ${this._currentView === "welcome" ? this._renderToolboxButton() : ""}
+      ${this._currentView === "welcome"
+        ? html`<diagnostics-actions about></diagnostics-actions>`
+        : ""}
       <confirm-dialog
         ?open=${this._showConfirmDialog}
         .driveName=${selections.driveName || "the selected drive"}

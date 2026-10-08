@@ -24,7 +24,8 @@ describe("structured IPC errors in views", () => {
       mockTauriIpc((cmd) => {
         if (cmd === "download_utm_image") return "/tmp/fixture.qcow2";
         if (cmd === "discard_utm_image") return;
-        attempts++;
+        // Only the creation counts; the error's diagnostics also use IPC
+        if (cmd === "create_utm_vm" || cmd === "proxmox_create_vm") attempts++;
         return Promise.reject(
           ipcError(
             flow === "vm" ? "utm_operation_uncertain" : "proxmox_api",
@@ -67,7 +68,7 @@ describe("structured IPC errors in views", () => {
     await el.updateComplete;
     expect(el.shadowRoot!.textContent).to.contain("account permissions");
     expect(el.shadowRoot!.textContent).not.to.contain("secret");
-    expect(el.shadowRoot!.querySelectorAll(".error-help a").length).to.equal(2);
+    expect(el.shadowRoot!.querySelectorAll(".error-help a").length).to.equal(1);
   });
 
   for (const tag of [
@@ -111,9 +112,12 @@ describe("structured IPC errors in views", () => {
         expect(!!retry && !retry.hasAttribute("hidden")).to.equal(retryable);
         if (retry && !retryable)
           expect(retry.getBoundingClientRect().width).to.equal(0);
+        // Installation help, plus reporting through the diagnostics dialog
         expect(
           el.shadowRoot!.querySelectorAll(".error-help a").length
-        ).to.equal(2);
+        ).to.equal(1);
+        expect(el.shadowRoot!.querySelector(".error-help diagnostics-actions"))
+          .to.exist;
       });
     }
   }

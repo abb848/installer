@@ -87,8 +87,9 @@ describe("installer errors", () => {
     const links = [...el.querySelectorAll("a")];
     expect(links.map((link) => link.textContent)).to.deep.equal([
       "Installation help",
-      "Report a problem",
     ]);
+    // Reporting goes through the diagnostics dialog instead of a bare link
+    expect(el.querySelector("diagnostics-actions")).to.exist;
     for (const link of links) expect(new URL(link.href).search).to.equal("");
   });
 });

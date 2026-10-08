@@ -1,6 +1,7 @@
 import { html } from "lit";
 import { formatBytes } from "../api/commands.js";
 import { openExternalLink } from "./external-url.js";
+import "../components/diagnostics-actions.js";
 
 export interface InstallerError {
   code: string;
@@ -105,17 +106,13 @@ export function installerError(
 /** Fixed destinations only: error text, paths, and credentials never enter URLs. */
 export function renderErrorHelp() {
   const help = "https://www.home-assistant.io/installation/";
-  const report =
-    "https://github.com/home-assistant/installer/issues/new/choose";
+  // Reporting goes through the diagnostics dialog, which shows exactly what
+  // a public issue would contain before anything leaves the installer
   return html`<p class="error-help">
     <a href=${help} @click=${(event: Event) => openExternalLink(event, help)}
       >Installation help</a
     >
     <span aria-hidden="true"> · </span>
-    <a
-      href=${report}
-      @click=${(event: Event) => openExternalLink(event, report)}
-      >Report a problem</a
-    >
+    <diagnostics-actions></diagnostics-actions>
   </p>`;
 }

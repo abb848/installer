@@ -8,6 +8,7 @@ import {
   ViewAccessibility,
   reducedMotionStyles,
 } from "../../utils/view-accessibility.js";
+import { InstallDiagnostics } from "../../utils/diagnostics.js";
 import { customElement, state } from "lit/decorators.js";
 import type WaInput from "@home-assistant/webawesome/dist/components/input/input.js";
 import "@home-assistant/webawesome/dist/components/input/input.js";
@@ -450,6 +451,9 @@ export class ProxmoxConfigureView extends LitElement {
   }
 
   private _setError(error: unknown) {
+    // Only reached for the current, connected lookup, so detached or
+    // superseded lookups never add diagnostics
+    new InstallDiagnostics("proxmox").fail(error);
     this._sessionExpired = isSessionExpired(error);
     this._error = installerError(error, "Failed to load Proxmox configuration");
     if (this._sessionExpired) {

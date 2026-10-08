@@ -3,6 +3,7 @@ import {
   ViewAccessibility,
   reducedMotionStyles,
 } from "../utils/view-accessibility.js";
+import { logFrontendError } from "../utils/diagnostics.js";
 import { customElement, state } from "lit/decorators.js";
 import { openExternalLink } from "../utils/external-url.js";
 import "@home-assistant/webawesome/dist/components/button/button.js";
@@ -244,7 +245,7 @@ export class WelcomeView extends LitElement {
   private _playEasterEgg() {
     const audio = new Audio("/assets/audio/home-assistant.wav");
     audio.play().catch((error) => {
-      console.error("Failed to play easter egg audio:", error);
+      logFrontendError(error);
     });
   }
 

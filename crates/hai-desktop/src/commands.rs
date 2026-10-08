@@ -5,6 +5,7 @@
 
 use crate::backend::Backend;
 use crate::command_error::CommandError;
+use crate::diagnostics::Operation;
 use crate::flash_state::FlashState;
 use hai_core::download::TemporaryImage;
 use hai_core::{
@@ -31,16 +32,36 @@ impl PendingUtmImages {
 /// Adapter that bridges Tauri's Channel with hai-core's ProgressCallback trait
 struct TauriProgressCallback<'a> {
     channel: &'a Channel<FlashProgress>,
+    operation: Operation,
 }
 
 impl<'a> TauriProgressCallback<'a> {
-    fn new(channel: &'a Channel<FlashProgress>) -> Self {
-        Self { channel }
+    fn new(channel: &'a Channel<FlashProgress>, name: &'static str) -> Self {
+        Self {
+            channel,
+            operation: Operation::new(name),
+        }
     }
 }
 
 impl<'a> ProgressCallback for TauriProgressCallback<'a> {
     fn on_progress(&self, progress: FlashProgress) {
+        let stage = match progress.stage {
+            FlashStage::Downloading => "downloading",
+            FlashStage::Extracting => "extracting",
+            FlashStage::Writing => "writing",
+            FlashStage::Verifying => "verifying",
+            FlashStage::Finalizing => "finalizing",
+            FlashStage::Ready => "ready",
+            FlashStage::Updating => "updating",
+            FlashStage::Complete => "complete",
+            // Keep the failing stage, never the backend's free-form message.
+            FlashStage::Error => {
+                let _ = self.channel.send(progress);
+                return;
+            }
+        };
+        self.operation.stage(stage);
         let _ = self.channel.send(progress);
     }
 }
@@ -153,8 +174,10 @@ pub async fn flash_image(
 ) -> Result<FlashResult, CommandError> {
     state
         .run(async move {
-            let callback = TauriProgressCallback::new(&progress_channel);
-            run_flash(&Backend, &request, &callback).await
+            let callback = TauriProgressCallback::new(&progress_channel, "flash");
+            callback
+                .operation
+                .finish(run_flash(&Backend, &request, &callback).await)
         })
         .await
 }
@@ -346,14 +369,20 @@ pub async fn download_utm_image(
     progress_channel: Channel<FlashProgress>,
     pending: tauri::State<'_, PendingUtmImages>,
 ) -> Result<String, CommandError> {
-    let callback = TauriProgressCallback::new(&progress_channel);
+    let callback = TauriProgressCallback::new(&progress_channel, "utm_download");
 
     // Verify UTM is available before doing any work.
-    Backend
-        .check_utm_status()
-        .await
-        .map_err(CommandError::from)?;
-    let image = run_utm_download(&Backend, utm_board()?, &callback).await?;
+    if let Err(error) = Backend.check_utm_status().await {
+        return callback.operation.finish(Err(CommandError::from(error)));
+    }
+    // Only a failure finishes the operation here; success waits for the image
+    let board = match utm_board() {
+        Ok(board) => board,
+        Err(error) => return callback.operation.finish(Err(error)),
+    };
+    let image = callback
+        .operation
+        .finish(run_utm_download(&Backend, board, &callback).await)?;
     let path = image.path().to_string_lossy().into_owned();
     pending.0.lock().unwrap().insert(path.clone(), image);
     Ok(path)
@@ -436,7 +465,7 @@ pub async fn create_utm_vm(
     config: hai_core::UtmVmConfig,
     pending: tauri::State<'_, PendingUtmImages>,
 ) -> Result<String, CommandError> {
-    run_utm_creation(&Backend, &config, &pending).await
+    Operation::new("utm_create").finish(run_utm_creation(&Backend, &config, &pending).await)
 }
 
 async fn run_utm_creation<B: UtmBackend>(
@@ -477,11 +506,8 @@ async fn run_utm_creation<B: UtmBackend>(
         ));
     }
     // A completed creation or confirmed rejection no longer needs the source.
-    if let Err(error) = image.finish_utm_import() {
-        eprintln!(
-            "Could not release UTM source {}: {error}",
-            image.path().display()
-        );
+    if image.finish_utm_import().is_err() {
+        crate::diagnostics::warning("utm_source_cleanup_failed");
     }
     result.map(|result| result.id).map_err(CommandError::from)
 }
@@ -489,15 +515,17 @@ async fn run_utm_creation<B: UtmBackend>(
 /// Start a UTM VM
 #[tauri::command(async)]
 pub fn start_utm_vm(vm_id: String) -> Result<(), CommandError> {
-    Backend.start_vm(&vm_id).map_err(CommandError::from)
+    Operation::new("utm_start").finish(Backend.start_vm(&vm_id).map_err(CommandError::from))
 }
 
 /// Resize a UTM VM's disk
 #[tauri::command]
 pub fn resize_utm_vm_disk(vm_id: String, size_gb: u32) -> Result<(), CommandError> {
-    Backend
-        .resize_vm_disk(&vm_id, size_gb)
-        .map_err(CommandError::from)
+    Operation::new("utm_resize").finish(
+        Backend
+            .resize_vm_disk(&vm_id, size_gb)
+            .map_err(CommandError::from),
+    )
 }
 
 /// Get the status of a UTM VM
@@ -531,10 +559,12 @@ pub async fn check_ha_updated(ip_address: String) -> bool {
 pub async fn proxmox_connect(
     credentials: ProxmoxCredentials,
 ) -> Result<ProxmoxSession, CommandError> {
-    Backend
-        .authenticate(&credentials)
-        .await
-        .map_err(CommandError::from)
+    Operation::new("proxmox_connect").finish(
+        Backend
+            .authenticate(&credentials)
+            .await
+            .map_err(CommandError::from),
+    )
 }
 
 /// List available nodes on Proxmox
@@ -586,17 +616,19 @@ pub async fn proxmox_create_vm(
     config: ProxmoxVmConfig,
     progress_channel: Channel<FlashProgress>,
 ) -> Result<ProxmoxVmResult, CommandError> {
-    let callback = TauriProgressCallback::new(&progress_channel);
+    let callback = TauriProgressCallback::new(&progress_channel, "proxmox_install");
     // Fully qualified: `create_vm` is defined on both ProxmoxBackend and UtmBackend.
-    ProxmoxBackend::create_vm(&Backend, &session, &config, &callback)
-        .await
-        .map_err(|error| {
-            let mut error = CommandError::from(error);
-            // A lost response may leave a VM behind. This command cannot yet
-            // resume it safely, even when the underlying network error is transient.
-            error.retryable = false;
-            error
-        })
+    callback.operation.finish(
+        ProxmoxBackend::create_vm(&Backend, &session, &config, &callback)
+            .await
+            .map_err(|error| {
+                let mut error = CommandError::from(error);
+                // A lost response may leave a VM behind. This command cannot yet
+                // resume it safely, even when the underlying network error is transient.
+                error.retryable = false;
+                error
+            }),
+    )
 }
 
 // =============================================================================
@@ -606,6 +638,57 @@ pub async fn proxmox_create_vm(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(feature = "mock")]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn utm_download_logs_success_only_after_download_completes() {
+        use tauri::Manager;
+
+        // The tail is shared, so an earlier UTM test may have left its own success line
+        crate::diagnostics::clear_test_log_tail();
+        let app = tauri::test::mock_app();
+        app.manage(PendingUtmImages::default());
+        let channel = Channel::new(|_| {
+            let tail = crate::diagnostics::test_log_tail();
+            assert!(!tail
+                .iter()
+                .any(|line| line.contains("rust utm_download") && line.contains(" success ")));
+            Ok(())
+        });
+        let path = download_utm_image(channel, app.state()).await.unwrap();
+        let tail = crate::diagnostics::test_log_tail();
+        assert_eq!(
+            tail.iter()
+                .filter(|line| line.contains("rust utm_download") && line.contains(" success "))
+                .count(),
+            1
+        );
+        assert!(tail
+            .iter()
+            .any(|line| line.contains("rust utm_download complete success ")));
+        discard_utm_image(path, app.state());
+    }
+
+    #[cfg(all(not(feature = "mock"), not(target_os = "macos")))]
+    #[tokio::test]
+    async fn utm_download_logs_failed_precheck_without_success() {
+        use tauri::Manager;
+
+        let app = tauri::test::mock_app();
+        app.manage(PendingUtmImages::default());
+        let channel = Channel::new(|_| panic!("An unsupported UTM download must not start"));
+        let error = download_utm_image(channel, app.state()).await.unwrap_err();
+        assert_eq!(error.code, "unsupported_platform");
+        // The log category is the same fixed code the view receives
+        let tail = crate::diagnostics::test_log_tail();
+        assert!(tail
+            .iter()
+            .any(|line| line.contains("rust utm_download preparing unsupported_platform ")));
+        assert!(!tail
+            .iter()
+            .any(|line| line.contains("rust utm_download") && line.contains(" success ")));
+    }
 
     #[test]
     fn proxmox_lookups_keep_session_expiry_as_its_own_code() {

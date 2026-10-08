@@ -8,6 +8,8 @@ import { wizardState, type WizardState } from "../../state/wizard-state.js";
 import { flashImage, type FlashProgress } from "../../api/index.js";
 import { readDriveSelection } from "../../utils/drive-selection.js";
 import "../../components/install-progress.js";
+import "../../components/progress-bar.js";
+import { InstallDiagnostics } from "../../utils/diagnostics.js";
 
 @customElement("progress-view")
 export class ProgressView extends LitElement {
@@ -34,6 +36,7 @@ export class ProgressView extends LitElement {
   private _isFlashing = false;
 
   private _stageStartTime: number | null = null;
+  private _diagnostics?: InstallDiagnostics;
   private _stageStartBytes: number = 0;
 
   /** Whether the flash operation has failed */
@@ -72,6 +75,7 @@ export class ProgressView extends LitElement {
     if (this._isFlashing) return;
 
     this._isFlashing = true;
+    this._diagnostics = new InstallDiagnostics("flash");
     this._error = null;
 
     const selections = this._wizardState.selections;
@@ -99,6 +103,7 @@ export class ProgressView extends LitElement {
           },
         },
         (progress) => {
+          this._diagnostics?.advance(progress.stage);
           // Track stage changes for ETA calculation
           const prevStage = this._progress?.stage;
           if (prevStage !== progress.stage) {
@@ -122,6 +127,7 @@ export class ProgressView extends LitElement {
   }
 
   private _setError(error: unknown) {
+    this._diagnostics?.fail(error);
     this._error = installerError(error);
     this.dispatchEvent(
       new CustomEvent("flash-error", {

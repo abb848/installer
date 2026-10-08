@@ -1,5 +1,6 @@
 import { LitElement, html, css } from "lit";
 import { ViewAccessibility } from "../../utils/view-accessibility.js";
+import { logFrontendError } from "../../utils/diagnostics.js";
 import { customElement, state } from "lit/decorators.js";
 import { wizardState, type WizardState } from "../../state/wizard-state.js";
 import {
@@ -153,7 +154,7 @@ export class ProxmoxConfirmView extends LitElement {
       const release = await getHaosRelease(undefined, "ova");
       this._haosVersion = release.version;
     } catch (error) {
-      console.error("Failed to load info:", error);
+      logFrontendError(error);
       this._haosVersion = "Unknown";
     }
   }

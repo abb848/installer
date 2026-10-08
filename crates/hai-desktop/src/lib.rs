@@ -6,6 +6,7 @@
 mod backend;
 mod command_error;
 mod commands;
+mod diagnostics;
 mod flash_state;
 
 #[cfg(desktop)]
@@ -36,10 +37,12 @@ pub fn run() {
     builder
         .manage(flash_state::FlashState::default())
         .manage(commands::PendingUtmImages::default())
+        .plugin(diagnostics::plugin())
         .setup(|_| {
+            diagnostics::init();
             if let Ok(cache) = hai_core::ReleaseSource::cache_dir(&backend::Backend) {
-                if let Err(error) = hai_core::download::prune_cached_images(&cache) {
-                    eprintln!("Could not prune cached images: {error}");
+                if hai_core::download::prune_cached_images(&cache).is_err() {
+                    diagnostics::warning("cache_prune_failed");
                 }
             }
             Ok(())
@@ -52,6 +55,9 @@ pub fn run() {
             get_manifest,
             get_haos_release,
             get_system_info,
+            diagnostics::get_diagnostics,
+            diagnostics::log_frontend_event,
+            diagnostics::open_logs_folder,
             // UTM commands (hai-core reports UTM as unsupported off macOS)
             check_utm_status,
             get_utm_haos_release,

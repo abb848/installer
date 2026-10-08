@@ -12,6 +12,12 @@ import {
 } from "../../../../src/utils/drive-selection.js";
 import type { BlockDevice } from "../../../../src/api/index.js";
 import { flush, holdDeviceScan } from "../../helpers/hold-device-scan.js";
+import { mockTauriIpc, restoreTauriIpc } from "../../tauri-ipc.js";
+import {
+  diagnosticText,
+  getDiagnostics,
+  reportUrl,
+} from "../../../../src/utils/diagnostics.js";
 
 // Browser-only mode (no Tauri) serves MOCK_BLOCK_DEVICES, so those are the
 // drives "connected" for the duration of these tests.
@@ -187,6 +193,75 @@ describe("drive-selection-view", () => {
     expect(wizardState.getState().selections.drive).to.be.undefined;
     expect(selectedIds(el)).to.be.empty;
   });
+});
+
+describe("drive-selection diagnostics", () => {
+  afterEach(() => {
+    restoreTauriIpc();
+    wizardState.reset();
+  });
+
+  for (const kind of ["string", "Error", "unknown"] as const) {
+    it(`records only an allowlisted category for a ${kind} scan rejection`, async () => {
+      const message = `${kind === "unknown" ? "Unexpected scan failure" : "Permission denied"}: /home/private-user/image ticket=private-ticket`;
+      const rejection = kind === "Error" ? new Error(message) : message;
+      const calls: unknown[] = [];
+      mockTauriIpc(
+        (cmd, args) => {
+          if (cmd === "list_block_devices") return Promise.reject(rejection);
+          if (cmd === "log_frontend_event") {
+            calls.push(args);
+            return;
+          }
+          if (cmd === "get_diagnostics") {
+            return {
+              version: "0.1.0",
+              os: "linux",
+              os_version: "6.12",
+              architecture: "x86_64",
+              package_type: "AppImage",
+              log_tail: "",
+            };
+          }
+          throw new Error(cmd);
+        },
+        { includeLogs: true }
+      );
+      wizardState.startFlow("sbc");
+      const el = await fixture<DriveSelectionView>(html`
+        <drive-selection-view></drive-selection-view>
+      `);
+      await waitUntil(() => el.shadowRoot!.querySelector(".error-message"));
+      // Unstructured rejections stay readable on screen; only the log is
+      // limited to an allowlisted category
+      expect(
+        el.shadowRoot!.querySelector(".error-message")!.textContent!.trim()
+      ).to.equal(message);
+
+      const diagnostics = await getDiagnostics();
+      const category =
+        kind === "unknown" ? "operation_failed" : "permission_denied";
+      expect(diagnostics.context).to.deep.equal({
+        flow: "flash",
+        stage: "preparing",
+        error: category,
+      });
+      expect(calls).to.have.length(2);
+      expect(calls[1]).to.include({
+        flow: "flash",
+        stage: "preparing",
+        outcome: "failed",
+        error: category,
+      });
+      const exported =
+        JSON.stringify(calls) +
+        diagnosticText(diagnostics) +
+        reportUrl(diagnostics).url;
+      for (const privateValue of ["private-user", "private-ticket", "/home/"]) {
+        expect(exported).not.to.contain(privateValue);
+      }
+    });
+  }
 });
 
 function drive(overrides: Partial<BlockDevice> = {}): BlockDevice {

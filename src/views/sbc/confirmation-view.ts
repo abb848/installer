@@ -1,5 +1,6 @@
 import { LitElement, html, css, nothing } from "lit";
 import { ViewAccessibility } from "../../utils/view-accessibility.js";
+import { logFrontendError } from "../../utils/diagnostics.js";
 import { customElement, state } from "lit/decorators.js";
 import { wizardState, type WizardState } from "../../state/wizard-state.js";
 import { formatBytes, getHaosRelease } from "../../api/commands.js";
@@ -179,7 +180,7 @@ export class ConfirmationView extends LitElement {
       const release = await getHaosRelease(undefined, board);
       this._haosVersion = release.version;
     } catch (error) {
-      console.error("Failed to load HAOS version:", error);
+      logFrontendError(error);
       this._haosVersion = "Unknown";
     }
   }

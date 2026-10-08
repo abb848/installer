@@ -3,6 +3,7 @@ import {
   type InstallerError,
 } from "../../utils/installer-error.js";
 import { LitElement, html, css } from "lit";
+import { InstallDiagnostics } from "../../utils/diagnostics.js";
 import { customElement, state } from "lit/decorators.js";
 import { wizardState, type WizardState } from "../../state/wizard-state.js";
 import { proxmoxCreateVm } from "../../api/commands.js";
@@ -81,6 +82,7 @@ export class ProxmoxProgressView extends LitElement {
   private _isInstalling = false;
 
   private _stageStartTime: number | null = null;
+  private _diagnostics?: InstallDiagnostics;
   private _stageStartBytes: number = 0;
   private _unsubscribe?: () => void;
   private _abortController?: AbortController;
@@ -127,6 +129,7 @@ export class ProxmoxProgressView extends LitElement {
 
   private async _startInstall() {
     if (this._isInstalling) return;
+    this._diagnostics = new InstallDiagnostics("proxmox");
 
     const selections = this._wizardState.selections;
     const session = selections.proxmoxSession;
@@ -157,6 +160,7 @@ export class ProxmoxProgressView extends LitElement {
 
     try {
       this._stage = "downloading";
+      this._diagnostics?.advance("downloading");
       this._stageStartTime = Date.now();
       this._stageStartBytes = 0;
 
@@ -170,6 +174,7 @@ export class ProxmoxProgressView extends LitElement {
 
           // Use raw per-stage progress
           const newStage = progress.stage as InstallStage;
+          this._diagnostics?.advance(progress.stage);
           if (newStage !== this._stage) {
             this._stage = newStage;
             this._stageStartTime = Date.now();
@@ -192,6 +197,7 @@ export class ProxmoxProgressView extends LitElement {
 
       // Complete
       this._stage = "complete";
+      this._diagnostics?.advance("complete");
       this._progress = 100;
 
       // Dispatch event to advance wizard
@@ -220,6 +226,7 @@ export class ProxmoxProgressView extends LitElement {
 
   /** Show an error and tell the shell whether a retry is safe. */
   private _setError(error: unknown) {
+    this._diagnostics?.fail(error);
     this._stage = "error";
     this._error = installerError(error, "Failed to create virtual machine");
     this.dispatchEvent(

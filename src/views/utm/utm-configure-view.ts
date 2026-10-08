@@ -3,6 +3,7 @@ import {
   ViewAccessibility,
   reducedMotionStyles,
 } from "../../utils/view-accessibility.js";
+import { logFrontendError } from "../../utils/diagnostics.js";
 import { customElement, state } from "lit/decorators.js";
 import type WaInput from "@home-assistant/webawesome/dist/components/input/input.js";
 import "@home-assistant/webawesome/dist/components/input/input.js";
@@ -184,7 +185,7 @@ export class UtmConfigureView extends LitElement {
 
       this._saveSelections();
     } catch (error) {
-      console.error("Failed to get system info:", error);
+      logFrontendError(error);
       // Keep the restored values (or defaults), unless this step was left
       // while the lookup was in flight
       if (this.isConnected) {

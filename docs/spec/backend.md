@@ -127,15 +127,25 @@ drive writing, or VM import. There is no fallback to an XZ checksum or a guessed
 download URL. Older releases without a GitHub digest cannot be installed.
 
 The same policy applies to raw images and UTM/Proxmox qcow2 images, selected from
-the version for their board in `stable.json`. The `is_cached` helper hashes the
-full compressed file, but installation flows currently always download again.
-GitHub metadata obtained over HTTPS is the trust source; this does not verify a
-publisher signature or protect against compromised GitHub release metadata.
+the version for their board in `stable.json`. Each installation downloads a fresh
+image into its private temporary directory; archives are not retained for reuse.
+Startup cleanup removes recognized legacy stable archives and abandoned owned
+temporary directories. GitHub metadata obtained over HTTPS is the trust source;
+this does not verify a publisher
+signature or protect against compromised GitHub release metadata.
 
-Normal errors and cancellation remove the unverified temporary file. Quitting
-the app or a crash during a download can leave `.haos-download-*.part` files in the
-cache. The existing `cleanup_cache` helper recognizes them, but automatic startup recovery
-and ownership across concurrent installations remain separate lifecycle work.
+Metadata and image requests share a client with a 10-second connection timeout
+and a 30-second idle-read timeout. Downloads that keep making progress have no
+overall deadline. Compressed bytes must match the release asset's size and digest
+before atomic publication.
+
+Available space is checked for the compressed size before download. GitHub does
+not supply the extracted size, so after download the verified archive is decoded
+once without writing to measure and validate all XZ streams. Extraction starts
+only when the remaining space can hold that output alongside the archive. This
+requires an extra decoding pass; memory is limited to 256 MiB and output to
+64 GiB. The extracted file is also published atomically. Space checks cannot
+reserve capacity against other applications writing concurrently.
 
 ```rust
 // crates/hai-core/src/download.rs

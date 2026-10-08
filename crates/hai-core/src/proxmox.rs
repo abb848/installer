@@ -1350,7 +1350,6 @@ async fn create_vm<B: ReleaseSource, P: ProgressCallback>(
     backend
         .extract_temporary_image(&temporary_image, progress_callback)
         .await?;
-    temporary_image.cache_archive(&cache_dir, "ova", haos_version);
 
     let storage_name = recheck_before_upload(session, config, &extracted_path).await?;
 
@@ -2468,7 +2467,7 @@ mod tests {
                             board: "ova".into(),
                             format: ImageFormat::Qcow2,
                             download_url: self.url.clone(),
-                            size: 400_000_000,
+                            size: 8,
                             digest: Some(format!("sha256:{}", "0".repeat(64))),
                         }],
                     })

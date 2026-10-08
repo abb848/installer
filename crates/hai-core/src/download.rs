@@ -13,7 +13,8 @@ use directories::ProjectDirs;
 use futures_util::StreamExt;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use tokio::fs;
+use std::sync::LazyLock;
+use std::time::Duration;
 
 /// Files owned by one installation attempt, never paths supplied by a caller.
 /// Clones keep background extraction alive until its file handles are closed.
@@ -122,22 +123,6 @@ impl TemporaryImage {
         std::fs::remove_file(self.directory.path().join(UTM_IMPORT_MARKER))?;
         Ok(())
     }
-
-    /// Publish only an archive which extracted successfully. Cache maintenance
-    /// cannot affect in-flight downloads or extraction in private directories.
-    pub fn cache_archive(&self, cache_dir: &Path, board: &str, version: &str) {
-        if !valid_board(board) || parse_version(version).is_none() {
-            return;
-        }
-        let suffix = match self.format {
-            ImageFormat::Raw => "img.xz",
-            ImageFormat::Qcow2 => "qcow2.xz",
-        };
-        let destination = cache_dir.join(format!("haos_{board}-{version}.{suffix}"));
-        if let Err(error) = std::fs::rename(self.archive_path(), destination) {
-            eprintln!("Could not retain compressed image in cache: {error}");
-        }
-    }
 }
 
 fn valid_board(board: &str) -> bool {
@@ -159,11 +144,10 @@ fn parse_version(version: &str) -> Option<Vec<u64>> {
     parts.into_iter().map(|part| part.parse().ok()).collect()
 }
 
-/// Keep the newest stable archive for each exact board and image format.
-/// Also recover owned temporary directories after a process exit. Unknown
+/// Remove legacy stable archives and recover owned temporary directories
+/// after a process exit. Downloads are not retained between installs. Unknown
 /// names, prereleases, unowned directories, and symlinks are left alone.
 pub fn prune_cached_images(cache_dir: &Path) -> Result<()> {
-    let mut newest = std::collections::HashMap::<(String, String), (Vec<u64>, PathBuf)>::new();
     for entry in std::fs::read_dir(cache_dir)? {
         let entry = entry?;
         if entry.file_type()?.is_dir() {
@@ -177,7 +161,7 @@ pub fn prune_cached_images(cache_dir: &Path) -> Result<()> {
         let Some(name) = name.to_str().and_then(|name| name.strip_prefix("haos_")) else {
             continue;
         };
-        let Some((stem, suffix)) = [".img.xz", ".qcow2.xz"]
+        let Some((stem, _)) = [".img.xz", ".qcow2.xz"]
             .iter()
             .find_map(|suffix| name.strip_suffix(suffix).map(|stem| (stem, *suffix)))
         else {
@@ -186,28 +170,14 @@ pub fn prune_cached_images(cache_dir: &Path) -> Result<()> {
         let Some((board, version)) = stem.rsplit_once('-') else {
             continue;
         };
-        let Some(version) = parse_version(version) else {
+        let Some(_) = parse_version(version) else {
             continue;
         };
         if !valid_board(board) {
             continue;
         }
-        let key = (board.to_owned(), suffix.to_owned());
-        if let Some((previous_version, previous_path)) = newest.get_mut(&key) {
-            let obsolete = if version > *previous_version {
-                *previous_version = version;
-                std::mem::replace(previous_path, entry.path())
-            } else {
-                entry.path()
-            };
-            if let Err(error) = std::fs::remove_file(&obsolete) {
-                eprintln!(
-                    "Could not remove old cached image {}: {error}",
-                    obsolete.display()
-                );
-            }
-        } else {
-            newest.insert(key, (version, entry.path()));
+        if let Err(error) = std::fs::remove_file(entry.path()) {
+            eprintln!("Could not remove legacy cached image: {error}");
         }
     }
     Ok(())
@@ -289,6 +259,36 @@ const HAOS_RELEASES_API: &str =
 /// User agent for API requests
 const USER_AGENT: &str = concat!("HomeAssistantInstaller/", env!("CARGO_PKG_VERSION"));
 
+static HTTP_CLIENT: LazyLock<reqwest::Result<reqwest::Client>> =
+    LazyLock::new(|| http_client(Duration::from_secs(30)));
+
+fn http_client(read_timeout: Duration) -> reqwest::Result<reqwest::Client> {
+    let builder = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .connect_timeout(Duration::from_secs(10))
+        .read_timeout(read_timeout);
+    // Tests use independent Tokio runtimes and may reuse mock server ports.
+    #[cfg(test)]
+    let builder = builder.pool_max_idle_per_host(0);
+    builder.build()
+}
+
+fn shared_client() -> Result<&'static reqwest::Client> {
+    HTTP_CLIENT.as_ref().map_err(|error| {
+        Error::DownloadFailed(format!("Could not initialize HTTP client: {error}"))
+    })
+}
+
+fn check_space(path: &Path, required: u64, available: u64) -> Result<()> {
+    if available < required {
+        return Err(Error::DownloadFailed(format!(
+            "Not enough free space in {}: need {required} bytes, but only {available} bytes are available. Free up disk space and try again.",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
 /// How often to send progress updates (every N bytes)
 const PROGRESS_UPDATE_INTERVAL: u64 = 10 * 1024 * 1024; // 10 MB
 
@@ -310,88 +310,9 @@ async fn get_device_manifest() -> Result<DeviceManifest> {
     Ok(crate::manifest::bundled_manifest())
 }
 
-/// Check if cache should be skipped via environment variable
-pub fn should_skip_cache() -> bool {
-    std::env::var("HA_INSTALLER_NO_CACHE")
-        .map(|v| v == "1" || v.to_lowercase() == "true")
-        .unwrap_or(false)
-}
-
-/// Get the path where an image would be cached
-pub fn get_cached_image_path(image: &HaosImage) -> Result<PathBuf> {
-    let cache_dir = get_cache_dir()?;
-    let filename = image
-        .download_url
-        .rsplit('/')
-        .next()
-        .unwrap_or("image.img.xz");
-
-    Ok(cache_dir.join(filename))
-}
-
-/// Check if an image is already cached and valid
-pub async fn is_cached(image: &HaosImage) -> Result<bool> {
-    // Allow skipping cache via environment variable
-    if should_skip_cache() {
-        return Ok(false);
-    }
-
-    let cache_path = get_cached_image_path(image)?;
-
-    if !cache_path.exists() {
-        return Ok(false);
-    }
-
-    // First check file size (fast)
-    let metadata = fs::metadata(&cache_path).await?;
-    if metadata.len() != image.size {
-        return Ok(false);
-    }
-
-    let expected = expected_sha256(image)?;
-    tokio::task::spawn_blocking(move || {
-        let mut file = std::fs::File::open(cache_path)?;
-        let mut hasher = Sha256::new();
-        use std::io::Read;
-        let mut buffer = [0; 64 * 1024];
-        loop {
-            let count = file.read(&mut buffer)?;
-            if count == 0 {
-                break;
-            }
-            hasher.update(&buffer[..count]);
-        }
-        let actual: [u8; 32] = hasher.finalize().into();
-        Ok(actual == expected)
-    })
-    .await
-    .map_err(|e| Error::VerificationFailed(e.to_string()))?
-}
-
-/// Clean up old cached images (partial downloads)
-pub async fn cleanup_cache() -> Result<()> {
-    let cache_dir = get_cache_dir()?;
-
-    if !cache_dir.exists() {
-        return Ok(());
-    }
-
-    let mut entries = fs::read_dir(&cache_dir).await?;
-
-    while let Some(entry) = entries.next_entry().await? {
-        let path = entry.path();
-        // Remove partial downloads
-        if path.extension().is_some_and(|ext| ext == "part") {
-            let _ = fs::remove_file(path).await;
-        }
-    }
-
-    Ok(())
-}
-
 /// Fetch the stable version info from Home Assistant (internal version with custom URL)
 async fn get_stable_version_from_url(url: &str) -> Result<StableVersionInfo> {
-    let client = reqwest::Client::new();
+    let client = shared_client()?;
     let response = client
         .get(url)
         .header("User-Agent", USER_AGENT)
@@ -460,7 +381,7 @@ async fn fetch_latest_release() -> Result<HaosRelease> {
 
 /// Fetch a specific HAOS release by version (internal version with custom base URL)
 async fn fetch_release_from_api(api_base_url: &str, version: &str) -> Result<HaosRelease> {
-    let client = reqwest::Client::new();
+    let client = shared_client()?;
     let response = client
         .get(format!("{}/tags/{}", api_base_url, version))
         .header("User-Agent", USER_AGENT)
@@ -584,9 +505,29 @@ pub(crate) async fn download_image<P: ProgressCallback>(
     dest_path: &Path,
     progress_callback: &P,
 ) -> Result<()> {
+    download_image_with_client(
+        image,
+        dest_path,
+        progress_callback,
+        shared_client()?,
+        |path| fs2::available_space(path),
+    )
+    .await
+}
+
+async fn download_image_with_client<P: ProgressCallback>(
+    image: &HaosImage,
+    dest_path: &Path,
+    progress_callback: &P,
+    client: &reqwest::Client,
+    available_space: impl FnOnce(&Path) -> std::io::Result<u64>,
+) -> Result<()> {
     let expected = expected_sha256(image)?;
+    let directory = dest_path.parent().ok_or_else(|| {
+        Error::InvalidConfig("Image destination must have a parent directory".into())
+    })?;
+    check_space(directory, image.size, available_space(directory)?)?;
     let url = &image.download_url;
-    let client = reqwest::Client::new();
     let response = client.get(url).send().await?;
 
     if !response.status().is_success() {
@@ -597,7 +538,7 @@ pub(crate) async fn download_image<P: ProgressCallback>(
         )));
     }
 
-    let total_size = response.content_length().unwrap_or(0);
+    let total_size = image.size;
 
     progress_callback.on_progress(FlashProgress {
         stage: FlashStage::Downloading,
@@ -607,14 +548,8 @@ pub(crate) async fn download_image<P: ProgressCallback>(
         message: "Starting download...".to_string(),
     });
 
-    // Keep unverified bytes private and remove them on normal error/cancellation.
-    // The .part suffix also lets cleanup_cache recognize leftovers after a crash.
-    let mut file = tempfile::Builder::new()
-        .prefix(".haos-download-")
-        .suffix(".part")
-        .tempfile_in(dest_path.parent().ok_or_else(|| {
-            Error::InvalidConfig("Image destination must have a parent directory".into())
-        })?)?;
+    // Keep unverified bytes private, and remove them on error or cancellation.
+    let mut file = tempfile::NamedTempFile::new_in(directory)?;
     let mut downloaded: u64 = 0;
     let mut last_progress_update: u64 = 0;
     let mut stream = response.bytes_stream();
@@ -622,6 +557,12 @@ pub(crate) async fn download_image<P: ProgressCallback>(
 
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
+
+        if chunk.len() as u64 > image.size.saturating_sub(downloaded) {
+            return Err(Error::DownloadFailed(
+                "Image exceeds the size reported by GitHub; download discarded.".into(),
+            ));
+        }
 
         use std::io::Write;
         file.write_all(&chunk)?;
@@ -648,6 +589,12 @@ pub(crate) async fn download_image<P: ProgressCallback>(
         }
     }
 
+    if downloaded != image.size {
+        return Err(Error::DownloadFailed(format!(
+            "Incomplete image: expected {} bytes, received {downloaded}.",
+            image.size
+        )));
+    }
     let actual: [u8; 32] = hasher.finalize().into();
     if actual != expected {
         return Err(Error::ChecksumMismatch {
@@ -669,13 +616,107 @@ pub(crate) async fn download_image<P: ProgressCallback>(
     Ok(())
 }
 
+// Bound decoder memory and work even if an archive declares an enormous image.
+const XZ_MEMORY_LIMIT: u64 = 256 * 1024 * 1024;
+const MAX_EXTRACTED_SIZE: u64 = 64 * 1024 * 1024 * 1024;
+
+fn xz_decoder(input: &mut std::fs::File) -> Result<xz2::read::XzDecoder<&mut std::fs::File>> {
+    let stream =
+        xz2::stream::Stream::new_stream_decoder(XZ_MEMORY_LIMIT, xz2::stream::CONCATENATED)
+            .map_err(|error| Error::ExtractionFailed(error.to_string()))?;
+    Ok(xz2::read::XzDecoder::new_stream(input, stream))
+}
+
+fn read_xz(decoder: &mut impl std::io::Read, buffer: &mut [u8]) -> Result<usize> {
+    decoder.read(buffer).map_err(|error| {
+        Error::ExtractionFailed(format!(
+            "Downloaded image is corrupt, incomplete, or exceeds the decoder memory limit ({error}); try downloading again."
+        ))
+    })
+}
+
+fn extract_archive(
+    archive: &Path,
+    destination: &Path,
+    progress: &std::sync::mpsc::Sender<u64>,
+    mut available_space: impl FnMut(&Path) -> std::io::Result<u64>,
+    max_extracted_size: u64,
+) -> Result<u64> {
+    use std::io::{Seek, Write};
+    let directory = destination.parent().ok_or_else(|| {
+        Error::InvalidConfig("Image destination must have a parent directory".into())
+    })?;
+    let available = available_space(directory)?;
+    let mut input = std::fs::File::open(archive)?;
+    let mut buffer = [0; 64 * 1024];
+    let mut expected_size = 0;
+    {
+        // Release metadata has no extracted size. Validate/count all XZ streams
+        // without writing first; the archive already occupies its compressed space.
+        let mut decoder = xz_decoder(&mut input)?;
+        loop {
+            let count = read_xz(&mut decoder, &mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            expected_size += count as u64;
+            check_space(directory, expected_size, available)?;
+            if expected_size > max_extracted_size {
+                return Err(Error::ExtractionFailed(
+                    "Image exceeds the supported extracted size of 64 GiB.".into(),
+                ));
+            }
+        }
+    }
+    check_space(directory, expected_size, available_space(directory)?)?;
+    input.rewind()?;
+    let mut decoder = xz_decoder(&mut input)?;
+    let mut output = tempfile::NamedTempFile::new_in(directory)?;
+    let mut extracted = 0;
+    let mut last_progress = 0;
+    loop {
+        let count = read_xz(&mut decoder, &mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        extracted += count as u64;
+        if extracted > expected_size {
+            return Err(Error::ExtractionFailed(
+                "Extracted image size changed.".into(),
+            ));
+        }
+        output.write_all(&buffer[..count])?;
+        if extracted - last_progress >= PROGRESS_UPDATE_INTERVAL {
+            let _ = progress.send(extracted);
+            last_progress = extracted;
+        }
+    }
+    if extracted != expected_size {
+        return Err(Error::ExtractionFailed(
+            "Extracted image size changed.".into(),
+        ));
+    }
+    output.as_file().sync_all()?;
+    output
+        .persist(destination)
+        .map_err(|error| Error::Io(error.error))?;
+    Ok(extracted)
+}
+
 /// Extract a .xz compressed file
 pub(crate) async fn extract_xz<P: ProgressCallback>(
     archive_path: &Path,
     dest_path: &Path,
     progress_callback: &P,
 ) -> Result<()> {
-    extract_xz_owned(archive_path, dest_path, progress_callback, None).await
+    extract_xz_owned(
+        archive_path,
+        dest_path,
+        progress_callback,
+        None,
+        MAX_EXTRACTED_SIZE,
+    )
+    .await
 }
 
 async fn extract_xz_owned<P: ProgressCallback>(
@@ -683,11 +724,11 @@ async fn extract_xz_owned<P: ProgressCallback>(
     dest_path: &Path,
     progress_callback: &P,
     owner: Option<TemporaryImage>,
+    max_extracted_size: u64,
 ) -> Result<()> {
     use std::sync::mpsc;
 
-    // For extraction, we don't know the final size upfront (xz doesn't store it)
-    // Use 0 for total_bytes to signal indeterminate progress
+    // Keep progress indeterminate during the bounded validation/size scan.
     progress_callback.on_progress(FlashProgress {
         stage: FlashStage::Extracting,
         progress: 0,
@@ -704,46 +745,18 @@ async fn extract_xz_owned<P: ProgressCallback>(
 
     let extract_handle = tokio::task::spawn_blocking(move || {
         let _owner = owner;
-        use std::io::{Read, Write};
-
-        let input = std::fs::File::open(&archive_path_clone)?;
-        let mut decoder = xz2::read::XzDecoder::new(input);
-        let mut output = std::fs::File::create(&dest_path_clone)?;
-
-        let mut buffer = vec![0u8; 64 * 1024]; // 64KB buffer
-        let mut bytes_extracted: u64 = 0;
-        let mut last_progress_update: u64 = 0;
-
-        loop {
-            // A read error here means the `.xz` stream failed its built-in
-            // integrity check: the download is corrupt or truncated.
-            let bytes_read = match decoder.read(&mut buffer) {
-                Ok(n) => n,
-                Err(e) => {
-                    let _ = std::fs::remove_file(&dest_path_clone);
-                    let _ = std::fs::remove_file(&archive_path_clone);
-                    return Err(Error::ExtractionFailed(format!(
-                        "downloaded image is corrupt or incomplete ({e}); \
-                         it has been discarded, please try flashing again"
-                    )));
-                }
-            };
-            if bytes_read == 0 {
-                break;
-            }
-            output.write_all(&buffer[..bytes_read])?;
-            bytes_extracted += bytes_read as u64;
-
-            // Send progress update every PROGRESS_UPDATE_INTERVAL bytes
-            if bytes_extracted - last_progress_update >= PROGRESS_UPDATE_INTERVAL {
-                let _ = progress_tx.send(bytes_extracted);
-                last_progress_update = bytes_extracted;
-            }
+        let result = extract_archive(
+            &archive_path_clone,
+            &dest_path_clone,
+            &progress_tx,
+            |path| fs2::available_space(path),
+            max_extracted_size,
+        );
+        if matches!(result, Err(Error::ExtractionFailed(_))) {
+            // All archive handles are closed before removal (also on Windows).
+            let _ = std::fs::remove_file(&archive_path_clone);
         }
-
-        output.sync_all()?;
-
-        Ok::<u64, Error>(bytes_extracted)
+        result
     });
 
     // Forward progress updates while waiting for extraction to complete
@@ -827,6 +840,7 @@ impl ReleaseSource for Backend {
             &image.path(),
             progress_callback,
             Some(image.clone()),
+            MAX_EXTRACTED_SIZE,
         )
         .await
     }
@@ -848,6 +862,369 @@ mod tests {
             size: data.len() as u64,
             digest: Some(format!("sha256:{}", hex::encode(Sha256::digest(data)))),
         }
+    }
+
+    fn compressed(data: &[u8]) -> Vec<u8> {
+        use std::io::Write;
+        let mut encoder = xz2::write::XzEncoder::new(Vec::new(), 1);
+        encoder.write_all(data).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    #[tokio::test]
+    async fn stalled_headers_and_body_time_out_without_publishing_partial_files() {
+        use std::io::{Read, Write};
+        for send_headers in [false, true] {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}/image.xz", listener.local_addr().unwrap());
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(3)))
+                    .unwrap();
+                let mut request = [0; 4096];
+                assert!(stream.read(&mut request).unwrap() > 0);
+                if send_headers {
+                    stream
+                        .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\na")
+                        .unwrap();
+                }
+                std::thread::sleep(Duration::from_millis(400));
+            });
+            let directory = tempfile::tempdir().unwrap();
+            let destination = directory.path().join("image.xz");
+            std::fs::write(&destination, b"previous image").unwrap();
+            let client = http_client(Duration::from_millis(100)).unwrap();
+            let result = download_image_with_client(
+                &image_for_data(&url, b"abcd"),
+                &destination,
+                &crate::NoOpProgress,
+                &client,
+                |path| fs2::available_space(path),
+            )
+            .await;
+            assert!(matches!(result, Err(Error::Network(error)) if error.is_timeout()));
+            assert_eq!(std::fs::read(&destination).unwrap(), b"previous image");
+            assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+            server.join().unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn steady_download_can_exceed_the_read_timeout_in_total() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/image.xz", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream.set_nodelay(true).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut request = [0; 4096];
+            assert!(stream.read(&mut request).unwrap() > 0);
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n")
+                .unwrap();
+            for byte in b"0123456789" {
+                stream.write_all(&[*byte]).unwrap();
+                std::thread::sleep(Duration::from_millis(40));
+            }
+        });
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("image.xz");
+        let client = http_client(Duration::from_millis(200)).unwrap();
+        download_image_with_client(
+            &image_for_data(&url, b"0123456789"),
+            &destination,
+            &crate::NoOpProgress,
+            &client,
+            |path| fs2::available_space(path),
+        )
+        .await
+        .unwrap();
+        assert_eq!(std::fs::read(destination).unwrap(), b"0123456789");
+        server.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn clean_short_body_without_content_length_reports_incomplete_download() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}/image.xz", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut request = [0; 4096];
+            assert!(stream.read(&mut request).unwrap() > 0);
+            stream.write_all(b"HTTP/1.0 200 OK\r\n\r\ndat").unwrap();
+        });
+        let directory = tempfile::tempdir().unwrap();
+        let error = download_image(
+            &image_for_data(&url, b"data"),
+            &directory.path().join("image.xz"),
+            &crate::NoOpProgress,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        server.join().unwrap();
+        assert!(error.contains("Incomplete image: expected 4 bytes, received 3"));
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+    }
+
+    #[tokio::test]
+    async fn insufficient_compressed_space_fails_before_network_request() {
+        let mut server = mockito::Server::new_async().await;
+        let request = server
+            .mock("GET", "/image.xz")
+            .expect(0)
+            .create_async()
+            .await;
+        let image = image_for_data(&format!("{}/image.xz", server.url()), b"data");
+        for existing_destination in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let destination = directory.path().join("image.xz");
+            if existing_destination {
+                std::fs::write(&destination, b"previous image").unwrap();
+            }
+            let error = download_image_with_client(
+                &image,
+                &destination,
+                &crate::NoOpProgress,
+                shared_client().unwrap(),
+                |path| {
+                    assert_eq!(path, directory.path());
+                    Ok(3)
+                },
+            )
+            .await
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains("need 4 bytes, but only 3 bytes"));
+            assert!(error.contains("Free up disk space"));
+            assert!(error.contains(directory.path().to_str().unwrap()));
+            if existing_destination {
+                assert_eq!(std::fs::read(&destination).unwrap(), b"previous image");
+            } else {
+                assert!(!destination.exists());
+            }
+            assert_eq!(
+                std::fs::read_dir(directory.path()).unwrap().count(),
+                usize::from(existing_destination)
+            );
+        }
+        request.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn compressed_size_must_match_metadata_even_when_the_digest_matches() {
+        let mut server = mockito::Server::new_async().await;
+        let request = server
+            .mock("GET", "/image.xz")
+            .with_body(b"data")
+            .expect(2)
+            .create_async()
+            .await;
+        let directory = tempfile::tempdir().unwrap();
+        let destination = directory.path().join("image.xz");
+        for size in [3, 5] {
+            let mut image = image_for_data(&format!("{}/image.xz", server.url()), b"data");
+            image.size = size;
+            assert!(matches!(
+                download_image(&image, &destination, &crate::NoOpProgress).await,
+                Err(Error::DownloadFailed(_))
+            ));
+            assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+        }
+        request.assert_async().await;
+    }
+
+    #[test]
+    fn insufficient_extracted_space_preserves_destination_without_partial_output() {
+        for space_readings in [vec![9], vec![10, 9]] {
+            for existing_destination in [false, true] {
+                let directory = tempfile::tempdir().unwrap();
+                let archive = directory.path().join("image.xz");
+                let destination = directory.path().join("image.img");
+                let data = compressed(b"1234567890");
+                std::fs::write(&archive, &data).unwrap();
+                if existing_destination {
+                    std::fs::write(&destination, b"previous image").unwrap();
+                }
+                let (tx, rx) = std::sync::mpsc::channel();
+                let mut readings = space_readings.iter();
+                let error = extract_archive(
+                    &archive,
+                    &destination,
+                    &tx,
+                    |path| {
+                        assert_eq!(path, directory.path());
+                        Ok(*readings.next().expect("unexpected space lookup"))
+                    },
+                    MAX_EXTRACTED_SIZE,
+                )
+                .unwrap_err()
+                .to_string();
+                assert!(error.contains("need 10 bytes, but only 9 bytes"));
+                assert!(readings.next().is_none(), "every space guard must run");
+                assert!(rx.try_recv().is_err());
+                assert_eq!(std::fs::read(&archive).unwrap(), data);
+                if existing_destination {
+                    assert_eq!(std::fs::read(&destination).unwrap(), b"previous image");
+                } else {
+                    assert!(!destination.exists());
+                }
+                assert_eq!(
+                    std::fs::read_dir(directory.path()).unwrap().count(),
+                    1 + usize::from(existing_destination)
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn extraction_rejects_oversized_dictionary_before_publication() {
+        // Valid XZ for b"image" with a 512 MiB LZMA2 dictionary. The block header
+        // was generated by liblzma's lzma_block_header_encode; fixed bytes avoid
+        // allocating a large encoder dictionary during this test.
+        let data = [
+            0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00, 0x00, 0x04, 0xe6, 0xd6, 0xb4, 0x46, 0x02, 0xc0,
+            0x09, 0x05, 0x21, 0x01, 0x22, 0x00, 0x6b, 0x7d, 0x0b, 0xba, 0x01, 0x00, 0x04, 0x69,
+            0x6d, 0x61, 0x67, 0x65, 0x00, 0x00, 0x00, 0x00, 0xf8, 0x17, 0x3c, 0xac, 0x6d, 0x38,
+            0xd8, 0x6f, 0x00, 0x01, 0x1d, 0x05, 0xb8, 0x2d, 0x80, 0xaf, 0x1f, 0xb6, 0xf3, 0x7d,
+            0x01, 0x00, 0x00, 0x00, 0x00, 0x04, 0x59, 0x5a,
+        ];
+        let mut stream =
+            xz2::stream::Stream::new_stream_decoder(XZ_MEMORY_LIMIT, xz2::stream::CONCATENATED)
+                .unwrap();
+        assert_eq!(
+            stream.process(&data, &mut [0; 16], xz2::stream::Action::Finish),
+            Err(xz2::stream::Error::MemLimit),
+        );
+        assert_eq!(stream.total_out(), 0);
+
+        for existing_destination in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let archive = directory.path().join("image.xz");
+            let destination = directory.path().join("image.img");
+            std::fs::write(&archive, data).unwrap();
+            if existing_destination {
+                std::fs::write(&destination, b"previous image").unwrap();
+            }
+            let error = extract_xz(&archive, &destination, &crate::NoOpProgress)
+                .await
+                .unwrap_err();
+            assert!(matches!(error, Error::ExtractionFailed(_)));
+            assert!(error.to_string().contains("memory limit reached"));
+            if existing_destination {
+                assert_eq!(std::fs::read(&destination).unwrap(), b"previous image");
+            } else {
+                assert!(!destination.exists());
+            }
+            assert!(!archive.exists());
+            assert_eq!(
+                std::fs::read_dir(directory.path()).unwrap().count(),
+                usize::from(existing_destination),
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn extraction_enforces_output_limit_before_publication() {
+        const LIMIT: u64 = 64 * 1024;
+        for size in [LIMIT - 1, LIMIT, LIMIT + 1] {
+            for existing_destination in [false, true] {
+                let directory = tempfile::tempdir().unwrap();
+                let archive = directory.path().join("image.xz");
+                let destination = directory.path().join("image.img");
+                let contents = vec![42; size as usize];
+                // Each stream fits separately; the limit applies to their total.
+                let mut data = compressed(&contents[..contents.len() / 2]);
+                data.extend(compressed(&contents[contents.len() / 2..]));
+                std::fs::write(&archive, data).unwrap();
+                if existing_destination {
+                    std::fs::write(&destination, b"previous image").unwrap();
+                }
+                let result =
+                    extract_xz_owned(&archive, &destination, &crate::NoOpProgress, None, LIMIT)
+                        .await;
+                if size <= LIMIT {
+                    result.unwrap();
+                    assert_eq!(std::fs::read(&destination).unwrap(), contents);
+                    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
+                } else {
+                    assert!(matches!(
+                        result,
+                        Err(Error::ExtractionFailed(message))
+                            if message == "Image exceeds the supported extracted size of 64 GiB."
+                    ));
+                    if existing_destination {
+                        assert_eq!(std::fs::read(&destination).unwrap(), b"previous image");
+                    } else {
+                        assert!(!destination.exists());
+                    }
+                    assert!(!archive.exists());
+                    assert_eq!(
+                        std::fs::read_dir(directory.path()).unwrap().count(),
+                        usize::from(existing_destination),
+                    );
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn extraction_counts_and_publishes_all_concatenated_streams() {
+        let directory = tempfile::tempdir().unwrap();
+        let archive = directory.path().join("image.xz");
+        let destination = directory.path().join("image.img");
+        let mut data = compressed(b"first");
+        data.extend([0; 4]);
+        data.extend(compressed(b"second"));
+        data.extend([0; 4]);
+        std::fs::write(&archive, data).unwrap();
+        std::fs::write(&destination, b"previous image").unwrap();
+        extract_xz(&archive, &destination, &crate::NoOpProgress)
+            .await
+            .unwrap();
+        assert_eq!(std::fs::read(&destination).unwrap(), b"firstsecond");
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
+    }
+
+    #[tokio::test]
+    async fn extraction_rejects_truncated_second_stream_and_trailing_garbage() {
+        for trailer in [&compressed(b"second")[..20], b"garbage"] {
+            let directory = tempfile::tempdir().unwrap();
+            let archive = directory.path().join("image.xz");
+            let destination = directory.path().join("image.img");
+            let mut data = compressed(b"first");
+            data.extend(trailer);
+            std::fs::write(&archive, data).unwrap();
+            std::fs::write(&destination, b"previous image").unwrap();
+            assert!(extract_xz(&archive, &destination, &crate::NoOpProgress)
+                .await
+                .is_err());
+            assert_eq!(std::fs::read(&destination).unwrap(), b"previous image");
+            assert!(!archive.exists());
+            assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_extraction_promotion_removes_partial_file() {
+        let directory = tempfile::tempdir().unwrap();
+        let archive = directory.path().join("image.xz");
+        let destination = directory.path().join("image.img");
+        std::fs::write(&archive, compressed(b"image")).unwrap();
+        std::fs::create_dir(&destination).unwrap();
+        assert!(extract_xz(&archive, &destination, &crate::NoOpProgress)
+            .await
+            .is_err());
+        assert!(destination.is_dir());
+        assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 2);
     }
 
     #[tokio::test]
@@ -899,7 +1276,8 @@ mod tests {
             .await;
         let directory = tempfile::tempdir().unwrap();
         let destination = directory.path().join("image.xz");
-        let image = image_for_data(&format!("{}/image.xz", server.url()), b"published bytes");
+        let mut image = image_for_data(&format!("{}/image.xz", server.url()), b"published bytes");
+        image.size = archive.len() as u64;
         assert!(matches!(
             download_image(&image, &destination, &crate::NoOpProgress).await,
             Err(Error::ChecksumMismatch { .. })
@@ -1109,23 +1487,23 @@ mod tests {
     }
 
     #[test]
-    fn cache_pruning_compares_numeric_versions_per_board_and_format() {
+    fn cleanup_removes_legacy_archives_and_preserves_unrecognized_files() {
         let cache = tempfile::tempdir().unwrap();
         let retained = [
-            "haos_rpi5-64-17.10.img.xz",
-            "haos_rpi4-64-16.3.img.xz",
-            "haos_generic-x86-64-17.1.img.xz",
-            "haos_generic-x86-64-16.0.qcow2.xz",
             "haos_rpi5-64-18.0.rc1.img.xz",
             "haos_rpi5-64.img.xz",
             "user-image.qcow2",
             "unfinished.part",
             "haos_ova-17.0.qcow2",
         ];
-        for name in retained
-            .iter()
-            .chain(["haos_rpi5-64-17.9.img.xz", "haos_rpi5-64-9.12.img.xz"].iter())
-        {
+        for name in retained.iter().chain(
+            [
+                "haos_rpi5-64-17.9.img.xz",
+                "haos_rpi5-64-9.12.img.xz",
+                "haos_generic-x86-64-16.0.qcow2.xz",
+            ]
+            .iter(),
+        ) {
             std::fs::write(cache.path().join(name), b"archive").unwrap();
         }
         let active = TemporaryImage::new(cache.path(), ImageFormat::Raw).unwrap();
@@ -1136,24 +1514,11 @@ mod tests {
         }
         assert!(!cache.path().join("haos_rpi5-64-17.9.img.xz").exists());
         assert!(!cache.path().join("haos_rpi5-64-9.12.img.xz").exists());
+        assert!(!cache
+            .path()
+            .join("haos_generic-x86-64-16.0.qcow2.xz")
+            .exists());
         assert!(active.archive_path().exists());
-    }
-
-    #[test]
-    fn publishing_cache_rejects_unsafe_board_and_version() {
-        let cache = tempfile::tempdir().unwrap();
-        let image = TemporaryImage::new(cache.path(), ImageFormat::Raw).unwrap();
-        std::fs::write(image.archive_path(), b"archive").unwrap();
-        image.cache_archive(cache.path(), "../user", "17.0");
-        image.cache_archive(cache.path(), "rpi5-64", "../../user");
-        assert!(image.archive_path().exists());
-        image.cache_archive(cache.path(), "rpi5-64", "17.0");
-        assert_eq!(
-            std::fs::read(cache.path().join("haos_rpi5-64-17.0.img.xz")).unwrap(),
-            b"archive"
-        );
-        drop(image);
-        assert_eq!(std::fs::read_dir(cache.path()).unwrap().count(), 1);
     }
 
     #[test]
@@ -1250,21 +1615,6 @@ mod tests {
     }
 
     #[test]
-    #[serial]
-    fn test_should_skip_cache_true() {
-        std::env::set_var("HA_INSTALLER_NO_CACHE", "1");
-        assert!(should_skip_cache());
-        std::env::remove_var("HA_INSTALLER_NO_CACHE");
-    }
-
-    #[test]
-    #[serial]
-    fn test_should_skip_cache_false() {
-        std::env::remove_var("HA_INSTALLER_NO_CACHE");
-        assert!(!should_skip_cache());
-    }
-
-    #[test]
     fn test_parse_board_from_filename_standard() {
         let result = parse_board_from_filename("haos_rpi5-64-14.2.img.xz", "14.2");
         assert_eq!(result.unwrap(), "rpi5-64");
@@ -1354,68 +1704,6 @@ mod tests {
         assert_eq!(x86_image.size, 600_000_000);
     }
 
-    #[tokio::test]
-    #[serial]
-    async fn test_is_cached_skip_cache_env() {
-        std::env::set_var("HA_INSTALLER_NO_CACHE", "1");
-        let image = HaosImage {
-            board: "test".to_string(),
-            format: ImageFormat::Raw,
-            download_url: "https://example.com/test.img.xz".to_string(),
-            digest: None,
-            size: 100,
-        };
-        let result = is_cached(&image).await.unwrap();
-        assert!(!result);
-        std::env::remove_var("HA_INSTALLER_NO_CACHE");
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_is_cached_file_not_exist() {
-        std::env::remove_var("HA_INSTALLER_NO_CACHE");
-        let image = HaosImage {
-            board: "test".to_string(),
-            format: ImageFormat::Raw,
-            download_url: "https://example.com/nonexistent-file-12345.img.xz".to_string(),
-            digest: None,
-            size: 100,
-        };
-        let result = is_cached(&image).await.unwrap();
-        assert!(!result);
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_cleanup_cache_removes_part_files() {
-        let cache_dir = get_cache_dir().unwrap();
-
-        // Create a test .part file
-        let part_file = cache_dir.join("test_cleanup.img.xz.part");
-        std::fs::write(&part_file, b"test").unwrap();
-        assert!(part_file.exists());
-
-        // Run cleanup
-        cleanup_cache().await.unwrap();
-
-        // Part file should be removed
-        assert!(!part_file.exists());
-    }
-
-    #[tokio::test]
-    async fn test_get_cached_image_path() {
-        let image = HaosImage {
-            board: "test".to_string(),
-            format: ImageFormat::Raw,
-            download_url: "https://github.com/home-assistant/operating-system/releases/download/14.2/haos_rpi5-64-14.2.img.xz".to_string(),
-            digest: None,
-            size: 100,
-        };
-
-        let path = get_cached_image_path(&image).unwrap();
-        assert!(path.to_string_lossy().contains("haos_rpi5-64-14.2.img.xz"));
-    }
-
     #[test]
     fn test_parse_board_from_filename_empty() {
         let result = parse_board_from_filename("", "14.2");
@@ -1426,76 +1714,6 @@ mod tests {
     fn test_parse_board_from_filename_no_haos_prefix() {
         let result = parse_board_from_filename("rpi5-64-14.2.img.xz", "14.2");
         assert!(result.is_err());
-    }
-
-    #[test]
-    #[serial]
-    fn test_should_skip_cache_true_lowercase() {
-        std::env::set_var("HA_INSTALLER_NO_CACHE", "true");
-        assert!(should_skip_cache());
-        std::env::remove_var("HA_INSTALLER_NO_CACHE");
-    }
-
-    #[test]
-    #[serial]
-    fn test_should_skip_cache_false_with_false_value() {
-        std::env::set_var("HA_INSTALLER_NO_CACHE", "false");
-        assert!(!should_skip_cache());
-        std::env::remove_var("HA_INSTALLER_NO_CACHE");
-    }
-
-    #[test]
-    #[serial]
-    fn test_should_skip_cache_false_with_zero() {
-        std::env::set_var("HA_INSTALLER_NO_CACHE", "0");
-        assert!(!should_skip_cache());
-        std::env::remove_var("HA_INSTALLER_NO_CACHE");
-    }
-
-    #[test]
-    fn test_get_cached_image_path_url_without_slash() {
-        // Edge case: URL without "/" should use fallback filename
-        let image = HaosImage {
-            board: "test".to_string(),
-            format: ImageFormat::Raw,
-            download_url: "no-slashes-here".to_string(),
-            digest: None,
-            size: 100,
-        };
-
-        let path = get_cached_image_path(&image).unwrap();
-        assert!(path.to_string_lossy().contains("no-slashes-here"));
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_is_cached_size_mismatch() {
-        std::env::remove_var("HA_INSTALLER_NO_CACHE");
-
-        // Create a temp file with wrong size
-        let cache_dir = get_cache_dir().unwrap();
-        let test_file = cache_dir.join("test_size_mismatch.img.xz");
-
-        // Write 50 bytes
-        std::fs::write(&test_file, [0u8; 50]).unwrap();
-
-        // Image expects 100 bytes
-        let image = HaosImage {
-            board: "test".to_string(),
-            format: ImageFormat::Raw,
-            download_url: format!(
-                "https://example.com/{}",
-                test_file.file_name().unwrap().to_string_lossy()
-            ),
-            digest: None,
-            size: 100,
-        };
-
-        let result = is_cached(&image).await.unwrap();
-        assert!(!result, "Should return false when file size doesn't match");
-
-        // Cleanup
-        let _ = std::fs::remove_file(&test_file);
     }
 
     #[tokio::test]
@@ -1745,8 +1963,7 @@ mod tests {
         let result = extract_xz(&archive_path, &extracted_path, &crate::NoOpProgress).await;
         assert!(matches!(result, Err(Error::ExtractionFailed(_))));
 
-        // Both the corrupt archive and the partial output are cleaned up so the
-        // next attempt re-downloads instead of failing on the same bad cache.
+        // A corrupt archive leaves neither the archive nor extracted output.
         assert!(!archive_path.exists());
         assert!(!extracted_path.exists());
     }
@@ -1802,53 +2019,6 @@ mod tests {
         // Cleanup
         std::fs::remove_file(&archive_path).unwrap();
         std::fs::remove_file(&extracted_path).unwrap();
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_is_cached_with_matching_size() {
-        std::env::remove_var("HA_INSTALLER_NO_CACHE");
-
-        let cache_dir = get_cache_dir().unwrap();
-        let test_file = cache_dir.join("test_matching_size.img.xz");
-
-        // Write exactly 100 bytes
-        std::fs::write(&test_file, [0u8; 100]).unwrap();
-
-        // Image expects exactly 100 bytes
-        let image = HaosImage {
-            board: "test".to_string(),
-            format: ImageFormat::Raw,
-            download_url: format!(
-                "https://example.com/{}",
-                test_file.file_name().unwrap().to_string_lossy()
-            ),
-            digest: image_for_data("", &[0; 100]).digest,
-            size: 100,
-        };
-
-        let result = is_cached(&image).await.unwrap();
-        assert!(result, "Matching size and digest should be accepted");
-        std::fs::write(&test_file, [1u8; 100]).unwrap();
-        assert!(
-            !is_cached(&image).await.unwrap(),
-            "Same-size tampering must fail"
-        );
-        let mut missing_digest = image;
-        missing_digest.digest = None;
-        assert!(is_cached(&missing_digest).await.is_err());
-
-        // Cleanup
-        std::fs::remove_file(&test_file).unwrap();
-    }
-
-    #[tokio::test]
-    #[serial]
-    async fn test_cleanup_cache_nonexistent_directory() {
-        // This tests the early return path when the cache directory doesn't exist
-        // The function should handle this gracefully
-        let result = cleanup_cache().await;
-        assert!(result.is_ok());
     }
 
     #[tokio::test]

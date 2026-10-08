@@ -207,7 +207,6 @@ where
         .extract_temporary_image(&temporary_image, callback)
         .await
         .map_err(|e| e.to_string())?;
-    temporary_image.cache_archive(&cache_dir, &image.board, &release.version);
 
     // Check image size vs device size
     let image_size = tokio::fs::metadata(&extracted_path)
@@ -365,7 +364,6 @@ where
         .extract_temporary_image(&temporary_image, callback)
         .await
         .map_err(|e| e.to_string())?;
-    temporary_image.cache_archive(&cache_dir, &image.board, &release.version);
 
     callback.on_progress(FlashProgress {
         stage: FlashStage::Complete,
@@ -943,19 +941,12 @@ mod mock_tests {
             let path = backend.extracted.lock().unwrap().clone().unwrap();
             assert!(!path.exists(), "{outcome}");
             assert!(!path.parent().unwrap().exists(), "{outcome}");
-            assert_eq!(
-                backend
-                    .cache
-                    .path()
-                    .join("haos_rpi5-64-16.3.img.xz")
-                    .exists(),
-                outcome != "extract"
-            );
+            assert_eq!(std::fs::read_dir(backend.cache.path()).unwrap().count(), 0);
         }
     }
 
     #[tokio::test]
-    async fn utm_download_publishes_only_completed_archives() {
+    async fn utm_download_keeps_images_private_until_owner_releases_them() {
         for outcome in ["success", "extract"] {
             let backend = LifecycleBackend {
                 cache: tempfile::tempdir().unwrap(),
@@ -965,17 +956,14 @@ mod mock_tests {
             };
             let result = run_utm_download(&backend, "generic-aarch64", &NoOpProgress).await;
             assert_eq!(result.is_ok(), outcome == "success");
-            assert_eq!(
-                backend
-                    .cache
-                    .path()
-                    .join("haos_generic-aarch64-16.3.qcow2.xz")
-                    .exists(),
-                outcome == "success"
-            );
+            if let Ok(image) = &result {
+                assert!(image.path().exists());
+                assert!(image.archive_path().exists());
+            }
             drop(result);
             let path = backend.extracted.lock().unwrap().clone().unwrap();
             assert!(!path.exists());
+            assert_eq!(std::fs::read_dir(backend.cache.path()).unwrap().count(), 0);
         }
     }
 

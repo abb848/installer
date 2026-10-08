@@ -8,9 +8,9 @@
 
 use std::io::{BufRead, Write};
 use std::path::Path;
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::Mutex;
 
-use hai_core::{BlockDevice, ExpectedDevice, FlashProgress, ProgressCallback};
+use hai_core::{BlockDevice, ExpectedDevice, FlashProgress, FlashStage, ProgressCallback};
 
 const USAGE: &str = "usage:
   hai-usb download
@@ -18,17 +18,20 @@ const USAGE: &str = "usage:
   hai-usb devices
   hai-usb write <image> <device-id>";
 
-/// Prints download progress in 10% steps.
+/// Prints progress in whole 10% steps, starting again for each stage (download, write, verify).
 #[derive(Default)]
 struct PrintProgress {
-    last_step: AtomicU8,
+    last: Mutex<Option<(FlashStage, u8)>>,
 }
 
 impl ProgressCallback for PrintProgress {
     fn on_progress(&self, progress: FlashProgress) {
-        let step = progress.progress / 10;
-        if progress.progress == 0 || self.last_step.swap(step, Ordering::Relaxed) != step {
-            println!("  {:>3}%  {}", progress.progress, progress.message);
+        let step = progress.progress / 10 * 10;
+        let current = Some((progress.stage.clone(), step));
+        let mut last = self.last.lock().unwrap_or_else(|e| e.into_inner());
+        if *last != current {
+            *last = current;
+            println!("  {step:>3}%  {}", progress.message);
         }
     }
 }
@@ -94,6 +97,10 @@ async fn devices() -> hai_usb::Result<()> {
 }
 
 async fn write(image: &Path, device_id: &str) -> hai_usb::Result<()> {
+    if !image.is_file() {
+        eprintln!("Image not found: {}", image.display());
+        std::process::exit(1);
+    }
     let drives = hai_usb::list_usb_drives().await?;
     let Some(drive) = drives.iter().find(|d| d.id == device_id) else {
         eprintln!("{device_id} is not a removable drive. Run `hai-usb devices` to list them.");

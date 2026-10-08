@@ -223,14 +223,28 @@ export class MiniPCArchitectureSelectionView extends LitElement {
   private async _loadDevices() {
     this._loading = true;
     this._error = null;
+    if (wizardState.getState().selections.deviceCatalogReady) {
+      wizardState.setSelection("deviceCatalogReady", false);
+    }
 
     try {
       const manifest = await getManifest();
+      if (!this.isConnected) return;
       // Find the generic x86-64 and ARM64 devices
       this._x86Device =
         manifest.devices.find((d) => d.category === "generic_x86") || null;
       this._arm64Device =
         manifest.devices.find((d) => d.category === "generic_arm64") || null;
+      if (
+        ![this._x86Device, this._arm64Device].some(
+          (device) => device?.id === this._selectedDeviceId
+        )
+      ) {
+        this._selectedDeviceId = null;
+        wizardState.setSelection("device", undefined);
+        wizardState.setSelection("deviceConfig", undefined);
+      }
+      wizardState.setSelection("deviceCatalogReady", true);
     } catch (err) {
       this._error =
         err instanceof Error ? err.message : "Failed to load architectures";

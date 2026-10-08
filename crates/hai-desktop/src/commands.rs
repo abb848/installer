@@ -300,12 +300,25 @@ where
 
 /// Get the latest HAOS release information
 #[tauri::command]
-pub async fn get_haos_release(version: Option<String>) -> Result<HaosRelease, String> {
-    let ver = version.as_deref().unwrap_or("latest");
-    Backend
-        .get_haos_release(ver)
-        .await
-        .map_err(|e| e.to_string())
+pub async fn get_haos_release(
+    version: Option<String>,
+    board: Option<String>,
+) -> Result<HaosRelease, String> {
+    release_for_selection(&Backend, version.as_deref(), board.as_deref()).await
+}
+
+async fn release_for_selection<B: ReleaseSource>(
+    backend: &B,
+    version: Option<&str>,
+    board: Option<&str>,
+) -> Result<HaosRelease, String> {
+    let release = match (version, board) {
+        (None | Some("latest"), Some(board)) => {
+            backend.get_latest_haos_release_for_board(board).await
+        }
+        (version, _) => backend.get_haos_release(version.unwrap_or("latest")).await,
+    };
+    release.map_err(|e| e.to_string())
 }
 
 /// Get the device manifest
@@ -331,6 +344,23 @@ pub fn get_system_info() -> Result<SystemInfo, String> {
 // UTM Commands (macOS only)
 // =============================================================================
 
+/// HAOS board for UTM, from the Mac's native architecture (also under
+/// Rosetta). The confirmation screen and the download must agree on it.
+fn utm_board() -> Result<&'static str, String> {
+    #[cfg(all(feature = "mock", not(target_os = "macos")))]
+    let arch = hai_core::utm::UtmArchitecture::X86_64;
+    #[cfg(any(not(feature = "mock"), target_os = "macos"))]
+    let arch = hai_core::utm::UtmArchitecture::host().map_err(|e| e.to_string())?;
+
+    Ok(arch.haos_board())
+}
+
+/// Get the release for the same board used by UTM downloads.
+#[tauri::command]
+pub async fn get_utm_haos_release() -> Result<HaosRelease, String> {
+    release_for_selection(&Backend, None, Some(utm_board()?)).await
+}
+
 /// Download the HAOS qcow2 image for UTM
 #[tauri::command]
 pub async fn download_utm_image(
@@ -344,12 +374,7 @@ pub async fn download_utm_image(
         .check_utm_status()
         .await
         .map_err(|e| e.to_string())?;
-    #[cfg(all(feature = "mock", not(target_os = "macos")))]
-    let arch = hai_core::utm::UtmArchitecture::X86_64;
-    #[cfg(any(not(feature = "mock"), target_os = "macos"))]
-    let arch = hai_core::utm::UtmArchitecture::host().map_err(|e| e.to_string())?;
-
-    let image = run_utm_download(&Backend, arch.haos_board(), &callback).await?;
+    let image = run_utm_download(&Backend, utm_board()?, &callback).await?;
     let path = image.path().to_string_lossy().into_owned();
     pending.0.lock().unwrap().insert(path.clone(), image);
     Ok(path)
@@ -645,7 +670,103 @@ mod tests {
 
     // ===== Manifest Tests =====
 
+    struct SelectionReleaseBackend;
+
+    impl ReleaseSource for SelectionReleaseBackend {
+        async fn check_connection(&self) -> hai_core::Result<()> {
+            unreachable!("release confirmation must not check connectivity")
+        }
+
+        async fn get_device_manifest(&self) -> hai_core::Result<DeviceManifest> {
+            unreachable!()
+        }
+
+        async fn get_haos_release(&self, version: &str) -> hai_core::Result<HaosRelease> {
+            Ok(HaosRelease {
+                version: format!("explicit:{version}"),
+                images: vec![],
+            })
+        }
+
+        async fn get_latest_haos_release_for_board(
+            &self,
+            board: &str,
+        ) -> hai_core::Result<HaosRelease> {
+            let version = match board {
+                "rpi5-64" => "18.3",
+                "odroid-n2" => "18.2",
+                "ova" => "18.1",
+                "generic-aarch64" | "generic-x86-64" => "18.0",
+                _ => return Err(hai_core::Error::DownloadFailed("Board unavailable".into())),
+            };
+            Ok(HaosRelease {
+                version: version.into(),
+                images: vec![],
+            })
+        }
+
+        async fn download_image<P: ProgressCallback>(
+            &self,
+            _: &hai_core::HaosImage,
+            _: &std::path::Path,
+            _: &P,
+        ) -> hai_core::Result<()> {
+            unreachable!("confirmation must not download")
+        }
+
+        async fn extract_xz<P: ProgressCallback>(
+            &self,
+            _: &std::path::Path,
+            _: &std::path::Path,
+            _: &P,
+        ) -> hai_core::Result<()> {
+            unreachable!("confirmation must not extract")
+        }
+
+        fn cache_dir(&self) -> hai_core::Result<std::path::PathBuf> {
+            unreachable!("confirmation must not create cache files")
+        }
+    }
+
     #[tokio::test]
+    async fn confirmation_release_uses_selected_board_in_staged_rollout() {
+        for (board, expected) in [
+            ("rpi5-64", "18.3"),
+            ("odroid-n2", "18.2"),
+            ("ova", "18.1"),
+            ("generic-aarch64", "18.0"),
+        ] {
+            for version in [None, Some("latest")] {
+                let release = release_for_selection(&SelectionReleaseBackend, version, Some(board))
+                    .await
+                    .unwrap();
+                assert_eq!(release.version, expected);
+            }
+        }
+        let error = release_for_selection(&SelectionReleaseBackend, None, Some("retired-board"))
+            .await
+            .unwrap_err();
+        assert!(error.contains("Board unavailable"));
+    }
+
+    #[tokio::test]
+    async fn confirmation_release_preserves_explicit_versions_and_boardless_calls() {
+        for (version, board, expected) in [
+            (Some("17.0"), Some("rpi5-64"), "explicit:17.0"),
+            (None, None, "explicit:latest"),
+        ] {
+            assert_eq!(
+                release_for_selection(&SelectionReleaseBackend, version, board)
+                    .await
+                    .unwrap()
+                    .version,
+                expected
+            );
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(feature = "mock")]
     async fn test_get_manifest_returns_ok() {
         let result = get_manifest().await;
         assert!(result.is_ok());
@@ -654,6 +775,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "mock")]
     async fn test_get_manifest_has_devices() {
         let result = get_manifest().await;
         assert!(result.is_ok());
@@ -663,6 +785,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(feature = "mock")]
     async fn test_get_manifest_devices_have_valid_haos_config() {
         let result = get_manifest().await;
         assert!(result.is_ok());

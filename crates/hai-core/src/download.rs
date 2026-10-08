@@ -315,9 +315,25 @@ pub(crate) fn get_cache_dir() -> Result<PathBuf> {
 
 /// Fetch the device manifest
 async fn get_device_manifest() -> Result<DeviceManifest> {
-    // For now, return the manifest bundled with the installer
-    // TODO: Implement actual network fetch
-    Ok(crate::manifest::bundled_manifest())
+    get_device_manifest_from_url(VERSION_URL).await
+}
+
+async fn get_device_manifest_from_url(url: &str) -> Result<DeviceManifest> {
+    get_device_manifest_with_timeout(url, std::time::Duration::from_secs(30)).await
+}
+
+async fn get_device_manifest_with_timeout(
+    url: &str,
+    deadline: std::time::Duration,
+) -> Result<DeviceManifest> {
+    let stable = tokio::time::timeout(deadline, get_stable_version_from_url(url))
+        .await
+        .map_err(|_| Error::DownloadFailed("Timed out fetching device availability".into()))??;
+    let mut manifest = crate::manifest::bundled_manifest();
+    manifest
+        .devices
+        .retain(|device| stable.hassos.contains_key(&device.haos.board));
+    Ok(manifest)
 }
 
 /// Fetch the stable version info from Home Assistant (internal version with custom URL)
@@ -594,7 +610,7 @@ pub fn parse_board_from_filename(filename: &str, version: &str) -> Result<String
 
 /// Require the SHA-256 digest supplied by GitHub's release metadata over HTTPS.
 /// Missing/unknown digests must never downgrade an installation to an XZ-only check.
-fn expected_sha256(image: &HaosImage) -> Result<[u8; 32]> {
+pub(crate) fn expected_sha256(image: &HaosImage) -> Result<[u8; 32]> {
     let digest = image.digest.as_deref().ok_or_else(|| {
         Error::VerificationFailed(
             "GitHub did not provide a SHA-256 digest for this image; installation stopped. Try again later.".to_string(),
@@ -2015,11 +2031,99 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_get_device_manifest_returns_bundled() {
-        let manifest = get_device_manifest().await.unwrap();
+    async fn test_get_device_manifest_filters_runtime_boards_preserving_display_data() {
+        let mut server = mockito::Server::new_async().await;
+        let request = server
+            .mock("GET", "/stable.json")
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"hassos":{"rpi5-64":"18.3","odroid-n2":"18.2","future-board":"18.3"}}"#)
+            .create_async()
+            .await;
+        let manifest = get_device_manifest_from_url(&format!("{}/stable.json", server.url()))
+            .await
+            .unwrap();
         let bundled = crate::manifest::bundled_manifest();
         assert_eq!(manifest.version, bundled.version);
-        assert_eq!(manifest.devices.len(), bundled.devices.len());
+        let expected: Vec<_> = bundled
+            .devices
+            .into_iter()
+            .filter(|device| ["rpi5-64", "odroid-n2"].contains(&device.haos.board.as_str()))
+            .collect();
+        assert_eq!(
+            serde_json::to_value(manifest.devices).unwrap(),
+            serde_json::to_value(expected).unwrap()
+        );
+        request.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_get_device_manifest_empty_runtime_catalog() {
+        let mut server = mockito::Server::new_async().await;
+        let request = server
+            .mock("GET", "/stable.json")
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"hassos":{}}"#)
+            .create_async()
+            .await;
+        let manifest = get_device_manifest_from_url(&format!("{}/stable.json", server.url()))
+            .await
+            .unwrap();
+        assert!(manifest.devices.is_empty());
+        request.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_get_device_manifest_bounds_stalled_headers_and_body() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for send_headers in [false, true] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}/stable.json", listener.local_addr().unwrap());
+            let (started, received) = tokio::sync::oneshot::channel();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = [0; 1];
+                stream.read_exact(&mut request).await.unwrap();
+                if send_headers {
+                    stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{").await.unwrap();
+                }
+                started.send(()).unwrap();
+                std::future::pending::<()>().await;
+            });
+            let lookup = tokio::spawn(async move {
+                get_device_manifest_with_timeout(&url, std::time::Duration::from_secs(1)).await
+            });
+            let error = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                received.await.unwrap();
+                lookup.await.unwrap().unwrap_err()
+            })
+            .await
+            .expect("catalog request must have a total deadline");
+            server.abort();
+            let _ = server.await;
+            assert!(error
+                .to_string()
+                .contains("Timed out fetching device availability"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_get_device_manifest_does_not_fall_back_after_fetch_failure() {
+        let mut server = mockito::Server::new_async().await;
+        for (status, body) in [(503, "unavailable"), (200, r#"{"hassos":null}"#)] {
+            let request = server
+                .mock("GET", "/stable.json")
+                .with_status(status)
+                .with_header("content-type", "application/json")
+                .with_body(body)
+                .create_async()
+                .await;
+            assert!(
+                get_device_manifest_from_url(&format!("{}/stable.json", server.url()))
+                    .await
+                    .is_err()
+            );
+            request.assert_async().await;
+        }
     }
 
     #[test]

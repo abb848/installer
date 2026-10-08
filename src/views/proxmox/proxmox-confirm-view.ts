@@ -148,7 +148,7 @@ export class ProxmoxConfirmView extends LitElement {
 
   private async _loadInfo() {
     try {
-      const release = await getHaosRelease();
+      const release = await getHaosRelease(undefined, "ova");
       this._haosVersion = release.version;
     } catch (error) {
       console.error("Failed to load info:", error);

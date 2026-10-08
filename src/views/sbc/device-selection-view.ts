@@ -113,9 +113,13 @@ export class DeviceSelectionView extends LitElement {
   private async _loadDevices() {
     this._loading = true;
     this._error = null;
+    if (wizardState.getState().selections.deviceCatalogReady) {
+      wizardState.setSelection("deviceCatalogReady", false);
+    }
 
     try {
       const manifest = await getManifest();
+      if (!this.isConnected) return;
       // Filter to only show SBC devices
       this._devices = manifest.devices.filter(
         (device) =>
@@ -124,6 +128,14 @@ export class DeviceSelectionView extends LitElement {
           device.category === "khadas" ||
           device.category === "asus"
       );
+      if (
+        !this._devices.some((device) => device.id === this._selectedDeviceId)
+      ) {
+        this._selectedDeviceId = null;
+        wizardState.setSelection("device", undefined);
+        wizardState.setSelection("deviceConfig", undefined);
+      }
+      wizardState.setSelection("deviceCatalogReady", true);
     } catch (err) {
       this._error =
         err instanceof Error ? err.message : "Failed to load devices";

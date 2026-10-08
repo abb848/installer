@@ -232,7 +232,7 @@ export class AppShell extends LitElement {
     // Check if required selections are made for current step
     if (flow === "sbc") {
       if (stepId === "device") {
-        return !selections.device;
+        return !selections.deviceCatalogReady || !selections.device;
       }
       if (stepId === "drive") {
         return !selections.drive;
@@ -241,7 +241,7 @@ export class AppShell extends LitElement {
 
     if (flow === "minipc") {
       if (stepId === "architecture") {
-        return !selections.device;
+        return !selections.deviceCatalogReady || !selections.device;
       }
       if (stepId === "drive") {
         return !selections.drive;

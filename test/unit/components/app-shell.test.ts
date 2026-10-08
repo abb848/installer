@@ -22,8 +22,8 @@ const CONNECTED = MOCK_BLOCK_DEVICES[0];
 
 interface WizardShell extends HTMLElement {
   nextLabel: string;
-  hideFooter: boolean;
   nextDisabled: boolean;
+  hideFooter: boolean;
 }
 
 interface ErrorFlags {
@@ -144,6 +144,30 @@ describe("app-shell", () => {
     ).click();
     await waitUntil(() => !shellOf(el).nextDisabled);
   });
+
+  for (const [flow, step] of [
+    ["sbc", "device"],
+    ["minipc", "architecture"],
+  ] as const) {
+    it(`requires a refreshed catalog before leaving the ${flow} device picker`, async () => {
+      await enterSbcFlow(el);
+      if (flow !== "sbc") wizardState.startFlow(flow);
+      await goToStep(el, step);
+      await waitUntil(
+        () => wizardState.getState().selections.deviceCatalogReady === true
+      );
+      wizardState.setSelection("device", "saved-device");
+      wizardState.setSelection("deviceCatalogReady", false);
+      await el.updateComplete;
+      expect(shellOf(el).nextDisabled).to.equal(true);
+      wizardState.setSelection("deviceCatalogReady", true);
+      await el.updateComplete;
+      expect(shellOf(el).nextDisabled).to.equal(false);
+      wizardState.setSelection("device", undefined);
+      await el.updateComplete;
+      expect(shellOf(el).nextDisabled).to.equal(true);
+    });
+  }
 
   describe("connection gate", () => {
     it("keeps Home Assistant hardware guidance available without network access", async () => {

@@ -224,12 +224,24 @@ export function formatBytes(bytes: number): string {
 /**
  * Get HAOS release information.
  * @param version Optional specific version to fetch (defaults to latest stable)
+ * @param board Board whose stable release should be shown
  */
-export async function getHaosRelease(version?: string): Promise<HaosRelease> {
+export async function getHaosRelease(
+  version?: string,
+  board?: string
+): Promise<HaosRelease> {
   if (MOCK_ALLOWED && isBrowserOnly()) {
     return MOCK_HAOS_RELEASE;
   }
-  return invoke<HaosRelease>("get_haos_release", { version });
+  return invoke<HaosRelease>("get_haos_release", { version, board });
+}
+
+/** Get the stable release for the backend's UTM download architecture. */
+export async function getUtmHaosRelease(): Promise<HaosRelease> {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
+    return MOCK_HAOS_RELEASE;
+  }
+  return invoke<HaosRelease>("get_utm_haos_release");
 }
 
 // ============================================================================

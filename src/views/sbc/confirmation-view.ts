@@ -172,7 +172,9 @@ export class ConfirmationView extends LitElement {
 
   private async _loadHaosVersion() {
     try {
-      const release = await getHaosRelease();
+      const board = this._wizardState.selections.deviceConfig?.board;
+      if (!board) throw new Error("No board selected");
+      const release = await getHaosRelease(undefined, board);
       this._haosVersion = release.version;
     } catch (error) {
       console.error("Failed to load HAOS version:", error);

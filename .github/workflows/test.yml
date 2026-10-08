@@ -252,6 +252,14 @@ jobs:
           flags: backend
           fail_ci_if_error: false
 
+      # This checks only public release metadata, never downloads an image.
+      # Run after coverage upload so network/rate-limit failures cannot suppress coverage.
+      - name: Check bundled boards against stable HAOS release assets
+        if: runner.os == 'Linux'
+        run: cargo test -p hai-core manifest::tests::bundled_boards_have_stable_release_assets -- --ignored --exact
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
   build:
     name: Build (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

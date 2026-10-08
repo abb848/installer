@@ -7,7 +7,7 @@ import {
   DEFAULT_MEMORY_MB,
   DEFAULT_UTM_VM_NAME,
 } from "../../state/vm-defaults.js";
-import { getHaosRelease } from "../../api/commands.js";
+import { getUtmHaosRelease } from "../../api/commands.js";
 
 @customElement("utm-confirm-view")
 export class UtmConfirmView extends LitElement {
@@ -146,7 +146,7 @@ export class UtmConfirmView extends LitElement {
 
   private async _loadInfo() {
     try {
-      const release = await getHaosRelease();
+      const release = await getUtmHaosRelease();
       this._haosVersion = release.version;
     } catch (error) {
       console.error("Failed to load info:", error);

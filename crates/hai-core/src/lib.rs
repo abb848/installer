@@ -46,6 +46,9 @@ use std::path::{Path, PathBuf};
 
 /// Release metadata and image download.
 pub trait ReleaseSource {
+    /// Check that the Home Assistant version service can be reached.
+    async fn check_connection(&self) -> Result<()>;
+
     /// Fetch the device manifest (list of supported boards).
     async fn get_device_manifest(&self) -> Result<DeviceManifest>;
 

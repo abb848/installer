@@ -28,6 +28,14 @@ import type {
  */
 const MOCK_ALLOWED = import.meta.env.DEV;
 
+/** Check the Home Assistant version service before starting a flow. */
+export async function checkConnection(): Promise<void> {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
+    return;
+  }
+  return invoke<void>("check_connection");
+}
+
 function isBrowserOnly(): boolean {
   return typeof window !== "undefined" && !("__TAURI__" in window);
 }

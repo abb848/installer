@@ -87,6 +87,10 @@ fn mock_haos_release() -> HaosRelease {
 }
 
 impl ReleaseSource for BackendMock {
+    async fn check_connection(&self) -> Result<()> {
+        Ok(())
+    }
+
     async fn get_device_manifest(&self) -> Result<DeviceManifest> {
         Ok(crate::manifest::bundled_manifest())
     }

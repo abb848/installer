@@ -47,6 +47,9 @@ test.describe("Proxmox TOTP login", () => {
             return session;
           }
 
+          // The connection check before each flow is not a Proxmox request
+          if (cmd === "check_connection") return undefined;
+
           win.authenticatedCalls.push(cmd);
           const { session: supplied } = args as { session: ProxmoxSession };
           if (

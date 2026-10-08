@@ -2832,6 +2832,10 @@ mod tests {
                 url: String,
             }
             impl ReleaseSource for ImageSource {
+                async fn check_connection(&self) -> Result<()> {
+                    unreachable!("must not check connectivity during VM creation")
+                }
+
                 async fn get_device_manifest(&self) -> Result<crate::DeviceManifest> {
                     unreachable!()
                 }

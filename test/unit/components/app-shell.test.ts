@@ -9,7 +9,12 @@ import {
 import { wizardState } from "../../../src/state/wizard-state.js";
 import { storeDriveSelection } from "../../../src/utils/drive-selection.js";
 import { flush, holdDeviceScan } from "../helpers/hold-device-scan.js";
-import { deferred, mockTauriIpc, restoreTauriIpc } from "../tauri-ipc.js";
+import {
+  deferred,
+  mockTauriIpc,
+  restoreTauriIpc,
+  settle,
+} from "../tauri-ipc.js";
 
 // Browser-only mode (no Tauri) serves MOCK_BLOCK_DEVICES, so this is the drive
 // that is "connected" for the duration of these tests.
@@ -65,7 +70,7 @@ async function enterSbcFlow(el: AppShell) {
   fire(el.shadowRoot!.querySelector("path-selection-view")!, "select-path", {
     path: "sbc",
   });
-  await el.updateComplete;
+  await waitUntil(() => !!shellOf(el));
 }
 
 describe("app-shell", () => {
@@ -77,6 +82,7 @@ describe("app-shell", () => {
   });
 
   afterEach(() => {
+    restoreTauriIpc();
     // A mock flash keeps running after teardown. The detached tree still has
     // app-shell as an ancestor, so drop the wizard subtree: otherwise a late
     // "complete" would advance the shared wizard state under a later test.
@@ -137,6 +143,101 @@ describe("app-shell", () => {
         .shadowRoot!.querySelector("wa-button") as HTMLElement
     ).click();
     await waitUntil(() => !shellOf(el).nextDisabled);
+  });
+
+  describe("connection gate", () => {
+    it("keeps Home Assistant hardware guidance available without network access", async () => {
+      let calls = 0;
+      mockTauriIpc(() => {
+        calls++;
+        return Promise.reject("offline");
+      });
+      fire(el.shadowRoot!.querySelector("welcome-view")!, "navigate", {
+        view: "path-selection",
+      });
+      await el.updateComplete;
+      fire(
+        el.shadowRoot!.querySelector("path-selection-view")!,
+        "select-path",
+        { path: "ha-hardware" }
+      );
+      await waitUntil(() => !!shellOf(el));
+      expect(wizardState.getState().currentFlow).to.equal("ha-hardware");
+      expect(calls).to.equal(0);
+    });
+
+    it("starts the selected flow only after a successful retry", async () => {
+      const retry = deferred<void>();
+      let calls = 0;
+      mockTauriIpc((command) => {
+        expect(command).to.equal("check_connection");
+        return ++calls === 1
+          ? Promise.reject(
+              "Cannot reach version.home-assistant.io. Check your internet connection and try again."
+            )
+          : retry.promise;
+      });
+      fire(el.shadowRoot!.querySelector("welcome-view")!, "navigate", {
+        view: "path-selection",
+      });
+      await el.updateComplete;
+      fire(
+        el.shadowRoot!.querySelector("path-selection-view")!,
+        "select-path",
+        { path: "proxmox" }
+      );
+      await waitUntil(
+        () =>
+          !!el
+            .shadowRoot!.querySelector("connection-check-view")
+            ?.shadowRoot?.querySelector('[role="alert"]')
+      );
+      const gate = el.shadowRoot!.querySelector("connection-check-view")!;
+      expect(wizardState.getState().currentFlow).to.equal(null);
+      (
+        gate.shadowRoot!.querySelector(
+          'wa-button[variant="brand"]'
+        ) as HTMLElement
+      ).click();
+      await settle();
+      expect(wizardState.getState().currentFlow).to.equal(null);
+      retry.resolve();
+      await waitUntil(() => !!shellOf(el));
+      expect(wizardState.getState().currentFlow).to.equal("proxmox");
+      expect(shellOf(el).querySelector("proxmox-connect-view")).to.exist;
+      expect(calls).to.equal(2);
+    });
+
+    for (const path of ["sbc", "minipc", "vm", "proxmox"]) {
+      it(`checks connectivity before starting ${path} and allows Back`, async () => {
+        const pending = deferred<void>();
+        const calls: string[] = [];
+        mockTauriIpc((command) => {
+          calls.push(command);
+          return pending.promise;
+        });
+        fire(el.shadowRoot!.querySelector("welcome-view")!, "navigate", {
+          view: "path-selection",
+        });
+        await el.updateComplete;
+        fire(
+          el.shadowRoot!.querySelector("path-selection-view")!,
+          "select-path",
+          { path }
+        );
+        await waitUntil(() => calls.length === 1);
+        expect(calls).to.deep.equal(["check_connection"]);
+        expect(wizardState.getState().currentFlow).to.equal(null);
+        expect(shellOf(el)).to.equal(null);
+        const gate = el.shadowRoot!.querySelector("connection-check-view")!;
+        (gate.shadowRoot!.querySelector("wa-button") as HTMLElement).click();
+        await el.updateComplete;
+        pending.resolve();
+        await settle();
+        expect(el.shadowRoot!.querySelector("path-selection-view")).to.exist;
+        expect(wizardState.getState().currentFlow).to.equal(null);
+      });
+    }
   });
 
   describe("selected drive check before erasing", () => {

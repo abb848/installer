@@ -147,6 +147,23 @@ requires an extra decoding pass; memory is limited to 256 MiB and output to
 64 GiB. The extracted file is also published atomically. Space checks cannot
 reserve capacity against other applications writing concurrently.
 
+Before opening an installation flow, the desktop app checks the stable version
+service with a 15-second request timeout. A failed check offers Back and Retry;
+HTTP and invalid-response errors are distinguished from connection failures.
+
+Successful GitHub release metadata is cached by version for the application
+session. Requests for the latest release still resolve the current version before
+consulting that cache. Rate-limit responses explain how long to wait using
+`Retry-After` and, when the primary quota is exhausted, `X-RateLimit-Reset`.
+Unrecognized retry timing falls back to at least one minute, following
+[GitHub's rate-limit guidance](https://docs.github.com/en/rest/using-the-rest-api/rate-limits-for-the-rest-api).
+
+A cached release can continue using its known asset download URL without a new
+GitHub API request. A rate limit without cached metadata stops the installation:
+the installer does not synthesize asset metadata or skip verification to guess a
+direct download URL. An alternative trusted metadata/digest source for that case
+remains deferred under #170; the required digest verification is already enforced.
+
 ```rust
 // crates/hai-core/src/download.rs
 

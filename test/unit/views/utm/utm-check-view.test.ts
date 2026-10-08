@@ -1,6 +1,13 @@
-import { expect, fixtureSync, html } from "@open-wc/testing";
+import {
+  expect,
+  fixture,
+  fixtureSync,
+  html,
+  waitUntil,
+} from "@open-wc/testing";
 import { wizardState } from "../../../../src/state/wizard-state.js";
 import "../../../../src/views/utm/utm-check-view.js";
+import type { UtmCheckView } from "../../../../src/views/utm/utm-check-view.js";
 import { mockTauriIpc, restoreTauriIpc, settle } from "../../tauri-ipc.js";
 
 describe("utm-check-view", () => {
@@ -45,5 +52,58 @@ describe("utm-check-view", () => {
     expect(wizardState.getState().selections.utmInstalled).to.be.false;
     expect(el.shadowRoot!.textContent).to.contain("Download UTM");
     expect(el.shadowRoot!.textContent).to.contain("not installed");
+  });
+});
+
+describe("utm-check-view artwork", () => {
+  const bridge = window as unknown as Record<string, unknown>;
+  beforeEach(() => wizardState.startFlow("vm"));
+  afterEach(() => {
+    delete bridge.__TAURI__;
+    delete bridge.__TAURI_INTERNALS__;
+    wizardState.reset();
+  });
+
+  for (const installed of [false, true]) {
+    it(`shows ${installed ? "happy" : "sad"} Casita after checking UTM`, async () => {
+      bridge.__TAURI__ = {};
+      bridge.__TAURI_INTERNALS__ = {
+        invoke: () => Promise.resolve({ installed, version: null }),
+      };
+      const el = await fixture<UtmCheckView>(
+        html`<utm-check-view></utm-check-view>`
+      );
+      await waitUntil(
+        () => el.shadowRoot!.querySelector("casita-mascot")!.mood !== "loading"
+      );
+      expect(el.shadowRoot!.querySelector("casita-mascot")!.mood).to.equal(
+        installed ? "happy" : "sad"
+      );
+      expect(
+        el.shadowRoot!.querySelector(".status-title")!.textContent
+      ).to.include(installed ? "installed" : "not installed");
+      if (!installed)
+        expect(el.shadowRoot!.textContent).to.include("Download UTM");
+    });
+  }
+
+  it("uses problem artwork alongside the error and retry control", async () => {
+    bridge.__TAURI__ = {};
+    bridge.__TAURI_INTERNALS__ = {
+      invoke: () => Promise.reject(new Error("Mock check failed")),
+    };
+    const el = await fixture<UtmCheckView>(
+      html`<utm-check-view></utm-check-view>`
+    );
+    await waitUntil(
+      () => el.shadowRoot!.querySelector("casita-mascot")!.mood === "problem"
+    );
+    expect(el.shadowRoot!.querySelector("casita-mascot")!.mood).to.equal(
+      "problem"
+    );
+    expect(
+      el.shadowRoot!.querySelector(".status-description")!.textContent
+    ).to.include("Mock check failed");
+    expect(el.shadowRoot!.textContent).to.include("Try again");
   });
 });

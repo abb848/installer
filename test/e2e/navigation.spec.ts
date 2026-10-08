@@ -719,7 +719,7 @@ test.describe("SBC Success", () => {
   test("shows happy Casita mascot", async ({ page }) => {
     const successView = page.locator("success-view");
     await expect(successView.locator(".mascot-container")).toBeVisible();
-    await expect(successView.locator(".casita-mascot")).toBeVisible();
+    await expect(successView.locator("casita-mascot")).toBeVisible();
   });
 
   test("shows success heading", async ({ page }) => {

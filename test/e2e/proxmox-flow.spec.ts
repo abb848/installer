@@ -408,7 +408,7 @@ test.describe("Proxmox Installation Flow", () => {
     await navigateToProxmoxStep5(page);
 
     const successView = page.locator("proxmox-success-view");
-    await expect(successView.locator(".casita-mascot")).toBeVisible();
+    await expect(successView.locator("casita-mascot")).toBeVisible();
   });
 
   test("step 5: shows VM access information", async ({ page }) => {

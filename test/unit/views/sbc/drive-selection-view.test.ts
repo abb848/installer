@@ -43,6 +43,28 @@ describe("drive-selection-view", () => {
   });
   afterEach(() => wizardState.reset());
 
+  it("shows Casita and refresh guidance when there are no drives", async () => {
+    const scan = holdDeviceScan();
+    try {
+      const el = await fixture<DriveSelectionView>(
+        html`<drive-selection-view></drive-selection-view>`
+      );
+      scan.resolve([]);
+      await flush();
+      expect(el.shadowRoot!.querySelector("casita-mascot")!.mood).to.equal(
+        "sad"
+      );
+      expect(
+        el.shadowRoot!.querySelector(".empty-title")!.textContent
+      ).to.equal("No drives found");
+      expect(
+        el.shadowRoot!.querySelector(".empty-state wa-button")!.textContent
+      ).to.include("Refresh");
+    } finally {
+      scan.restore();
+    }
+  });
+
   it("keeps a selection whose drive is still connected", async () => {
     storeDriveSelection(CONNECTED);
 

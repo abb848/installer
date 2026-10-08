@@ -46,28 +46,6 @@ export class InstallProgress extends LitElement {
       height: 100%;
     }
 
-    .casita-tear {
-      animation: tear-fall 1.5s ease-in infinite;
-    }
-
-    .casita-tear.delay {
-      animation-delay: 0.75s;
-    }
-
-    @keyframes tear-fall {
-      0% {
-        opacity: 0;
-        transform: translateY(-4px);
-      }
-      20% {
-        opacity: 1;
-      }
-      100% {
-        opacity: 0;
-        transform: translateY(12px);
-      }
-    }
-
     h2 {
       font-size: 1.25rem;
       font-weight: 500;
@@ -212,6 +190,18 @@ export class InstallProgress extends LitElement {
     @media (max-width: 600px) {
       .thinking-cloud {
         right: -40px;
+      }
+    }
+
+    /* Too narrow for the cloud beside Casita: stack it above instead */
+    @media (max-width: 520px) {
+      .mascot-container.with-bubble {
+        margin-left: 0;
+        margin-top: 130px;
+      }
+
+      .thinking-cloud {
+        top: -130px;
       }
     }
 

@@ -17,6 +17,7 @@ import {
 import "@home-assistant/webawesome/dist/components/button/button.js";
 import "@home-assistant/webawesome/dist/components/radio-group/radio-group.js";
 import "../../components/drive-card.js";
+import "../../components/casita-mascot.js";
 
 @customElement("drive-selection-view")
 export class DriveSelectionView extends LitElement {
@@ -186,17 +187,8 @@ export class DriveSelectionView extends LitElement {
       color: var(--ha-secondary-text-color, #727272);
     }
 
-    .empty-icon {
-      width: 64px;
-      height: 64px;
+    casita-mascot {
       margin-bottom: 1rem;
-      opacity: 0.5;
-    }
-
-    .empty-icon svg {
-      width: 100%;
-      height: 100%;
-      fill: var(--ha-secondary-text-color, #727272);
     }
 
     .empty-title {
@@ -376,13 +368,7 @@ export class DriveSelectionView extends LitElement {
 
       return html`
         <div class="empty-state">
-          <span class="empty-icon">
-            <svg viewBox="0 0 24 24">
-              <path
-                d="M18,8H16V4H18M15,8H13V4H15M12,8H10V4H12M18,2H10L4,8V20A2,2 0 0,0 6,22H18A2,2 0 0,0 20,20V4A2,2 0 0,0 18,2Z"
-              />
-            </svg>
-          </span>
+          <casita-mascot mood="sad"></casita-mascot>
           <p class="empty-title">No drives found</p>
           <p class="empty-text">${emptyText}</p>
           <wa-button

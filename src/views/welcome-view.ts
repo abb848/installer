@@ -2,6 +2,7 @@ import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { openExternalLink } from "../utils/external-url.js";
 import "@home-assistant/webawesome/dist/components/button/button.js";
+import "../components/casita-mascot.js";
 
 @customElement("welcome-view")
 export class WelcomeView extends LitElement {
@@ -20,6 +21,26 @@ export class WelcomeView extends LitElement {
       padding: 2rem;
       text-align: center;
       position: relative;
+    }
+
+    @media (max-height: 700px) {
+      :host {
+        box-sizing: border-box;
+        min-height: 0;
+        overflow-y: auto;
+        justify-content: flex-start;
+        padding-bottom: 6rem;
+      }
+
+      :host > * {
+        flex-shrink: 0;
+      }
+    }
+
+    casita-mascot {
+      width: 96px;
+      height: 96px;
+      margin-bottom: 1.5rem;
     }
 
     @keyframes soft-pulse {
@@ -89,6 +110,13 @@ export class WelcomeView extends LitElement {
       text-decoration: none;
     }
 
+    @media (max-height: 700px) {
+      .ohf-link {
+        position: static;
+        margin-top: 2rem;
+      }
+    }
+
     .ohf-logo {
       width: 180px;
       opacity: 0.7;
@@ -127,6 +155,8 @@ export class WelcomeView extends LitElement {
           alt="Home Assistant"
         />
       </div>
+
+      <casita-mascot mood="winking"></casita-mascot>
 
       <div class="welcome-text">
         <p>

@@ -52,10 +52,11 @@ test.describe("UTM Installation Flow", () => {
     await expect(warningCard).toContainText("Mac needs to be running");
   });
 
-  test("step 1: shows UTM logo", async ({ page }) => {
+  test("step 1: shows the supplied Casita status artwork", async ({ page }) => {
     const checkView = page.locator("utm-check-view");
-    const logo = checkView.locator(".utm-logo");
-    await expect(logo).toBeVisible();
+    const mascot = checkView.locator("casita-mascot img");
+    await expect(mascot).toBeVisible();
+    await expect(mascot).toHaveAttribute("src", "/assets/casita/Happy.svg");
   });
 
   test("step 1: shows loading state initially", async ({ page }) => {
@@ -435,7 +436,7 @@ test.describe("UTM Installation Flow", () => {
     await navigateToUtmStep5(page);
 
     const successView = page.locator("utm-success-view");
-    await expect(successView.locator(".casita-mascot")).toBeVisible();
+    await expect(successView.locator("casita-mascot")).toBeVisible();
   });
 
   test("step 5: shows next steps instructions", async ({ page }) => {

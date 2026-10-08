@@ -6,6 +6,7 @@ import { wizardState } from "../../state/wizard-state.js";
 import { openExternalUrl } from "../../utils/external-url.js";
 import "@home-assistant/webawesome/dist/components/button/button.js";
 import "../../components/ha-svg-icon.js";
+import "../../components/casita-mascot.js";
 
 // mdi:download
 const mdiDownload = "M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z";
@@ -58,9 +59,9 @@ export class UtmCheckView extends LitElement {
       }
     }
 
-    .utm-logo {
-      width: 56px;
-      height: 56px;
+    casita-mascot {
+      width: 96px;
+      height: 96px;
     }
 
     .status-row {
@@ -257,7 +258,15 @@ export class UtmCheckView extends LitElement {
       </div>
 
       <div class="status-card">
-        ${this._renderUtmLogo()}
+        <casita-mascot
+          mood=${this._loading
+            ? "loading"
+            : this._error
+              ? "problem"
+              : this._utmStatus?.installed
+                ? "happy"
+                : "sad"}
+        ></casita-mascot>
         ${this._loading
           ? this._renderLoading()
           : this._error
@@ -267,10 +276,6 @@ export class UtmCheckView extends LitElement {
               : this._renderNotInstalled()}
       </div>
     `;
-  }
-
-  private _renderUtmLogo() {
-    return html`<img class="utm-logo" src="/assets/icons/utm.svg" alt="UTM" />`;
   }
 
   private _renderLoading() {

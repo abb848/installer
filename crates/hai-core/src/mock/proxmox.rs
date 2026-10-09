@@ -12,11 +12,18 @@ use crate::{ProgressCallback, ProxmoxBackend, Result};
 use super::BackendMock;
 
 impl ProxmoxBackend for BackendMock {
+    async fn certificate_fingerprint(&self, _server_url: &str) -> Result<Option<String>> {
+        #[cfg(feature = "proxmox")]
+        crate::proxmox::tls::server_url(_server_url)?;
+        Ok(None)
+    }
+
     async fn authenticate(&self, credentials: &ProxmoxCredentials) -> Result<ProxmoxSession> {
         Ok(ProxmoxSession {
             server_url: credentials.server_url.clone(),
             ticket: "mock-ticket".to_string(),
             csrf_token: "mock-csrf-token".to_string(),
+            certificate_sha256: credentials.certificate_sha256.clone(),
         })
     }
 

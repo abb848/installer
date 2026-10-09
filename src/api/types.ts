@@ -189,7 +189,11 @@ password: string,
 /**
  * Optional time-based one-time password from an authenticator app.
  */
-totp?: string | null, };
+totp?: string | null,
+/**
+ * Explicitly confirmed SHA-256 leaf certificate fingerprint, for this login only.
+ */
+certificate_sha256?: string | null, };
 
 export type ProxmoxSession = {
 /**
@@ -203,7 +207,11 @@ ticket: string,
 /**
  * CSRF prevention token
  */
-csrf_token: string, };
+csrf_token: string,
+/**
+ * Certificate approved at login; enforce it for every request in this session.
+ */
+certificate_sha256?: string | null, };
 
 export type ProxmoxNode = {
 /**

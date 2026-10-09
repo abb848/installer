@@ -31,6 +31,7 @@ impl CommandError {
                 | "invalid_config"
                 | "utm_operation_uncertain"
                 | "proxmox_session_expired"
+                | "proxmox_certificate_changed"
         );
         error
     }
@@ -58,6 +59,8 @@ impl From<Error> for CommandError {
             Error::ProxmoxActionRequired(message) => ("proxmox_action_required", message.as_str(), false),
             // Reconnecting is the action, not repeating the request
             Error::ProxmoxSessionExpired => ("proxmox_session_expired", "Proxmox session expired or invalid. Please reconnect to Proxmox.", false),
+            // Same recovery: reconnecting shows the new certificate to confirm
+            Error::ProxmoxCertificateChanged => ("proxmox_certificate_changed", "The Proxmox server's certificate changed. Reconnect to check it again.", false),
             // Installer-authored guidance for the authenticator code, never a server response
             Error::ProxmoxTwoFactor(message) => ("proxmox_two_factor", message.as_str(), false),
             Error::Utm(message) => ("utm", message.as_str(), true),

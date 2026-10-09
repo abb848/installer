@@ -42,12 +42,18 @@ import {
 /** Lookups report an expired session as its own code, answered with Reconnect */
 const SESSION_EXPIRED = "proxmox_session_expired";
 
+/**
+ * A changed certificate needs the same answer: reconnecting shows the new
+ * certificate to confirm, while retrying would keep hitting the old pin.
+ */
+const CERTIFICATE_CHANGED = "proxmox_certificate_changed";
+
 function isSessionExpired(error: unknown): boolean {
   return (
     typeof error === "object" &&
     error !== null &&
     "code" in error &&
-    error.code === SESSION_EXPIRED
+    (error.code === SESSION_EXPIRED || error.code === CERTIFICATE_CHANGED)
   );
 }
 

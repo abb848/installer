@@ -356,7 +356,10 @@ async fn flash_image(image_path: PathBuf, target_device: String, window: Window)
 
 // Proxmox
 #[tauri::command]
-async fn proxmox_connect(url: String, username: String, password: String) -> Result<ProxmoxSession, String>
+async fn proxmox_certificate_fingerprint(server_url: String) -> Result<Option<String>, String>
+
+#[tauri::command]
+async fn proxmox_connect(credentials: ProxmoxCredentials) -> Result<ProxmoxSession, String>
 
 #[tauri::command]
 async fn proxmox_list_nodes(session: ProxmoxSession) -> Result<Vec<Node>, String>

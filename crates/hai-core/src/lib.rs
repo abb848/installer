@@ -122,6 +122,15 @@ pub trait DeviceBackend {
 
 /// Proxmox VE provisioning.
 pub trait ProxmoxBackend {
+    /// Inspect the certificate without sending credentials. A returned fingerprint
+    /// requires explicit user confirmation; None indicates ordinary platform trust.
+    /// Backends without certificate inspection fail closed before authentication.
+    async fn certificate_fingerprint(&self, _server_url: &str) -> Result<Option<String>> {
+        Err(Error::ProxmoxApi(
+            "Certificate inspection is not supported by this backend".to_string(),
+        ))
+    }
+
     /// Authenticate and verify the server meets the minimum version.
     async fn authenticate(&self, credentials: &ProxmoxCredentials) -> Result<ProxmoxSession>;
 

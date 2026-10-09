@@ -74,6 +74,9 @@ async function mockDesktop(page: Page, failingCommand = "") {
             return MOCK_HAOS_RELEASE;
           case "check_connection":
             return;
+          // A trusted certificate: no confirmation before the login
+          case "proxmox_certificate_fingerprint":
+            return null;
           case "get_system_info":
             return { cpu_cores: 8, memory_mb: 16384 };
           case "check_utm_status":

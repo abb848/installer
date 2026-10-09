@@ -32,6 +32,8 @@ futures-util = "0.3"
 # Cryptography
 sha2 = "0.11"
 hex = "0.4"
+rustls = "0.23"
+rustls-platform-verifier = "0.7"
 
 # Compression
 xz2 = "0.1"
@@ -47,6 +49,8 @@ urlencoding = "2"
 tempfile = "3"
 serial_test = "4"
 mockito = "1"
+rcgen = "0.14"
+tokio-rustls = "0.26"
 ts-rs = "12.0.1"
 
 # macOS specific

@@ -77,6 +77,8 @@ describe("view diagnostic request ownership", () => {
               return request.promise;
             }
             if (command === "proxmox_get_next_vm_id") return 100;
+            // A trusted certificate: no confirmation before the login
+            if (command === "proxmox_certificate_fingerprint") return null;
             if (command === "log_frontend_event") {
               events.push(args);
               return;

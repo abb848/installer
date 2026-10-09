@@ -469,6 +469,16 @@ export async function checkHaUpdated(ipAddress: string): Promise<boolean> {
 /** Store for the current Proxmox session (browser-only mock) */
 let mockProxmoxSession: ProxmoxSession | null = null;
 
+/** Inspect TLS trust before authenticating. A fingerprint requires user approval. */
+export async function proxmoxCertificateFingerprint(
+  serverUrl: string
+): Promise<string | null> {
+  if (MOCK_ALLOWED && isBrowserOnly()) return null;
+  return invoke<string | null>("proxmox_certificate_fingerprint", {
+    serverUrl,
+  });
+}
+
 /**
  * Connect to a Proxmox VE server and authenticate.
  * @param credentials Server URL, username, and password

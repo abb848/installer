@@ -22,6 +22,8 @@ reqwest = { workspace = true }
 futures-util = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
+rustls = { workspace = true }
+rustls-platform-verifier = { workspace = true }
 xz2 = { workspace = true }
 directories = { workspace = true }
 fs2 = { workspace = true }
@@ -51,3 +53,5 @@ tokio = { workspace = true, features = ["net"] }
 tempfile = { workspace = true }
 serial_test = { workspace = true }
 mockito = { workspace = true }
+rcgen = { workspace = true }
+tokio-rustls = { workspace = true }

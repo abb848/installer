@@ -555,6 +555,22 @@ pub async fn check_ha_updated(ip_address: String) -> bool {
 // Proxmox Commands
 // =============================================================================
 
+/// Inspect server trust without sending credentials or an HTTP request.
+///
+/// `None` means the platform trusts the certificate. A fingerprint means it
+/// does not, and the user has to confirm it before any credentials are sent.
+#[tauri::command]
+pub async fn proxmox_certificate_fingerprint(
+    server_url: String,
+) -> Result<Option<String>, CommandError> {
+    Operation::new("proxmox_certificate").finish(
+        Backend
+            .certificate_fingerprint(&server_url)
+            .await
+            .map_err(CommandError::from),
+    )
+}
+
 /// Connect to a Proxmox VE server
 #[tauri::command]
 pub async fn proxmox_connect(
@@ -639,6 +655,51 @@ pub async fn proxmox_create_vm(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn test_proxmox_certificate_rejects_http() {
+        let result = proxmox_certificate_fingerprint("http://127.0.0.1:1".into()).await;
+        assert!(result.unwrap_err().message.contains("HTTPS"));
+    }
+
+    #[cfg(not(feature = "mock"))]
+    #[tokio::test]
+    async fn test_proxmox_certificate_policy_applies_to_direct_login_and_session_commands() {
+        let credentials = ProxmoxCredentials {
+            server_url: "http://127.0.0.1:1".into(),
+            username: "fixture".into(),
+            password: "fixture".into(),
+            totp: None,
+            certificate_sha256: None,
+        };
+        assert!(proxmox_connect(credentials)
+            .await
+            .unwrap_err()
+            .message
+            .contains("HTTPS"));
+        let session = ProxmoxSession {
+            server_url: "http://127.0.0.1:1".into(),
+            ticket: "fixture".into(),
+            csrf_token: "fixture".into(),
+            certificate_sha256: None,
+        };
+        assert!(proxmox_list_nodes(session)
+            .await
+            .unwrap_err()
+            .message
+            .contains("HTTPS"));
+    }
+
+    #[cfg(feature = "mock")]
+    #[tokio::test]
+    async fn test_proxmox_certificate_mock_does_not_connect() {
+        assert_eq!(
+            proxmox_certificate_fingerprint("https://127.0.0.1:1".into())
+                .await
+                .unwrap(),
+            None
+        );
+    }
 
     #[cfg(feature = "mock")]
     #[tokio::test]
@@ -1558,6 +1619,7 @@ mod mock_tests {
             server_url: "https://proxmox.example:8006".to_string(),
             ticket: "mock-ticket".to_string(),
             csrf_token: "mock-csrf-token".to_string(),
+            certificate_sha256: None,
         };
         let bridges = proxmox_list_bridges(session, "pve".to_string())
             .await

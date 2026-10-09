@@ -35,6 +35,11 @@ pub enum Error {
     #[error("Proxmox session expired or invalid. Please reconnect to Proxmox.")]
     ProxmoxSessionExpired,
 
+    /// The server presented a different certificate than the one the user
+    /// trusted for this session. Reconnecting shows the new one to confirm.
+    #[error("The Proxmox server's certificate changed. Reconnect to check it again.")]
+    ProxmoxCertificateChanged,
+
     #[error("Proxmox two-factor authentication: {0}")]
     ProxmoxTwoFactor(String),
     /// Installer-authored guidance, without raw HTTP responses or request URLs.

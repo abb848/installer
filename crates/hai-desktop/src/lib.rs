@@ -15,9 +15,10 @@ use tauri::Manager;
 use commands::{
     check_connection, check_ha_ready, check_ha_updated, check_utm_status, create_utm_vm,
     discard_utm_image, download_utm_image, flash_image, get_haos_release, get_manifest,
-    get_system_info, get_utm_haos_release, get_utm_vm_status, list_block_devices, proxmox_connect,
-    proxmox_create_vm, proxmox_get_next_vm_id, proxmox_list_bridges, proxmox_list_nodes,
-    proxmox_list_storage, resize_utm_vm_disk, start_utm_vm,
+    get_system_info, get_utm_haos_release, get_utm_vm_status, list_block_devices,
+    proxmox_certificate_fingerprint, proxmox_connect, proxmox_create_vm, proxmox_get_next_vm_id,
+    proxmox_list_bridges, proxmox_list_nodes, proxmox_list_storage, resize_utm_vm_disk,
+    start_utm_vm,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -71,6 +72,7 @@ pub fn run() {
             check_ha_ready,
             check_ha_updated,
             // Proxmox commands
+            proxmox_certificate_fingerprint,
             proxmox_connect,
             proxmox_list_nodes,
             proxmox_list_storage,

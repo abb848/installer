@@ -25,6 +25,8 @@ const messages: Record<string, string> = {
   cancelled: "Installation was cancelled.",
   proxmox_api:
     "Proxmox could not complete the request. Check the server, account permissions, and connection.",
+  proxmox_certificate_changed:
+    "The Proxmox server's certificate changed. Reconnect to check it again.",
   drive_disconnected:
     "The storage device was disconnected. Reconnect it and select your drive again.",
   write_protected:

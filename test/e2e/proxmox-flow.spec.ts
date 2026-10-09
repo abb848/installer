@@ -36,7 +36,12 @@ test.describe("Proxmox Installation Flow", () => {
     const connectView = page.locator("proxmox-connect-view");
 
     // Check heading
-    await expect(connectView.locator("h2")).toContainText("Connect to Proxmox");
+    await expect(
+      connectView.getByRole("heading", {
+        name: "Connect to Proxmox VE",
+        exact: true,
+      })
+    ).toBeVisible();
 
     // Check form fields
     await expect(connectView.locator("#server-url")).toBeVisible();

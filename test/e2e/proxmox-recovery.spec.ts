@@ -44,6 +44,9 @@ async function mockLookupFailure(
             });
           }
           switch (cmd) {
+            // A trusted certificate: no confirmation before the login
+            case "proxmox_certificate_fingerprint":
+              return null;
             case "proxmox_connect":
               testWindow.connectionCount++;
               return {

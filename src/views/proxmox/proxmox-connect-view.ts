@@ -3,16 +3,21 @@ import {
   renderErrorHelp,
   type InstallerError,
 } from "../../utils/installer-error.js";
-import { localize } from "../../localization/localize.js";
+import { localize, localizeContent } from "../../localization/localize.js";
 import { LitElement, html, css } from "lit";
 import { ViewAccessibility } from "../../utils/view-accessibility.js";
 import { InstallDiagnostics } from "../../utils/diagnostics.js";
 import { customElement, state } from "lit/decorators.js";
-import { proxmoxConnect } from "../../api/commands.js";
+import {
+  proxmoxCertificateFingerprint,
+  proxmoxConnect,
+} from "../../api/commands.js";
 import { wizardState } from "../../state/wizard-state.js";
 import "@home-assistant/webawesome/dist/components/callout/callout.js";
 import type WaInput from "@home-assistant/webawesome/dist/components/input/input.js";
 import "@home-assistant/webawesome/dist/components/input/input.js";
+import "@home-assistant/webawesome/dist/components/dialog/dialog.js";
+import "@home-assistant/webawesome/dist/components/button/button.js";
 
 const INVALID_INPUT = "invalid_input";
 
@@ -63,6 +68,26 @@ export class ProxmoxConnectView extends LitElement {
 
     wa-callout {
       padding: 0;
+    }
+
+    wa-dialog {
+      --width: 34rem;
+    }
+    wa-dialog p {
+      margin: 0 0 1rem 0;
+    }
+    .certificate-host {
+      overflow-wrap: anywhere;
+    }
+    .fingerprint-label {
+      font-size: 0.8125rem;
+      color: var(--ha-secondary-text-color, #727272);
+      margin-bottom: 0.25rem;
+    }
+    .fingerprint {
+      font-family: monospace;
+      font-size: 0.8125rem;
+      line-height: 1.6;
     }
 
     .status-row {
@@ -131,6 +156,17 @@ export class ProxmoxConnectView extends LitElement {
   @state()
   private _error: InstallerError | null = null;
 
+  @state()
+  private _certificate: { url: string; fingerprint: string } | null = null;
+
+  // The certificate the user already trusted for this server, so a second
+  // attempt (an authenticator code, a typo in the password) doesn't ask again
+  private _trustedCertificate: { url: string; fingerprint: string } | null =
+    null;
+
+  private _resolveCertificate?: (confirmed: boolean) => void;
+  private _connectionAttempt = 0;
+
   connectedCallback() {
     super.connectedCallback();
 
@@ -142,7 +178,44 @@ export class ProxmoxConnectView extends LitElement {
       this._serverUrl = proxmoxSession.server_url;
       this._username = proxmoxUsername ?? this._username;
       this._connected = proxmoxConnected === true;
+      if (proxmoxSession.certificate_sha256) {
+        this._trustedCertificate = {
+          url: proxmoxSession.server_url,
+          fingerprint: proxmoxSession.certificate_sha256,
+        };
+      }
     }
+  }
+
+  disconnectedCallback() {
+    super.disconnectedCallback();
+    this._connectionAttempt++;
+    this._connecting = false;
+    this._finishCertificate(false);
+  }
+
+  private _finishCertificate(confirmed: boolean) {
+    this._resolveCertificate?.(confirmed);
+    this._resolveCertificate = undefined;
+    this._certificate = null;
+  }
+
+  /** Ask the user to trust a certificate their computer does not trust. */
+  private async _confirmCertificate(
+    url: string,
+    fingerprint: string
+  ): Promise<boolean> {
+    const trusted = this._trustedCertificate;
+    if (trusted?.url === url && trusted.fingerprint === fingerprint) {
+      return true;
+    }
+
+    this._certificate = { url, fingerprint };
+    const confirmed = await new Promise<boolean>((resolve) => {
+      this._resolveCertificate = resolve;
+    });
+    if (confirmed) this._trustedCertificate = { url, fingerprint };
+    return confirmed;
   }
 
   /** Connect to Proxmox server. Returns true if successful. */
@@ -151,6 +224,7 @@ export class ProxmoxConnectView extends LitElement {
       return true;
     }
 
+    if (this._connecting) return false;
     if (!this._serverUrl || !this._username || !this._password) {
       return this._validationError(
         localize("proxmox.validation.required_fields")
@@ -164,22 +238,48 @@ export class ProxmoxConnectView extends LitElement {
       if (parsed.protocol !== "https:") {
         return this._validationError(localize("proxmox.validation.https_url"));
       }
+      if (
+        parsed.username ||
+        parsed.password ||
+        parsed.pathname !== "/" ||
+        parsed.search ||
+        parsed.hash
+      ) {
+        return this._validationError(
+          localize("views.proxmox.proxmox_connect_view.url_without_extras")
+        );
+      }
     } catch {
       return this._validationError(localize("proxmox.validation.valid_url"));
     }
 
     this._connecting = true;
     this._error = null;
+    const attempt = ++this._connectionAttempt;
+    const flowGeneration = wizardState.flowGeneration;
+    const isCurrent = () =>
+      this.isConnected &&
+      attempt === this._connectionAttempt &&
+      flowGeneration === wizardState.flowGeneration;
     const diagnostics = new InstallDiagnostics("proxmox");
     diagnostics.advance("connecting");
 
     try {
+      const fingerprint = await proxmoxCertificateFingerprint(url);
+      if (!isCurrent()) return false;
+      // No fingerprint means the platform trusts the certificate
+      if (fingerprint) {
+        const confirmed = await this._confirmCertificate(url, fingerprint);
+        if (!confirmed || !isCurrent()) return false;
+      }
       const session = await proxmoxConnect({
         server_url: url,
         username: this._username,
         password: this._password,
         totp: this._totp.trim() || undefined,
+        ...(fingerprint ? { certificate_sha256: fingerprint } : {}),
       });
+      if (!isCurrent()) return false;
 
       this._connected = true;
       diagnostics.advance("complete");
@@ -190,7 +290,8 @@ export class ProxmoxConnectView extends LitElement {
       wizardState.setSelection("proxmoxConnected", true);
       return true;
     } catch (error) {
-      if (this.isConnected) diagnostics.fail(error);
+      if (!isCurrent()) return false;
+      diagnostics.fail(error);
       this._error = installerError(
         error,
         localize("proxmox.connection_failed")
@@ -198,8 +299,10 @@ export class ProxmoxConnectView extends LitElement {
       wizardState.setSelection("proxmoxConnected", false);
       return false;
     } finally {
-      this._totp = "";
-      this._connecting = false;
+      if (attempt === this._connectionAttempt) {
+        this._totp = "";
+        this._connecting = false;
+      }
     }
   }
 
@@ -211,7 +314,14 @@ export class ProxmoxConnectView extends LitElement {
     try {
       const url = this._serverUrl.trim();
       const parsed = new URL(url);
-      return parsed.protocol === "https:";
+      return (
+        parsed.protocol === "https:" &&
+        !parsed.username &&
+        !parsed.password &&
+        parsed.pathname === "/" &&
+        !parsed.search &&
+        !parsed.hash
+      );
     } catch {
       return false;
     }
@@ -220,6 +330,8 @@ export class ProxmoxConnectView extends LitElement {
   private _onServerUrlChange(e: Event) {
     const input = e.target as WaInput;
     this._serverUrl = input.value ?? "";
+    // A trusted certificate belongs to the server it was shown for
+    this._trustedCertificate = null;
     this._resetConnection();
   }
 
@@ -358,14 +470,65 @@ export class ProxmoxConnectView extends LitElement {
           @keydown=${this._onKeyDown}
           ?disabled=${this._connecting}
         ></wa-input>
-
-        <wa-callout variant="neutral" appearance="plain" size="s">
-          ${localize(
-            "views.proxmox.proxmox_connect_view.proxmox_uses_a_self_signed_certificate_by_default_so_the_installer_accepts_"
-          )}
-        </wa-callout>
       </div>
+      <wa-dialog
+        label=${localize(
+          "views.proxmox.proxmox_connect_view.trust_server_title"
+        )}
+        .open=${this._certificate !== null}
+        @wa-after-hide=${() => this._finishCertificate(false)}
+      >
+        <p>
+          ${localizeContent(
+            "views.proxmox.proxmox_connect_view.untrusted_certificate",
+            {
+              server: html`<strong class="certificate-host"
+                >${this._certificate?.url}</strong
+              >`,
+            }
+          )}
+        </p>
+        <p>
+          ${localize(
+            "views.proxmox.proxmox_connect_view.untrusted_certificate_is_normal"
+          )}
+        </p>
+        <p>
+          ${localize(
+            "views.proxmox.proxmox_connect_view.only_continue_for_your_server"
+          )}
+        </p>
+        <div class="fingerprint-label">
+          ${localize(
+            "views.proxmox.proxmox_connect_view.certificate_fingerprint"
+          )}
+        </div>
+        <div class="fingerprint">
+          ${this._renderFingerprint(this._certificate?.fingerprint ?? "")}
+        </div>
+        <wa-button
+          slot="footer"
+          appearance="outlined"
+          @click=${() => this._finishCertificate(false)}
+          >${localize("common.cancel")}</wa-button
+        >
+        <wa-button
+          slot="footer"
+          variant="brand"
+          @click=${() => this._finishCertificate(true)}
+          >${localize(
+            "views.proxmox.proxmox_connect_view.trust_and_connect"
+          )}</wa-button
+        >
+      </wa-dialog>
     `;
+  }
+
+  private _renderFingerprint(fingerprint: string) {
+    // Wrap between bytes, never inside one
+    return fingerprint
+      .split(":")
+      .map((byte, index) => (index ? html`:<wbr />${byte}` : byte));
   }
 
   private _renderError() {

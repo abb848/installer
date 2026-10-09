@@ -199,7 +199,6 @@
   "views.proxmox.proxmox_connect_view.enter_your_password": "Enter your password",
   "views.proxmox.proxmox_connect_view.enter_your_proxmox_server_credentials": "Enter your Proxmox server credentials",
   "views.proxmox.proxmox_connect_view.password": "Password",
-  "views.proxmox.proxmox_connect_view.proxmox_uses_a_self_signed_certificate_by_default_so_the_installer_accepts_": "Proxmox uses a self-signed certificate by default, so the installer accepts the server's certificate without checking it. The connection is encrypted, but only connect on a network you trust.",
   "views.proxmox.proxmox_connect_view.server_url": "Server URL",
   "views.proxmox.proxmox_connect_view.username": "Username",
   "views.proxmox.proxmox_connect_view.authenticator_app_code_optional": "Authenticator app code (optional)",
@@ -325,5 +324,12 @@
   "views.connection_check_view.checking_connection": "Checking connection",
   "views.connection_check_view.unable_to_connect": "Unable to connect",
   "views.connection_check_view.connecting_to_home_assistant_s_version_service": "Connecting to Home Assistant's version service...",
-  "views.connection_check_view.retry": "Retry"
+  "views.connection_check_view.retry": "Retry",
+  "views.proxmox.proxmox_connect_view.url_without_extras": "Use a server URL without credentials, a path, query, or fragment",
+  "views.proxmox.proxmox_connect_view.trust_server_title": "Trust this Proxmox server?",
+  "views.proxmox.proxmox_connect_view.untrusted_certificate": "Your computer doesn't trust the security certificate of {server}.",
+  "views.proxmox.proxmox_connect_view.untrusted_certificate_is_normal": "That is normal for most Proxmox servers. Proxmox creates its own certificate when it is installed, and your browser shows the same warning when you open the Proxmox web interface.",
+  "views.proxmox.proxmox_connect_view.only_continue_for_your_server": "Only continue if this is your Proxmox server. If you didn't expect this warning, cancel. Your password has not been sent yet.",
+  "views.proxmox.proxmox_connect_view.certificate_fingerprint": "Certificate fingerprint (SHA-256), shown in Proxmox under System > Certificates",
+  "views.proxmox.proxmox_connect_view.trust_and_connect": "Trust and connect"
 }

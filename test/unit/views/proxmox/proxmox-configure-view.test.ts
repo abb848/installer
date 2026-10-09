@@ -785,6 +785,31 @@ describe("proxmox-configure-view", () => {
     );
   });
 
+  it("offers reconnect, not a retry, when the certificate changed", async () => {
+    wizardState.nextStep();
+    mockTauriIpc(() => {
+      throw {
+        message: "The Proxmox server's certificate changed.",
+        code: "proxmox_certificate_changed",
+        retryable: false,
+        details: {},
+      };
+    });
+    const el = await fixture<ProxmoxConfigureView>(html`
+      <proxmox-configure-view></proxmox-configure-view>
+    `);
+    await waitUntil(() => !!el.shadowRoot!.querySelector("[role=alert]"));
+
+    // The pinned session can never succeed again, so it is dropped
+    const selections = wizardState.getState().selections;
+    expect(selections.proxmoxSession).to.be.undefined;
+    expect(selections.proxmoxConnected).to.be.false;
+    const button = el.shadowRoot!.querySelector("wa-button")!;
+    expect(button.textContent).to.contain("Reconnect");
+    button.click();
+    expect(wizardState.currentStep!.id).to.equal("connection");
+  });
+
   it("keeps a non-default storage through reconnect and revalidation", async () => {
     wizardState.nextStep();
     wizardState.setSelection("proxmoxNode", "pve2");

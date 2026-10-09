@@ -296,6 +296,9 @@ pub struct ProxmoxCredentials {
     #[serde(default)]
     #[cfg_attr(test, ts(optional = nullable))]
     pub totp: Option<String>,
+    /// Explicitly confirmed SHA-256 leaf certificate fingerprint, for this login only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub certificate_sha256: Option<String>,
 }
 
 /// Proxmox session (authentication result)
@@ -308,6 +311,9 @@ pub struct ProxmoxSession {
     pub ticket: String,
     /// CSRF prevention token
     pub csrf_token: String,
+    /// Certificate approved at login; enforce it for every request in this session.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub certificate_sha256: Option<String>,
 }
 
 /// Proxmox node information

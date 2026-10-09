@@ -132,17 +132,20 @@ fn is_static_x86_64_elf(bin: &[u8]) -> bool {
     const ET_DYN: u16 = 3; // static-pie, which is what musl builds produce
     const PT_LOAD: u32 = 1;
     const PT_INTERP: u32 = 3;
-    let u16_at = |at: usize| {
-        bin.get(at..at + 2)
-            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+    let u16_at = |at: usize| -> Option<u16> {
+        Some(u16::from_le_bytes(
+            bin.get(at..at.checked_add(2)?)?.try_into().ok()?,
+        ))
     };
-    let u32_at = |at: usize| {
-        bin.get(at..at + 4)
-            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+    let u32_at = |at: usize| -> Option<u32> {
+        Some(u32::from_le_bytes(
+            bin.get(at..at.checked_add(4)?)?.try_into().ok()?,
+        ))
     };
-    let u64_at = |at: usize| {
-        bin.get(at..at + 8)
-            .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
+    let u64_at = |at: usize| -> Option<u64> {
+        Some(u64::from_le_bytes(
+            bin.get(at..at.checked_add(8)?)?.try_into().ok()?,
+        ))
     };
 
     let header_ok = bin.starts_with(b"\x7fELF")
@@ -163,8 +166,8 @@ fn is_static_x86_64_elf(bin: &[u8]) -> bool {
     };
     let types: Option<Vec<u32>> = (0..usize::from(phnum))
         .map(|i| {
-            phoff
-                .checked_add(i * usize::from(phentsize))
+            i.checked_mul(usize::from(phentsize))
+                .and_then(|offset| phoff.checked_add(offset))
                 .and_then(u32_at)
         })
         .collect();
@@ -219,6 +222,11 @@ mod tests {
             "no program headers"
         );
         assert!(!is_static_x86_64_elf(&elf(2, 0x3e, 6)), "no PT_LOAD");
+        let huge = (usize::MAX as u64 - 1).to_le_bytes();
+        assert!(
+            !is_static_x86_64_elf(&changed(0x20, &huge)),
+            "e_phoff at the end of memory"
+        );
     }
 
     #[test]

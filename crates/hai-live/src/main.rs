@@ -17,6 +17,8 @@ use image::BundledImage;
 const SYS_BLOCK: &str = "/sys/block";
 const DEV: &str = "/dev";
 const MEDIA: &str = "/media";
+const DISK_CHANGED: &str =
+    "The disk changed, disappeared or could not be checked again. Nothing was written.";
 
 fn main() {
     loop {
@@ -94,7 +96,7 @@ fn install(image: &BundledImage, disk: &Disk) {
     let usable = drives::list(sys_block)
         .is_ok_and(|current| safety::still_usable(disk, current, sys_block, dev));
     if !usable {
-        return fail("The disk changed or disappeared. Nothing was written.");
+        return fail(DISK_CHANGED);
     }
     let path = dev.join(&disk.name);
     let mut target = match writer::open_disk(&path) {
@@ -106,7 +108,7 @@ fn install(image: &BundledImage, disk: &Disk) {
         .is_ok_and(|current| current.contains(&Entry::Disk(disk.clone())))
         && writer::is_same_device(&target, &path);
     if !unchanged {
-        return fail("The disk changed or disappeared. Nothing was written.");
+        return fail(DISK_CHANGED);
     }
     println!("\nWriting Home Assistant OS to {}...", disk.name);
     let mut last = None;
@@ -211,8 +213,11 @@ fn prompt(question: &str) -> String {
     print!("{question}");
     let _ = std::io::stdout().flush();
     let mut answer = String::new();
-    let _ = std::io::stdin().lock().read_line(&mut answer);
-    answer.trim().to_string()
+    match std::io::stdin().lock().read_line(&mut answer) {
+        // No console to read from. Exit rather than spin; init restarts hai-live on tty1.
+        Ok(0) | Err(_) => std::process::exit(1),
+        Ok(_) => answer.trim().to_string(),
+    }
 }
 
 fn run(command: &str) {

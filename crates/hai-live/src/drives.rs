@@ -123,8 +123,8 @@ fn entry(
     }
     let size_bytes = read_trimmed(&dir.join("size"))
         .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(0)
-        * 512; // sysfs always counts 512-byte sectors
+        .and_then(|sectors| sectors.checked_mul(512)) // sysfs always counts 512-byte sectors
+        .unwrap_or(0);
     if size_bytes == 0 {
         return Entry::Skipped {
             name,

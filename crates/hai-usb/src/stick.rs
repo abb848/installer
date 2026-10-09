@@ -164,12 +164,15 @@ fn is_static_x86_64_elf(bin: &[u8]) -> bool {
     let Ok(phoff) = usize::try_from(phoff) else {
         return false;
     };
+    const PHENTSIZE: usize = 56; // ELF64 program header size
+    let table_end = usize::from(phnum)
+        .checked_mul(PHENTSIZE)
+        .and_then(|len| phoff.checked_add(len));
+    if usize::from(phentsize) != PHENTSIZE || table_end.is_none_or(|end| end > bin.len()) {
+        return false;
+    }
     let types: Option<Vec<u32>> = (0..usize::from(phnum))
-        .map(|i| {
-            i.checked_mul(usize::from(phentsize))
-                .and_then(|offset| phoff.checked_add(offset))
-                .and_then(u32_at)
-        })
+        .map(|i| u32_at(phoff + i * PHENTSIZE))
         .collect();
     types.is_some_and(|types| types.contains(&PT_LOAD) && !types.contains(&PT_INTERP))
 }
@@ -222,6 +225,14 @@ mod tests {
             "no program headers"
         );
         assert!(!is_static_x86_64_elf(&elf(2, 0x3e, 6)), "no PT_LOAD");
+        assert!(
+            !is_static_x86_64_elf(&elf(2, 0x3e, 1)[..100]),
+            "program header table cut off"
+        );
+        assert!(
+            !is_static_x86_64_elf(&changed(0x36, &[4, 0])),
+            "wrong program header size"
+        );
         let huge = (usize::MAX as u64 - 1).to_le_bytes();
         assert!(
             !is_static_x86_64_elf(&changed(0x20, &huge)),

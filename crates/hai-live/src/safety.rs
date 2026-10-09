@@ -48,14 +48,13 @@ pub fn review(entries: Vec<Entry>, sys_block: &Path, dev: &Path) -> Review {
     review
 }
 
-/// Re-checks right before writing that `disk` is still present, unchanged and usable.
-pub fn still_usable(disk: &Disk, sys_block: &Path, dev: &Path) -> bool {
-    drives::list(sys_block).is_ok_and(|entries| {
-        review(entries, sys_block, dev)
-            .choices
-            .iter()
-            .any(|c| c.problem.is_none() && c.disk == *disk)
-    })
+/// Re-checks right before writing that `disk` is still in `current` (a fresh [`drives::list`]),
+/// unchanged (name, model, size and serial) and usable.
+pub fn still_usable(disk: &Disk, current: Vec<Entry>, sys_block: &Path, dev: &Path) -> bool {
+    review(current, sys_block, dev)
+        .choices
+        .iter()
+        .any(|c| c.problem.is_none() && c.disk == *disk)
 }
 
 /// Whether any partition of `disk` carries the HAI stick's FAT label.
@@ -76,7 +75,7 @@ fn has_hai_label(sector: &[u8; 512]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::drives::tests::{add_block, add_partition};
+    use crate::drives::tests::{add_block, add_partition, fake_link};
 
     fn fat32_sector(label: &[u8; 11]) -> Vec<u8> {
         let mut sector = vec![0u8; 512];
@@ -102,7 +101,7 @@ mod tests {
         add_block(&sys, "sdc", 8_589_934_592, &[("model", "Small")]);
         add_block(&sys, "sr0", 1_000_000, &[]);
 
-        let review = review(drives::list(&sys).unwrap(), &sys, &dev);
+        let review = review(drives::list_with(&sys, &fake_link).unwrap(), &sys, &dev);
 
         let shown: Vec<(&str, Option<&str>)> = review
             .choices
@@ -112,6 +111,29 @@ mod tests {
         assert_eq!(shown, [("sdb", None), ("sdc", Some("smaller than 32 GB"))]);
         assert!(review.hidden.contains(&("sda".into(), "HAI live stick")));
         assert!(review.hidden.contains(&("sr0".into(), "optical drive")));
+    }
+
+    #[test]
+    fn refuses_a_swapped_disk_with_the_same_name_model_and_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let (sys, dev) = (dir.path().join("sys"), dir.path().join("dev"));
+        std::fs::create_dir_all(&dev).unwrap();
+        let disk = |serial: &str| {
+            add_block(
+                &sys,
+                "nvme0n1",
+                64_000_000_000,
+                &[("model", "SSD"), ("serial", serial)],
+            );
+            drives::list_with(&sys, &fake_link).unwrap()
+        };
+
+        let picked = match &disk("AAA")[0] {
+            Entry::Disk(d) => d.clone(),
+            other => panic!("{other:?}"),
+        };
+        assert!(still_usable(&picked, disk("AAA"), &sys, &dev));
+        assert!(!still_usable(&picked, disk("BBB"), &sys, &dev));
     }
 
     #[test]

@@ -44,6 +44,13 @@ npm run test:e2e
 cargo test --workspace
 ```
 
+### Windows Installer Identity
+
+NSIS uses the product name and publisher for its installation identity. Keep
+**Home Assistant Installer** and the identifier `io.home-assistant.installer`
+stable; the publisher defaults from the identifier. Automatic migration from a
+preview MSI to NSIS is not promised.
+
 ### Shared Wire Types
 
 `src/api/types.ts` is generated from the Rust types in `hai-core`. After changing

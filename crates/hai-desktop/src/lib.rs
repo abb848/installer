@@ -83,3 +83,42 @@ pub fn run() {
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+    use tauri::utils::config::{parse::parse_json, BundleTarget, BundleType, WebviewInstallMode};
+
+    #[test]
+    fn beta_packaging_has_explicit_formats_and_runtime_requirements() {
+        let config = parse_json(
+            include_str!("../tauri.conf.json"),
+            Path::new("tauri.conf.json"),
+        )
+        .unwrap();
+        assert_eq!(
+            config.bundle.targets,
+            BundleTarget::List(vec![
+                BundleType::Dmg,
+                BundleType::Nsis,
+                BundleType::Deb,
+                BundleType::Rpm,
+                BundleType::AppImage,
+            ])
+        );
+        assert_eq!(
+            config.bundle.macos.minimum_system_version.as_deref(),
+            Some("14.5")
+        );
+        assert_eq!(
+            config.bundle.windows.webview_install_mode,
+            WebviewInstallMode::EmbedBootstrapper { silent: true }
+        );
+        for dependencies in [
+            config.bundle.linux.deb.depends,
+            config.bundle.linux.rpm.depends,
+        ] {
+            assert!(dependencies.unwrap().iter().any(|name| name == "udisks2"));
+        }
+    }
+}

@@ -12,7 +12,7 @@ body:
     id: platform
     attributes:
       label: Operating System
-      description: Operating system and version
+      description: OS and version that runs the installer, not the device receiving Home Assistant OS. See the README for beta requirements.
     validations:
       required: true
 
@@ -28,7 +28,7 @@ body:
     id: package
     attributes:
       label: Package Type
-      placeholder: "App, AppImage, Deb, Rpm, Nsis, Msi, or unbundled"
+      placeholder: "App, AppImage, Deb, Rpm, Nsis, or unbundled"
 
   - type: input
     id: flow

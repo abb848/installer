@@ -1,4 +1,5 @@
 import { html } from "lit";
+import { localize } from "../localization/localize.js";
 import { formatBytes } from "../api/commands.js";
 import { openExternalLink } from "./external-url.js";
 import "../components/diagnostics-actions.js";
@@ -110,7 +111,7 @@ export function renderErrorHelp() {
   // a public issue would contain before anything leaves the installer
   return html`<p class="error-help">
     <a href=${help} @click=${(event: Event) => openExternalLink(event, help)}
-      >Installation help</a
+      >${localize("common.installation_help")}</a
     >
     <span aria-hidden="true"> · </span>
     <diagnostics-actions></diagnostics-actions>

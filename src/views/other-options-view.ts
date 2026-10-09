@@ -1,3 +1,4 @@
+import { localize, localizeContent } from "../localization/localize.js";
 import { LitElement, html, css } from "lit";
 import {
   ViewAccessibility,
@@ -20,35 +21,42 @@ const INSTALLATION_TYPES_URL =
 
 const OTHER_OPTIONS: OtherOption[] = [
   {
-    title: "Home Assistant Container",
-    description: "Run it with Docker, without apps (add-ons) or the Supervisor",
+    title: localize("views.other_options_view.home_assistant_container"),
+    description: localize(
+      "views.other_options_view.run_it_with_docker_without_apps_add_ons_or_the_supervisor"
+    ),
     url: "https://www.home-assistant.io/installation/linux#docker-compose",
     icon: "docker",
   },
   {
-    title: "Synology NAS",
-    description:
-      "Run Home Assistant on your Synology NAS using Virtual Machine Manager",
+    title: localize("views.other_options_view.synology_nas"),
+    description: localize(
+      "views.other_options_view.run_home_assistant_on_your_synology_nas_using_virtual_machine_manager"
+    ),
     url: "https://www.home-assistant.io/installation/synology",
     icon: "synology",
   },
   {
-    title: "QNAP NAS",
-    description:
-      "Run Home Assistant on your QNAP NAS using Virtualization Station",
+    title: localize("views.other_options_view.qnap_nas"),
+    description: localize(
+      "views.other_options_view.run_home_assistant_on_your_qnap_nas_using_virtualization_station"
+    ),
     url: "https://www.home-assistant.io/installation/qnap",
     icon: "qnap",
   },
   {
-    title: "Linux virtual machine",
-    description: "Run Home Assistant OS in KVM, VirtualBox, or VMware on Linux",
+    title: localize("views.other_options_view.linux_virtual_machine"),
+    description: localize(
+      "views.other_options_view.run_home_assistant_os_in_kvm_virtualbox_or_vmware_on_linux"
+    ),
     url: "https://www.home-assistant.io/installation/linux",
     icon: "linux",
   },
   {
-    title: "Windows virtual machine",
-    description:
-      "Run Home Assistant OS in Hyper-V, VirtualBox, or VMware on Windows",
+    title: localize("views.other_options_view.windows_virtual_machine"),
+    description: localize(
+      "views.other_options_view.run_home_assistant_os_in_hyper_v_virtualbox_or_vmware_on_windows"
+    ),
     url: "https://www.home-assistant.io/installation/windows",
     icon: "windows",
   },
@@ -113,24 +121,30 @@ export class OtherOptionsView extends LitElement {
     return html`
       <div class="header">
         <wa-button appearance="plain" @click=${this._onBack}>
-          <span slot="start">←</span>
-          Back
+          <span slot="start">←</span> ${localize("common.back")}
         </wa-button>
       </div>
 
       <div class="content">
-        <h1>Other installation methods</h1>
+        <h1>
+          ${localize("views.other_options_view.other_installation_methods")}
+        </h1>
         <p class="subtitle">
-          These options are not directly supported by this installer, but you
-          can follow our documentation to set them up.
-          <a
-            href=${INSTALLATION_TYPES_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            @click=${(event: Event) =>
-              openExternalLink(event, INSTALLATION_TYPES_URL)}
-            >Compare installation types</a
-          >.
+          ${localizeContent(
+            "views.other_options_view.these_options_are_not_directly_supported_by_this_installer_but_you_can_foll",
+            {
+              value0: html`<a
+                href=${INSTALLATION_TYPES_URL}
+                target="_blank"
+                rel="noopener noreferrer"
+                @click=${(event: Event) =>
+                  openExternalLink(event, INSTALLATION_TYPES_URL)}
+                >${localize(
+                  "views.other_options_view.compare_installation_types"
+                )}</a
+              >`,
+            }
+          )}
         </p>
 
         <div class="options-list">

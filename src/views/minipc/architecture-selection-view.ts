@@ -1,3 +1,4 @@
+import { localize, localizeContent } from "../../localization/localize.js";
 import {
   installerError,
   renderErrorHelp,
@@ -234,7 +235,12 @@ export class MiniPCArchitectureSelectionView extends LitElement {
       wizardState.setSelection("deviceCatalogReady", true);
     } catch (err) {
       if (this.isConnected) new InstallDiagnostics("flash").fail(err);
-      this._error = installerError(err, "Failed to load architectures");
+      this._error = installerError(
+        err,
+        localize(
+          "views.minipc.architecture_selection_view.failed_to_load_architectures"
+        )
+      );
     } finally {
       this._loading = false;
     }
@@ -258,7 +264,7 @@ export class MiniPCArchitectureSelectionView extends LitElement {
       return html`
         <div class="loading">
           <div class="loading-spinner"></div>
-          <span>Loading...</span>
+          <span>${localize("common.loading")}</span>
         </div>
       `;
     }
@@ -285,7 +291,7 @@ export class MiniPCArchitectureSelectionView extends LitElement {
                 appearance="outlined"
                 @click=${this._loadDevices}
               >
-                Try again
+                ${localize("components.app_shell.try_again")}
               </wa-button>`
             : ""}
         </div>
@@ -293,13 +299,23 @@ export class MiniPCArchitectureSelectionView extends LitElement {
     }
 
     return html`
-      <h2>Select your architecture</h2>
-      <p class="subtitle">Choose the CPU architecture of your mini PC.</p>
+      <h2>
+        ${localize(
+          "views.minipc.architecture_selection_view.select_your_architecture"
+        )}
+      </h2>
+      <p class="subtitle">
+        ${localize(
+          "views.minipc.architecture_selection_view.choose_the_cpu_architecture_of_your_mini_pc"
+        )}
+      </p>
 
       <wa-radio-group
         class="options"
         orientation="horizontal"
-        label="CPU architecture"
+        label=${localize(
+          "views.minipc.architecture_selection_view.cpu_architecture"
+        )}
         .value=${this._selectedDeviceId ?? ""}
         @change=${this._onDeviceChange}
       >
@@ -314,14 +330,20 @@ export class MiniPCArchitectureSelectionView extends LitElement {
                   </svg>
                 </div>
                 <div class="option-content">
-                  <p class="option-title">Intel/AMD (x86-64)</p>
+                  <p class="option-title">
+                    ${localize(
+                      "views.minipc.architecture_selection_view.intel_amd_x86_64"
+                    )}
+                  </p>
                   <p class="option-description">
-                    Standard PC architecture used by most mini PCs, NUCs, and
-                    desktops
+                    ${localize(
+                      "views.minipc.architecture_selection_view.standard_pc_architecture_used_by_most_mini_pcs_nucs_and_desktops"
+                    )}
                   </p>
                   <p class="option-examples">
-                    Examples: Intel NUC, ASUS NUC, Beelink, GMKtec, Minisforum,
-                    Dell, HP
+                    ${localize(
+                      "views.minipc.architecture_selection_view.examples_intel_nuc_asus_nuc_beelink_gmktec_minisforum_dell_hp"
+                    )}
                   </p>
                 </div>
               </wa-radio>
@@ -338,14 +360,20 @@ export class MiniPCArchitectureSelectionView extends LitElement {
                   </svg>
                 </div>
                 <div class="option-content">
-                  <p class="option-title">ARM (aarch64)</p>
+                  <p class="option-title">
+                    ${localize(
+                      "views.minipc.architecture_selection_view.arm_aarch64"
+                    )}
+                  </p>
                   <p class="option-description">
-                    ARM64 systems with UEFI firmware supported by Home Assistant
-                    OS
+                    ${localize(
+                      "views.minipc.architecture_selection_view.arm64_systems_with_uefi_firmware_supported_by_home_assistant_os"
+                    )}
                   </p>
                   <p class="option-examples">
-                    Examples: Ampere-based servers and other UEFI ARM64
-                    machines. A Raspberry Pi or ODROID has its own option.
+                    ${localize(
+                      "views.minipc.architecture_selection_view.examples_ampere_based_servers_and_other_uefi_arm64_machines_a_raspberry_pi_"
+                    )}
                   </p>
                 </div>
               </wa-radio>
@@ -354,8 +382,14 @@ export class MiniPCArchitectureSelectionView extends LitElement {
       </wa-radio-group>
       ${getPlatform() === "macos"
         ? html`<p class="mac-note">
-            Want Home Assistant on this Mac itself? Start over and choose
-            <strong>Virtual machine</strong> to run it in UTM.
+            ${localizeContent(
+              "views.minipc.architecture_selection_view.want_home_assistant_on_this_mac_itself_start_over_and_choose_value_to_run_i",
+              {
+                value0: html`<strong
+                  >${localize("components.app_shell.virtual_machine")}</strong
+                >`,
+              }
+            )}
           </p>`
         : ""}
     `;

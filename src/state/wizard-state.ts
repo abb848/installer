@@ -1,3 +1,4 @@
+import { localize } from "../localization/localize.js";
 import type { HaosConfig, ProxmoxSession, UtmVmConfig } from "../api/types.js";
 import type { InstallationPath } from "../views/path-selection-view.js";
 
@@ -79,38 +80,44 @@ type WizardStateListener = (state: WizardState) => void;
 
 const FLOW_STEPS: Record<WizardFlow, WizardStep[]> = {
   sbc: [
-    { id: "device", title: "Select device" },
-    { id: "drive", title: "Select drive" },
-    { id: "confirm", title: "Confirm" },
-    { id: "flash", title: "Install" },
-    { id: "success", title: "Done" },
+    { id: "device", title: localize("state.wizard_state.select_device") },
+    { id: "drive", title: localize("state.wizard_state.select_drive") },
+    { id: "confirm", title: localize("common.confirm") },
+    { id: "flash", title: localize("common.install") },
+    { id: "success", title: localize("common.done") },
   ],
   minipc: [
-    { id: "method", title: "Installation method" },
-    { id: "architecture", title: "Select architecture" },
-    { id: "drive", title: "Select drive" },
-    { id: "confirm", title: "Confirm" },
-    { id: "flash", title: "Install" },
-    { id: "success", title: "Done" },
+    { id: "method", title: localize("state.wizard_state.installation_method") },
+    {
+      id: "architecture",
+      title: localize("state.wizard_state.select_architecture"),
+    },
+    { id: "drive", title: localize("state.wizard_state.select_drive") },
+    { id: "confirm", title: localize("common.confirm") },
+    { id: "flash", title: localize("common.install") },
+    { id: "success", title: localize("common.done") },
   ],
   "ha-hardware": [
-    { id: "device", title: "Select device" },
-    { id: "connect", title: "Connect" },
-    { id: "success", title: "Done" },
+    { id: "device", title: localize("state.wizard_state.select_device") },
+    { id: "connect", title: localize("state.wizard_state.connect") },
+    { id: "success", title: localize("common.done") },
   ],
   proxmox: [
-    { id: "connection", title: "Connect to Proxmox" },
-    { id: "configure", title: "Configure VM" },
-    { id: "confirm", title: "Confirm" },
-    { id: "install", title: "Install" },
-    { id: "success", title: "Done" },
+    {
+      id: "connection",
+      title: localize("state.wizard_state.connect_to_proxmox"),
+    },
+    { id: "configure", title: localize("state.wizard_state.configure_vm") },
+    { id: "confirm", title: localize("common.confirm") },
+    { id: "install", title: localize("common.install") },
+    { id: "success", title: localize("common.done") },
   ],
   vm: [
-    { id: "check", title: "Check requirements" },
-    { id: "configure", title: "Configure VM" },
-    { id: "confirm", title: "Confirm" },
-    { id: "install", title: "Install" },
-    { id: "success", title: "Done" },
+    { id: "check", title: localize("state.wizard_state.check_requirements") },
+    { id: "configure", title: localize("state.wizard_state.configure_vm") },
+    { id: "confirm", title: localize("common.confirm") },
+    { id: "install", title: localize("common.install") },
+    { id: "success", title: localize("common.done") },
   ],
 };
 

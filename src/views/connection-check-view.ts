@@ -1,6 +1,7 @@
 import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { checkConnection } from "../api/commands.js";
+import { localize } from "../localization/localize.js";
 import "@home-assistant/webawesome/dist/components/button/button.js";
 import "@home-assistant/webawesome/dist/components/spinner/spinner.js";
 const sadCasita = new URL("../assets/casita/Sad.svg", import.meta.url).href;
@@ -78,17 +79,28 @@ export class ConnectionCheckView extends LitElement {
   render() {
     return html`
       ${this._checking
-        ? html`<wa-spinner aria-label="Checking connection"></wa-spinner>`
+        ? html`<wa-spinner
+            aria-label=${localize(
+              "views.connection_check_view.checking_connection"
+            )}
+          ></wa-spinner>`
         : html`<img src=${sadCasita} alt="" />`}
-      <h2>${this._checking ? "Checking connection" : "Unable to connect"}</h2>
+      <h2>
+        ${this._checking
+          ? localize("views.connection_check_view.checking_connection")
+          : localize("views.connection_check_view.unable_to_connect")}
+      </h2>
       <p role=${this._error ? "alert" : "status"}>
-        ${this._error || "Connecting to Home Assistant's version service..."}
+        ${this._error ||
+        localize(
+          "views.connection_check_view.connecting_to_home_assistant_s_version_service"
+        )}
       </p>
       <div class="actions">
-        <wa-button @click=${this._back}>Back</wa-button>
+        <wa-button @click=${this._back}>${localize("common.back")}</wa-button>
         ${this._error
           ? html`<wa-button variant="brand" @click=${this._check}
-              >Retry</wa-button
+              >${localize("views.connection_check_view.retry")}</wa-button
             >`
           : ""}
       </div>

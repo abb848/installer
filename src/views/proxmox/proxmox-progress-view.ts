@@ -2,6 +2,7 @@ import {
   installerError,
   type InstallerError,
 } from "../../utils/installer-error.js";
+import { localize } from "../../localization/localize.js";
 import { LitElement, html, css } from "lit";
 import { InstallDiagnostics } from "../../utils/diagnostics.js";
 import { customElement, state } from "lit/decorators.js";
@@ -135,7 +136,11 @@ export class ProxmoxProgressView extends LitElement {
     const session = selections.proxmoxSession;
 
     if (!session) {
-      this._setError("No Proxmox session available");
+      this._setError(
+        localize(
+          "views.proxmox.proxmox_progress_view.no_proxmox_session_available"
+        )
+      );
       return;
     }
 
@@ -228,7 +233,12 @@ export class ProxmoxProgressView extends LitElement {
   private _setError(error: unknown) {
     this._diagnostics?.fail(error);
     this._stage = "error";
-    this._error = installerError(error, "Failed to create virtual machine");
+    this._error = installerError(
+      error,
+      localize(
+        "views.proxmox.proxmox_progress_view.failed_to_create_virtual_machine"
+      )
+    );
     this.dispatchEvent(
       new CustomEvent("install-error", {
         detail: { retryable: this._error.retryable },
@@ -254,7 +264,9 @@ export class ProxmoxProgressView extends LitElement {
           id,
           label:
             id === "updating"
-              ? "Installing latest Home Assistant"
+              ? localize(
+                  "views.proxmox.proxmox_progress_view.installing_latest_home_assistant"
+                )
               : this._getStageDescription(id),
         }))}
         .stage=${stage}
@@ -291,48 +303,64 @@ export class ProxmoxProgressView extends LitElement {
   private _getStageTitle(stage: string): string {
     switch (stage) {
       case "downloading":
-        return "Downloading";
+        return localize("views.proxmox.proxmox_progress_view.downloading");
       case "extracting":
-        return "Uploading";
+        return localize("views.proxmox.proxmox_progress_view.uploading");
       case "writing":
-        return "Creating";
+        return localize("views.proxmox.proxmox_progress_view.creating");
       case "verifying":
-        return "Starting";
+        return localize("views.proxmox.proxmox_progress_view.starting");
       case "finalizing":
-        return "Connecting";
+        return localize("views.proxmox.proxmox_progress_view.connecting");
       case "ready":
-        return "Waiting";
+        return localize("views.proxmox.proxmox_progress_view.waiting");
       case "updating":
-        return "Updating";
+        return localize("views.proxmox.proxmox_progress_view.updating");
       case "complete":
-        return "Complete!";
+        return localize("views.proxmox.proxmox_progress_view.complete");
       case "error":
-        return "Error";
+        return localize("common.error");
       default:
-        return "Installing";
+        return localize("views.proxmox.proxmox_progress_view.installing");
     }
   }
 
   private _getStageDescription(stage: string): string {
     switch (stage) {
       case "downloading":
-        return "Downloading Home Assistant OS";
+        return localize(
+          "views.proxmox.proxmox_progress_view.downloading_home_assistant_os"
+        );
       case "extracting":
-        return "Uploading image to Proxmox";
+        return localize(
+          "views.proxmox.proxmox_progress_view.uploading_image_to_proxmox"
+        );
       case "writing":
-        return "Creating virtual machine";
+        return localize(
+          "views.proxmox.proxmox_progress_view.creating_virtual_machine"
+        );
       case "verifying":
-        return "Starting Home Assistant OS";
+        return localize(
+          "views.proxmox.proxmox_progress_view.starting_home_assistant_os"
+        );
       case "finalizing":
-        return "Waiting for network connection";
+        return localize(
+          "views.proxmox.proxmox_progress_view.waiting_for_network_connection"
+        );
       case "ready":
-        return "Waiting for Home Assistant";
+        return localize(
+          "views.proxmox.proxmox_progress_view.waiting_for_home_assistant"
+        );
       case "updating":
-        return "Installing latest Home Assistant (this can take up to 20 minutes)";
+        return localize(
+          "views.proxmox.proxmox_progress_view.installing_latest_home_assistant_this_can_take_up_to_20_minutes"
+        );
       case "complete":
-        return "Installation complete!";
+        return localize("api.commands.installation_complete");
       default:
-        return "Installing Home Assistant";
+        return localize(
+          "views.proxmox.proxmox_progress_view.installing_home_assistant"
+        );
     }
   }
 }

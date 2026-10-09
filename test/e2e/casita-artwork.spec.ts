@@ -197,6 +197,8 @@ test("every supplied mood loads as nonblank static decorative artwork", async ({
   page,
 }) => {
   await page.goto("/");
+  // The app shell loads after locale detection, so wait for it to render.
+  await page.locator("welcome-view").waitFor({ state: "attached" });
   for (const mood of [
     "happy",
     "grinning",

@@ -1,3 +1,4 @@
+import { formatNumber, localize } from "../../localization/localize.js";
 import { LitElement, html, css } from "lit";
 import {
   ViewAccessibility,
@@ -256,7 +257,9 @@ export class UtmConfigureView extends LitElement {
 
   private _formatMemory(mb: number): string {
     const gb = mb / 1024;
-    return `${gb} GB`;
+    return localize("components.drive_card.value_gb", {
+      value0: formatNumber(gb, { maximumFractionDigits: 20 }),
+    });
   }
 
   private _getDiskSizeOptions(): number[] {
@@ -265,43 +268,73 @@ export class UtmConfigureView extends LitElement {
   }
 
   private _formatDiskSize(gb: number): string {
-    return gb >= 1024 ? `${gb / 1024} TB` : `${gb} GB`;
+    return gb >= 1024
+      ? localize("components.drive_card.value_tb", {
+          value0: formatNumber(gb / 1024, { maximumFractionDigits: 20 }),
+        })
+      : localize("components.drive_card.value_gb", {
+          value0: formatNumber(gb, { maximumFractionDigits: 20 }),
+        });
   }
 
   private _getCpuDescription(): string {
     if (this._cpuCores <= 2) {
-      return "Minimum for basic operation";
+      return localize(
+        "views.proxmox.proxmox_configure_view.minimum_for_basic_operation"
+      );
     } else if (this._cpuCores <= 4) {
-      return "Recommended for most users";
+      return localize(
+        "views.proxmox.proxmox_configure_view.recommended_for_most_users"
+      );
     } else if (this._cpuCores <= 6) {
-      return "Better performance with many integrations";
+      return localize(
+        "views.proxmox.proxmox_configure_view.better_performance_with_many_integrations"
+      );
     } else {
-      return "Maximum performance for power users";
+      return localize(
+        "views.proxmox.proxmox_configure_view.maximum_performance_for_power_users"
+      );
     }
   }
 
   private _getMemoryDescription(): string {
     const gb = this._memoryMb / 1024;
     if (gb <= 2) {
-      return "Minimum for basic operation";
+      return localize(
+        "views.proxmox.proxmox_configure_view.minimum_for_basic_operation"
+      );
     } else if (gb <= 4) {
-      return "Recommended for most users";
+      return localize(
+        "views.proxmox.proxmox_configure_view.recommended_for_most_users"
+      );
     } else if (gb <= 8) {
-      return "Better for add-ons and many integrations";
+      return localize(
+        "views.proxmox.proxmox_configure_view.better_for_add_ons_and_many_integrations"
+      );
     } else {
-      return "Maximum performance for power users";
+      return localize(
+        "views.proxmox.proxmox_configure_view.maximum_performance_for_power_users"
+      );
     }
   }
 
   private _getDiskDescription(): string {
     if (this._diskSizeGb <= 32) {
-      return "Good for getting started";
+      return localize(
+        "views.proxmox.proxmox_configure_view.good_for_getting_started"
+      );
     } else if (this._diskSizeGb <= 64) {
-      return "Room for add-ons and history";
+      return localize(
+        "views.proxmox.proxmox_configure_view.room_for_add_ons_and_history"
+      );
     } else if (this._diskSizeGb <= 128) {
-      return "Plenty of space for long-term use";
+      return localize(
+        "views.proxmox.proxmox_configure_view.plenty_of_space_for_long_term_use"
+      );
     } else {
-      return "Extended storage for recordings and backups";
+      return localize(
+        "views.proxmox.proxmox_configure_view.extended_storage_for_recordings_and_backups"
+      );
     }
   }
 
@@ -351,8 +384,16 @@ export class UtmConfigureView extends LitElement {
     const diskIndex = diskSizeOptions.indexOf(this._diskSizeGb);
 
     return html`
-      <h2>Configure virtual machine</h2>
-      <p class="subtitle">Customize your Home Assistant VM settings</p>
+      <h2>
+        ${localize(
+          "views.proxmox.proxmox_configure_view.configure_virtual_machine"
+        )}
+      </h2>
+      <p class="subtitle">
+        ${localize(
+          "views.utm.utm_configure_view.customize_your_home_assistant_vm_settings"
+        )}
+      </p>
 
       <div class="config-card">
         <!-- VM Name -->
@@ -360,15 +401,19 @@ export class UtmConfigureView extends LitElement {
           <div class="setting-icon">${this._renderLabelIcon()}</div>
           <div class="setting-content">
             <wa-input
-              label="Display name"
+              label=${localize(
+                "views.proxmox.proxmox_configure_view.display_name"
+              )}
               type="text"
               size="s"
               .value=${this._vmName}
               @input=${this._onNameChange}
-              placeholder="Home Assistant"
+              placeholder=${DEFAULT_UTM_VM_NAME}
             ></wa-input>
             <p class="setting-description">
-              Shown in UTM's virtual machine list
+              ${localize(
+                "views.utm.utm_configure_view.shown_in_utm_s_virtual_machine_list"
+              )}
             </p>
           </div>
         </div>
@@ -390,11 +435,22 @@ export class UtmConfigureView extends LitElement {
                 live(this._cpuCores)
               }
               @input=${this._onCoresChange}
-              .valueFormatter=${(value: number) => `${value} cores`}
+              .valueFormatter=${(value: number) =>
+                localize("views.proxmox.proxmox_configure_view.value_cores", {
+                  value0: value,
+                })}
               ><div slot="label" class="setting-header">
-                <span class="setting-label">CPU cores</span
+                <span class="setting-label"
+                  >${localize(
+                    "views.proxmox.proxmox_configure_view.cpu_cores"
+                  )}</span
                 ><span class="setting-value" aria-hidden="true"
-                  >${this._cpuCores} cores</span
+                  >${localize(
+                    "views.proxmox.proxmox_configure_view.value_cores",
+                    {
+                      value0: this._cpuCores,
+                    }
+                  )}</span
                 >
               </div></wa-slider
             >
@@ -418,7 +474,10 @@ export class UtmConfigureView extends LitElement {
               .valueFormatter=${(index: number) =>
                 this._formatMemory(memoryOptions[index] ?? this._memoryMb)}
               ><div slot="label" class="setting-header">
-                <span class="setting-label">Memory</span
+                <span class="setting-label"
+                  >${localize(
+                    "views.proxmox.proxmox_configure_view.memory"
+                  )}</span
                 ><span class="setting-value" aria-hidden="true"
                   >${this._formatMemory(this._memoryMb)}</span
                 >
@@ -443,7 +502,10 @@ export class UtmConfigureView extends LitElement {
               .valueFormatter=${(index: number) =>
                 this._formatDiskSize(diskSizeOptions[index])}
               ><div slot="label" class="setting-header">
-                <span class="setting-label">Disk size</span
+                <span class="setting-label"
+                  >${localize(
+                    "views.proxmox.proxmox_configure_view.disk_size"
+                  )}</span
                 ><span class="setting-value" aria-hidden="true"
                   >${this._formatDiskSize(this._diskSizeGb)}</span
                 >

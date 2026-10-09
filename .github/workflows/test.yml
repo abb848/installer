@@ -53,6 +53,11 @@ jobs:
       - name: Run ESLint
         run: npm run lint
 
+      - name: Check localization catalog and placeholders
+        run: |
+          npm run localization:check
+          npm run test:localization
+
       - name: Check formatting
         run: npm run format:check
 

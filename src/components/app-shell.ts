@@ -1,3 +1,4 @@
+import { localize, localizeContent } from "../localization/localize.js";
 import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import "./fab-button.js";
@@ -128,7 +129,7 @@ export class AppShell extends LitElement {
         : ""}
       <confirm-dialog
         ?open=${this._showConfirmDialog}
-        .driveName=${selections.driveName || "the selected drive"}
+        .driveName=${selections.driveName || ""}
         .drivePath=${selections.drive || ""}
         .driveModel=${[selections.driveVendor, selections.driveModel]
           .filter(Boolean)
@@ -207,9 +208,9 @@ export class AppShell extends LitElement {
         this._proxmoxConnecting ||
         this._verifyingDrive}
         .nextLabel=${this._proxmoxConnecting
-          ? "Connecting..."
+          ? localize("components.app_shell.connecting")
           : this._verifyingDrive
-            ? "Checking drive..."
+            ? localize("components.app_shell.checking_drive")
             : nextLabel}
         .hideFooter=${hideFooter}
         .hideBack=${hideBack}
@@ -226,21 +227,23 @@ export class AppShell extends LitElement {
 
   private _getNextLabel(stepId: string | undefined): string {
     if (stepId === "flash" && this._flashError) {
-      return this._installRetryable ? "Try again" : "Choose another drive";
+      return this._installRetryable
+        ? localize("components.app_shell.try_again")
+        : localize("components.app_shell.choose_another_drive");
     }
     if (
       stepId === "install" &&
       (this._utmInstallError || this._proxmoxInstallError)
     ) {
-      return "Try again";
+      return localize("components.app_shell.try_again");
     }
     if (stepId === "confirm") {
-      return "Install";
+      return localize("common.install");
     }
     if (stepId === "success") {
-      return "Done";
+      return localize("common.done");
     }
-    return "Next";
+    return localize("common.next");
   }
 
   private _isNextDisabled(
@@ -376,12 +379,14 @@ export class AppShell extends LitElement {
           ${this._getFlowTitle(flow)}
         </h2>
         <p style="color: var(--ha-secondary-text-color, #727272); margin: 0;">
-          Step: ${stepId || "unknown"}
+          ${localizeContent("components.app_shell.step_value", {
+            value0: stepId || localize("common.unknown_step"),
+          })}
         </p>
         <p
           style="color: var(--ha-secondary-text-color, #9e9e9e); font-size: 0.875rem; margin-top: 2rem;"
         >
-          (Step content coming soon)
+          ${localize("components.app_shell.step_content_coming_soon")}
         </p>
       </div>
     `;
@@ -390,17 +395,17 @@ export class AppShell extends LitElement {
   private _getFlowTitle(flow: WizardFlow | null): string {
     switch (flow) {
       case "sbc":
-        return "Raspberry Pi & other boards";
+        return localize("components.app_shell.raspberry_pi_other_boards");
       case "minipc":
-        return "Generic (mini) PC";
+        return localize("components.app_shell.generic_mini_pc");
       case "ha-hardware":
-        return "Home Assistant hardware";
+        return localize("components.app_shell.home_assistant_hardware");
       case "proxmox":
-        return "Proxmox server";
+        return localize("components.app_shell.proxmox_server");
       case "vm":
-        return "Virtual machine";
+        return localize("components.app_shell.virtual_machine");
       default:
-        return "Installation";
+        return localize("components.app_shell.installation");
     }
   }
 
@@ -671,7 +676,7 @@ export class AppShell extends LitElement {
     return html`
       <fab-button
         .path=${mdiToolboxOutline}
-        label="Open Home Toolbox"
+        label=${localize("components.app_shell.open_home_toolbox")}
         @click=${this._onToolboxOpen}
       ></fab-button>
     `;

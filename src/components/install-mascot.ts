@@ -1,4 +1,5 @@
 import { html } from "lit";
+import { localize } from "../localization/localize.js";
 import "./casita-mascot.js";
 
 // The supplied Casita artwork. Each install state picks a mood; the thinking
@@ -18,7 +19,11 @@ export function renderCasitaThinking(text: string) {
         <div class="cloud-bump bump-6"></div>
         <div class="cloud-bump bump-7"></div>
         <div class="cloud-bump bump-8"></div>
-        <div class="cloud-text">${text}...</div>
+        <div class="cloud-text">
+          ${localize("components.install_mascot.stage_in_progress", {
+            stage: text,
+          })}
+        </div>
       </div>
     </div>
   `;

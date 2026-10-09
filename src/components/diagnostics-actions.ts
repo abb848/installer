@@ -2,6 +2,7 @@ import { LitElement, css, html } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
+import { localize } from "../localization/localize.js";
 import { openExternalUrl } from "../utils/external-url.js";
 import {
   getDiagnostics,
@@ -63,14 +64,17 @@ export class DiagnosticsActions extends LitElement {
         this._version ||= version;
       })
       .catch(() => {});
-    this._status = "Loading diagnostics...";
+    this._status = localize(
+      "components.diagnostics_actions.loading_diagnostics"
+    );
     try {
       this._data = await getDiagnostics();
       this._version = this._data.version;
       this._status = "";
     } catch {
-      this._status =
-        "Diagnostics could not be loaded. Open the logs folder to find the local log.";
+      this._status = localize(
+        "components.diagnostics_actions.diagnostics_could_not_be_loaded"
+      );
     }
   }
 
@@ -78,10 +82,13 @@ export class DiagnosticsActions extends LitElement {
     if (!this._data) return;
     try {
       await navigator.clipboard.writeText(diagnosticText(this._data));
-      this._status = "Diagnostics copied";
+      this._status = localize(
+        "components.diagnostics_actions.diagnostics_copied"
+      );
     } catch {
-      this._status =
-        "Could not copy diagnostics. Select and copy the text below.";
+      this._status = localize(
+        "components.diagnostics_actions.could_not_copy_diagnostics"
+      );
       this.renderRoot.querySelector("textarea")?.select();
     }
   }
@@ -89,9 +96,13 @@ export class DiagnosticsActions extends LitElement {
   private async _openLogs() {
     try {
       await invoke("open_logs_folder");
-      this._status = "Logs folder opened";
+      this._status = localize(
+        "components.diagnostics_actions.logs_folder_opened"
+      );
     } catch {
-      this._status = "Could not open the logs folder.";
+      this._status = localize(
+        "components.diagnostics_actions.could_not_open_the_logs_folder"
+      );
     }
   }
 
@@ -99,36 +110,47 @@ export class DiagnosticsActions extends LitElement {
     const report = this._data ? reportUrl(this._data) : undefined;
     return html`
       <wa-button appearance="plain" @click=${this._show}
-        >${this.about ? "About" : "Report a problem"}</wa-button
+        >${this.about
+          ? localize("components.diagnostics_actions.about")
+          : localize(
+              "components.diagnostics_actions.report_a_problem"
+            )}</wa-button
       >
       <wa-dialog
         label=${this.about
-          ? "About Home Assistant Installer"
-          : "Report a problem"}
+          ? localize(
+              "components.diagnostics_actions.about_home_assistant_installer"
+            )
+          : localize("components.diagnostics_actions.report_a_problem")}
         .open=${this._open}
         @wa-after-hide=${() => {
           this._open = false;
         }}
       >
         <p class="version">
-          Home Assistant Installer${this._version ? ` ${this._version}` : ""}
+          ${this._version
+            ? localize("components.diagnostics_actions.installer_version", {
+                version: this._version,
+              })
+            : localize("app.title")}
         </p>
         <p>
-          GitHub issues are public. Diagnostics omit server addresses,
-          usernames, credentials, paths, and raw error details. Review any files
-          or screenshots before attaching them.
+          ${localize("components.diagnostics_actions.github_issues_are_public")}
         </p>
         ${this._data
           ? html`<textarea
-              aria-label="Diagnostics"
+              aria-label=${localize(
+                "components.diagnostics_actions.diagnostics"
+              )}
               readonly
               .value=${diagnosticText(this._data)}
             ></textarea>`
           : ""}
         ${report?.shortened
           ? html`<p>
-              The report contains a shortened log. Copy diagnostics for the full
-              tail.
+              ${localize(
+                "components.diagnostics_actions.the_report_contains_a_shortened_log"
+              )}
             </p>`
           : ""}
         <p role="status">${this._status}</p>
@@ -137,12 +159,20 @@ export class DiagnosticsActions extends LitElement {
             variant="brand"
             ?disabled=${!report}
             @click=${() => report && openExternalUrl(report.url)}
-            >Report a problem</wa-button
+            >${localize(
+              "components.diagnostics_actions.report_a_problem"
+            )}</wa-button
           >
           <wa-button ?disabled=${!this._data} @click=${this._copy}
-            >Copy diagnostics</wa-button
+            >${localize(
+              "components.diagnostics_actions.copy_diagnostics"
+            )}</wa-button
           >
-          <wa-button @click=${this._openLogs}>Open logs folder</wa-button>
+          <wa-button @click=${this._openLogs}
+            >${localize(
+              "components.diagnostics_actions.open_logs_folder"
+            )}</wa-button
+          >
         </div>
       </wa-dialog>
     `;

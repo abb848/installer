@@ -1,3 +1,4 @@
+import { formatNumber, localize } from "../localization/localize.js";
 import { invoke, Channel } from "@tauri-apps/api/core";
 import { failMockOperation } from "./mock-failures.js";
 import type {
@@ -108,7 +109,7 @@ async function simulateFlashProgress(
   }> = [
     {
       stage: "downloading",
-      message: "Downloading image...",
+      message: localize("api.commands.downloading_image"),
       weight: 30,
       totalBytes: compressedSize,
       showBytes: true,
@@ -117,7 +118,7 @@ async function simulateFlashProgress(
     },
     {
       stage: "extracting",
-      message: "Extracting image...",
+      message: localize("api.commands.extracting_image"),
       weight: 10,
       totalBytes: 0,
       showBytes: false,
@@ -126,7 +127,7 @@ async function simulateFlashProgress(
     },
     {
       stage: "writing",
-      message: "Writing to device...",
+      message: localize("api.commands.writing_to_device"),
       weight: 35,
       totalBytes: extractedSize,
       showBytes: true,
@@ -135,7 +136,7 @@ async function simulateFlashProgress(
     },
     {
       stage: "verifying",
-      message: "Verifying written data...",
+      message: localize("api.commands.verifying_written_data"),
       weight: 15,
       totalBytes: extractedSize,
       showBytes: true,
@@ -144,7 +145,7 @@ async function simulateFlashProgress(
     },
     {
       stage: "finalizing",
-      message: "Finalizing...",
+      message: localize("api.commands.finalizing"),
       weight: 10,
       totalBytes: 0,
       showBytes: false,
@@ -190,7 +191,7 @@ async function simulateFlashProgress(
     progress: 100,
     bytes_processed: extractedSize,
     total_bytes: extractedSize,
-    message: "Installation complete!",
+    message: localize("api.commands.installation_complete"),
   });
 
   return {
@@ -212,8 +213,9 @@ export async function getManifest(): Promise<DeviceManifest> {
  * Format bytes using decimal units, matching storage manufacturers.
  */
 export function formatBytes(bytes: number): string {
-  if (!Number.isFinite(bytes) || bytes < 0) return "Unknown size";
-  if (bytes === 0) return "0 B";
+  if (!Number.isFinite(bytes) || bytes < 0)
+    return localize("views.sbc.confirmation_view.unknown_size");
+  if (bytes === 0) return localize("api.commands.0_b");
 
   const k = 1000;
   const sizes = ["B", "KB", "MB", "GB", "TB"];
@@ -224,7 +226,11 @@ export function formatBytes(bytes: number): string {
 
   // Do not round a drive just below a capacity threshold up to that threshold.
   const value = Math.floor((bytes / Math.pow(k, i)) * 10) / 10;
-  return `${value} ${sizes[i]}`;
+  // Grouping would turn the oversized "1000 TB" clamp into "1,000 TB".
+  return localize("format.bytes", {
+    amount: formatNumber(value, { useGrouping: false }),
+    unit: sizes[i],
+  });
 }
 
 /**
@@ -330,13 +336,13 @@ async function simulateUtmDownload(
   }> = [
     {
       stage: "downloading",
-      message: "Downloading HAOS image...",
+      message: localize("api.commands.downloading_haos_image"),
       steps: 20,
       delay: 100,
     },
     {
       stage: "extracting",
-      message: "Extracting image...",
+      message: localize("api.commands.extracting_image"),
       steps: 10,
       delay: 100,
     },
@@ -368,7 +374,7 @@ async function simulateUtmDownload(
     progress: 100,
     bytes_processed: 0,
     total_bytes: 0,
-    message: "Download complete!",
+    message: localize("api.commands.download_complete"),
   });
 
   return "/tmp/mock-haos.qcow2";
@@ -621,35 +627,35 @@ async function simulateProxmoxInstall(
   }> = [
     {
       stage: "downloading",
-      message: "Downloading HAOS image...",
+      message: localize("api.commands.downloading_haos_image"),
       weight: 40,
       steps: 40,
       delay: 100,
     },
     {
       stage: "extracting",
-      message: "Uploading to Proxmox...",
+      message: localize("api.commands.uploading_to_proxmox"),
       weight: 25,
       steps: 25,
       delay: 80,
     },
     {
       stage: "writing",
-      message: "Creating virtual machine...",
+      message: localize("api.commands.creating_virtual_machine"),
       weight: 20,
       steps: 20,
       delay: 100,
     },
     {
       stage: "verifying",
-      message: "Starting Home Assistant OS...",
+      message: localize("api.commands.starting_home_assistant_os"),
       weight: 10,
       steps: 10,
       delay: 150,
     },
     {
       stage: "finalizing",
-      message: "Waiting for network...",
+      message: localize("api.commands.waiting_for_network"),
       weight: 5,
       steps: 10,
       delay: 200,
@@ -683,7 +689,7 @@ async function simulateProxmoxInstall(
     progress: 100,
     bytes_processed: 0,
     total_bytes: 0,
-    message: "Installation complete!",
+    message: localize("api.commands.installation_complete"),
   });
 
   return {

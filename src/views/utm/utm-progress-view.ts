@@ -3,6 +3,7 @@ import {
   type InstallerError,
 } from "../../utils/installer-error.js";
 import { LitElement, html, css } from "lit";
+import { localize } from "../../localization/localize.js";
 import {
   InstallDiagnostics,
   logFrontendError,
@@ -204,8 +205,9 @@ export class UtmProgressView extends LitElement {
       if (!vmId) {
         if (selections.utmSupersededVmId) {
           throw new Error(
-            "A virtual machine was already created with earlier settings. " +
-              "Check UTM, then start a new installation."
+            localize(
+              "views.utm.utm_progress_view.a_virtual_machine_was_already_created_with_earlier_settings"
+            )
           );
         }
         const pending = selections.utmCreation;
@@ -291,7 +293,9 @@ export class UtmProgressView extends LitElement {
               details: {},
             }
           : error,
-        "Failed to create virtual machine"
+        localize(
+          "views.proxmox.proxmox_progress_view.failed_to_create_virtual_machine"
+        )
       );
       this.dispatchEvent(
         new CustomEvent("install-error", {
@@ -319,8 +323,9 @@ export class UtmProgressView extends LitElement {
   private _createVm(config: UtmVmConfig, generation: number): Promise<string> {
     const changed = () =>
       new Error(
-        "The installation changed while the virtual machine was being created. " +
-          "Check UTM before trying again."
+        localize(
+          "views.utm.utm_progress_view.the_installation_changed_while_the_virtual_machine_was_being_created"
+        )
       );
     const pending = wizardState.getState().selections.utmCreation;
     if (pending) {
@@ -443,7 +448,9 @@ export class UtmProgressView extends LitElement {
           id,
           label:
             id === "updating"
-              ? "Installing latest Home Assistant"
+              ? localize(
+                  "views.proxmox.proxmox_progress_view.installing_latest_home_assistant"
+                )
               : this._getStageDescription(id),
         }))}
         .stage=${stage}
@@ -465,48 +472,62 @@ export class UtmProgressView extends LitElement {
   private _getStageTitle(stage: string): string {
     switch (stage) {
       case "downloading":
-        return "Downloading";
+        return localize("views.proxmox.proxmox_progress_view.downloading");
       case "extracting":
-        return "Extracting";
+        return localize("views.sbc.progress_view.extracting");
       case "creating":
-        return "Creating";
+        return localize("views.proxmox.proxmox_progress_view.creating");
       case "starting":
-        return "Starting";
+        return localize("views.proxmox.proxmox_progress_view.starting");
       case "waiting":
-        return "Waiting";
+        return localize("views.proxmox.proxmox_progress_view.waiting");
       case "ready":
-        return "Waiting";
+        return localize("views.proxmox.proxmox_progress_view.waiting");
       case "updating":
-        return "Updating";
+        return localize("views.proxmox.proxmox_progress_view.updating");
       case "complete":
-        return "Complete!";
+        return localize("views.proxmox.proxmox_progress_view.complete");
       case "error":
-        return "Error";
+        return localize("common.error");
       default:
-        return "Installing";
+        return localize("views.proxmox.proxmox_progress_view.installing");
     }
   }
 
   private _getStageDescription(stage: string): string {
     switch (stage) {
       case "downloading":
-        return "Downloading Home Assistant OS";
+        return localize(
+          "views.proxmox.proxmox_progress_view.downloading_home_assistant_os"
+        );
       case "extracting":
-        return "Extracting the image";
+        return localize("views.sbc.progress_view.extracting_the_image");
       case "creating":
-        return "Creating virtual machine";
+        return localize(
+          "views.proxmox.proxmox_progress_view.creating_virtual_machine"
+        );
       case "starting":
-        return "Starting Home Assistant OS";
+        return localize(
+          "views.proxmox.proxmox_progress_view.starting_home_assistant_os"
+        );
       case "waiting":
-        return "Waiting for network connection";
+        return localize(
+          "views.proxmox.proxmox_progress_view.waiting_for_network_connection"
+        );
       case "ready":
-        return "Waiting for Home Assistant";
+        return localize(
+          "views.proxmox.proxmox_progress_view.waiting_for_home_assistant"
+        );
       case "updating":
-        return "Installing latest Home Assistant (this can take up to 20 minutes)";
+        return localize(
+          "views.proxmox.proxmox_progress_view.installing_latest_home_assistant_this_can_take_up_to_20_minutes"
+        );
       case "complete":
-        return "Installation complete!";
+        return localize("api.commands.installation_complete");
       default:
-        return "Installing Home Assistant";
+        return localize(
+          "views.proxmox.proxmox_progress_view.installing_home_assistant"
+        );
     }
   }
 
@@ -522,9 +543,9 @@ export class UtmProgressView extends LitElement {
       interval: POLL_INTERVAL_MS,
       timeout: VM_IP_TIMEOUT_MS,
       signal,
-      timeoutMessage:
-        "The virtual machine did not report an IPv4 address within 5 minutes. " +
-        "Check its network connection in UTM, then try again.",
+      timeoutMessage: localize(
+        "views.utm.utm_progress_view.the_virtual_machine_did_not_report_an_ip_address"
+      ),
     });
   }
 
@@ -543,10 +564,10 @@ export class UtmProgressView extends LitElement {
       interval: POLL_INTERVAL_MS,
       timeout: HA_READY_TIMEOUT_MS,
       signal,
-      timeoutMessage:
-        `Home Assistant did not respond at ${ipAddress} within 5 minutes. ` +
-        `The virtual machine was created - check whether it is running in UTM, ` +
-        `then try again to keep waiting for it.`,
+      timeoutMessage: localize(
+        "views.utm.utm_progress_view.home_assistant_did_not_respond_at_value_within_5_minutes",
+        { value0: ipAddress }
+      ),
     });
   }
 
@@ -567,10 +588,9 @@ export class UtmProgressView extends LitElement {
       interval: POLL_INTERVAL_MS,
       timeout: HA_UPDATED_TIMEOUT_MS,
       signal,
-      timeoutMessage:
-        `Home Assistant did not finish installing updates within 60 minutes. ` +
-        `Open http://${ipAddress} to check on it, or try again to keep ` +
-        `waiting for it.`,
+      timeoutMessage: localize("utm.update_timeout", {
+        address: `http://${ipAddress}`,
+      }),
     });
   }
 }

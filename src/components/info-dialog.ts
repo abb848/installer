@@ -1,3 +1,4 @@
+import { localize } from "../localization/localize.js";
 import { LitElement, html, css } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import "@home-assistant/webawesome/dist/components/dialog/dialog.js";
@@ -75,7 +76,7 @@ export class InfoDialog extends LitElement {
   message = "";
 
   @property({ type: String })
-  primaryLabel = "OK";
+  primaryLabel = localize("components.info_dialog.ok");
 
   @property({ type: String })
   secondaryLabel = "";

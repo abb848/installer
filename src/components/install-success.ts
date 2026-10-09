@@ -1,5 +1,6 @@
 import { LitElement, html, css, svg, type TemplateResult } from "lit";
 import { customElement, property } from "lit/decorators.js";
+import { localize } from "../localization/localize.js";
 import { openExternalLink } from "../utils/external-url.js";
 import { renderCasitaHappy } from "./install-mascot.js";
 import {
@@ -222,16 +223,28 @@ export class InstallSuccess extends LitElement {
   @property({ attribute: false }) footer: string | TemplateResult = "";
 
   render() {
+    const title = localize("views.proxmox.proxmox_success_view.you_re_all_set");
+
     return html`
       <div class="mascot-container" aria-hidden="true">
         ${renderCasitaHappy()}
       </div>
-      <div role="alert"><h2>You're all set!</h2></div>
+      <div role="alert">
+        <h2>${title}</h2>
+      </div>
       <p class="subtitle">${this.subtitle}</p>
       <div class="next-steps">
-        <p class="next-steps-title">Next steps</p>
+        <p class="next-steps-title">
+          ${localize("views.proxmox.proxmox_success_view.next_steps")}
+        </p>
         ${this.notice ? html`<p class="notice">${this.notice}</p>` : ""}
-        <ol class="steps-list" role="list" aria-label="Next steps">
+        <ol
+          class="steps-list"
+          role="list"
+          aria-label=${localize(
+            "views.proxmox.proxmox_success_view.next_steps"
+          )}
+        >
           ${this.steps.map(
             (step, index) => html`
               <li class="step-item">
@@ -247,7 +260,11 @@ export class InstallSuccess extends LitElement {
       </div>
       ${this.tip ? html`<div class="tip-section">${this.tip}</div>` : ""}
       <div class="companion-section">
-        <p class="companion-title">Get the Home Assistant Companion App</p>
+        <p class="companion-title">
+          ${localize(
+            "views.proxmox.proxmox_success_view.get_the_home_assistant_companion_app"
+          )}
+        </p>
         <div class="app-links">
           <a
             class="app-link"
@@ -261,7 +278,9 @@ export class InstallSuccess extends LitElement {
               )}
           >
             ${this._renderAppleIcon()}
-            <span>App Store</span>
+            <span
+              >${localize("views.proxmox.proxmox_success_view.app_store")}</span
+            >
           </a>
           <a
             class="app-link"
@@ -275,7 +294,11 @@ export class InstallSuccess extends LitElement {
               )}
           >
             ${this._renderGooglePlayIcon()}
-            <span>Google Play</span>
+            <span
+              >${localize(
+                "views.proxmox.proxmox_success_view.google_play"
+              )}</span
+            >
           </a>
         </div>
       </div>

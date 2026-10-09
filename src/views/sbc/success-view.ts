@@ -1,3 +1,4 @@
+import { localize, localizeContent } from "../../localization/localize.js";
 import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { wizardState, type WizardState } from "../../state/wizard-state.js";
@@ -49,8 +50,9 @@ export class SuccessView extends LitElement {
   }
 
   render() {
-    const deviceName =
-      (this._wizardState.selections.deviceName as string) || "your device";
+    const deviceName = this._wizardState.selections.deviceName as
+      | string
+      | undefined;
     const board = this._wizardState.selections.deviceConfig?.board ?? "";
     const isMiniPc = this._wizardState.currentFlow === "minipc";
     const supportsDirectUsb = board === "odroid-n2" || board === "odroid-m1s";
@@ -63,45 +65,66 @@ export class SuccessView extends LitElement {
 
     return html`
       <install-success
-        .subtitle=${"Home Assistant OS has been written to your storage device"}
-        .notice=${html`Do not format or initialize the written drive. Choose
-        Cancel if offered, or Ignore or Eject on macOS. Your computer may not
-        recognize its Home Assistant partitions.`}
+        .subtitle=${localize(
+          "views.sbc.success_view.home_assistant_os_has_been_written_to_your_storage_device"
+        )}
+        .notice=${localize(
+          "views.sbc.success_view.do_not_format_or_initialize_the_written_drive"
+        )}
         .steps=${[
-          html`If the drive is still listed on your computer, use your operating
-          system's eject option before disconnecting it.`,
+          localize(
+            "views.sbc.success_view.eject_the_drive_before_disconnecting"
+          ),
           isMiniPc
-            ? html`Install or reconnect the written drive in your mini PC.
-              Select that drive in the firmware boot order, with UEFI boot
-              enabled and Secure Boot disabled.`
+            ? localize(
+                "views.sbc.success_view.install_the_drive_in_your_mini_pc"
+              )
             : supportsDirectUsb
-              ? html`If you used a storage adapter, insert the written media
-                into ${deviceName}. If you flashed the board directly over USB,
-                disconnect the USB and power cables.
+              ? html`${deviceName
+                  ? localize(
+                      "views.sbc.success_view.insert_the_media_or_disconnect_usb",
+                      { value0: deviceName }
+                    )
+                  : localize(
+                      "views.sbc.success_view.insert_the_media_or_disconnect_usb_unknown_device"
+                    )}
                 ${board === "odroid-m1s"
-                  ? html`With the board powered off, remove the EMMC2UMS SD card
-                    if you used one.`
-                  : html`With the board powered off, set the boot mode switch
-                    back to MMC as described in the installation guide below.`}`
-              : html`Insert the written storage into ${deviceName}.`,
-          html`Connect an Ethernet cable to the same network as your computer,
-          with internet access. Then connect power to start the device.`,
-          html`Open
-            <a
-              href="http://homeassistant.local:8123"
-              target="_blank"
-              rel="noopener noreferrer"
-              @click=${(event: Event) =>
-                openExternalLink(event, "http://homeassistant.local:8123")}
-              >homeassistant.local:8123</a
-            >
-            in your browser. If it still does not open after a few minutes, find
-            the device's IP address in your router or on an attached display,
-            then open <code>http://&lt;IP address&gt;:8123</code>.`,
-          html`The Preparing Home Assistant page downloads the latest Home
-          Assistant. Allow about 20 minutes, depending on your internet
-          connection. Keep power and Ethernet connected until the welcome screen
-          appears.`,
+                  ? localize(
+                      "views.sbc.success_view.remove_the_emmc2ums_sd_card"
+                    )
+                  : localize(
+                      "views.sbc.success_view.set_the_boot_mode_switch_back_to_mmc"
+                    )}`
+              : deviceName
+                ? localize(
+                    "views.sbc.success_view.insert_the_written_storage",
+                    {
+                      value0: deviceName,
+                    }
+                  )
+                : localize(
+                    "views.sbc.success_view.insert_the_written_storage_unknown_device"
+                  ),
+          localize("views.sbc.success_view.connect_ethernet_and_power"),
+          html`${localizeContent(
+            "views.sbc.success_view.open_value_in_your_browser_or_find_the_ip_address",
+            {
+              value0: html`<a
+                href="http://homeassistant.local:8123"
+                target="_blank"
+                rel="noopener noreferrer"
+                @click=${(event: Event) =>
+                  openExternalLink(event, "http://homeassistant.local:8123")}
+                >${"homeassistant.local:8123"}</a
+              >`,
+              value1: html`<code
+                >http://&lt;${localize(
+                  "views.sbc.success_view.ip_address"
+                )}&gt;:8123</code
+              >`,
+            }
+          )}`,
+          localize("views.sbc.success_view.the_preparing_home_assistant_page"),
         ]}
         .footer=${html`<a
           href=${guide}
@@ -109,8 +132,14 @@ export class SuccessView extends LitElement {
           rel="noopener noreferrer"
           @click=${(event: Event) => openExternalLink(event, guide)}
           >${guide === "https://www.home-assistant.io/installation/"
-            ? "Installation guide"
-            : `${deviceName} installation guide`}</a
+            ? localize("views.sbc.success_view.installation_guide")
+            : deviceName
+              ? localize("views.sbc.success_view.value_installation_guide", {
+                  value0: deviceName,
+                })
+              : localize(
+                  "views.sbc.success_view.your_device_installation_guide"
+                )}</a
         >`}
       ></install-success>
     `;

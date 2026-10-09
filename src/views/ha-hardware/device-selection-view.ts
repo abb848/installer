@@ -1,3 +1,4 @@
+import { localize } from "../../localization/localize.js";
 import {
   installerError,
   renderErrorHelp,
@@ -163,7 +164,12 @@ export class HaHardwareDeviceSelectionView extends LitElement {
       wizardState.setSelection("deviceCatalogReady", true);
     } catch (err) {
       if (this.isConnected) new InstallDiagnostics("flash").fail(err);
-      this._error = installerError(err, "Failed to load devices");
+      this._error = installerError(
+        err,
+        localize(
+          "views.ha_hardware.device_selection_view.failed_to_load_devices"
+        )
+      );
     } finally {
       this._loading = false;
     }
@@ -174,7 +180,11 @@ export class HaHardwareDeviceSelectionView extends LitElement {
       return html`
         <div class="loading">
           <div class="loading-spinner"></div>
-          <span>Loading devices...</span>
+          <span
+            >${localize(
+              "views.ha_hardware.device_selection_view.loading_devices"
+            )}</span
+          >
         </div>
       `;
     }
@@ -197,7 +207,7 @@ export class HaHardwareDeviceSelectionView extends LitElement {
                 appearance="outlined"
                 @click=${this._loadDevices}
               >
-                Try again
+                ${localize("components.app_shell.try_again")}
               </wa-button>`
             : ""}
         </div>
@@ -205,15 +215,21 @@ export class HaHardwareDeviceSelectionView extends LitElement {
     }
 
     return html`
-      <h2>Select your Home Assistant device</h2>
+      <h2>
+        ${localize(
+          "views.ha_hardware.device_selection_view.select_your_home_assistant_device"
+        )}
+      </h2>
       <p class="subtitle">
-        Choose your official Home Assistant hardware by Nabu Casa
+        ${localize(
+          "views.ha_hardware.device_selection_view.choose_your_official_home_assistant_hardware_by_nabu_casa"
+        )}
       </p>
 
       <wa-radio-group
         class="devices-grid"
         radio-tag="device-card"
-        aria-label="Home Assistant hardware"
+        aria-label=${localize("components.app_shell.home_assistant_hardware")}
         .value=${this._selectedDeviceId ?? ""}
         @change=${this._onDeviceChange}
       >
@@ -229,8 +245,9 @@ export class HaHardwareDeviceSelectionView extends LitElement {
       </wa-radio-group>
 
       <div class="info-box">
-        💡 Connect your device to this computer using a USB cable or adapter.
-        You'll flash the storage directly.
+        ${localize(
+          "views.ha_hardware.device_selection_view.connect_your_device_to_this_computer_using_a_usb_cable_or_adapter_you_ll_fl"
+        )}
       </div>
     `;
   }

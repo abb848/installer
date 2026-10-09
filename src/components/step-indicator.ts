@@ -2,6 +2,7 @@ import { LitElement, html, css } from "lit";
 import { customElement, property } from "lit/decorators.js";
 import type { WizardStep } from "../state/wizard-state.js";
 import { ifDefined } from "lit/directives/if-defined.js";
+import { localize } from "../localization/localize.js";
 
 @customElement("step-indicator")
 export class StepIndicator extends LitElement {
@@ -114,7 +115,11 @@ export class StepIndicator extends LitElement {
 
   render() {
     return html`
-      <div class="steps" role="list" aria-label="Installation steps">
+      <div
+        class="steps"
+        role="list"
+        aria-label=${localize("components.step_indicator.installation_steps")}
+      >
         ${this.steps.map((step, index) => this._renderStep(step, index))}
       </div>
     `;

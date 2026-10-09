@@ -3,6 +3,7 @@ import { customElement, property } from "lit/decorators.js";
 import WaRadio from "@home-assistant/webawesome/dist/components/radio/radio.js";
 import type { DeviceType } from "../api/types.js";
 import { formatBytes } from "../api/commands.js";
+import { localize } from "../localization/localize.js";
 import { reducedMotionStyles } from "../utils/view-accessibility.js";
 
 /**
@@ -215,17 +216,17 @@ export class DriveCard extends WaRadio {
   private _getTypeLabel(): string {
     switch (this.deviceType) {
       case "sd_card":
-        return "SD card";
+        return localize("components.drive_card.sd_card");
       case "usb_drive":
-        return "USB drive";
+        return localize("components.drive_card.usb_drive");
       case "ssd":
-        return "SSD";
+        return localize("components.drive_card.ssd");
       case "hdd":
-        return "Hard drive";
+        return localize("components.drive_card.hard_drive");
       case "nvme":
-        return "NVMe";
+        return localize("components.drive_card.nvme");
       default:
-        return "Storage device";
+        return localize("components.drive_card.storage_device");
     }
   }
 

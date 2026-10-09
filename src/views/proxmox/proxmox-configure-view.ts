@@ -3,6 +3,7 @@ import {
   renderErrorHelp,
   type InstallerError,
 } from "../../utils/installer-error.js";
+import { formatNumber, localize } from "../../localization/localize.js";
 import { LitElement, html, css } from "lit";
 import {
   ViewAccessibility,
@@ -275,7 +276,9 @@ export class ProxmoxConfigureView extends LitElement {
     if (!session) {
       this._setError({
         code: SESSION_EXPIRED,
-        message: "Connect to Proxmox to continue.",
+        message: localize(
+          "views.proxmox.proxmox_configure_view.connect_to_proxmox_to_continue"
+        ),
         retryable: false,
         details: {},
       });
@@ -455,7 +458,12 @@ export class ProxmoxConfigureView extends LitElement {
     // superseded lookups never add diagnostics
     new InstallDiagnostics("proxmox").fail(error);
     this._sessionExpired = isSessionExpired(error);
-    this._error = installerError(error, "Failed to load Proxmox configuration");
+    this._error = installerError(
+      error,
+      localize(
+        "views.proxmox.proxmox_configure_view.failed_to_load_proxmox_configuration"
+      )
+    );
     if (this._sessionExpired) {
       wizardState.setSelection("proxmoxSession", undefined);
       wizardState.setSelection("proxmoxConnected", false);
@@ -577,7 +585,9 @@ export class ProxmoxConfigureView extends LitElement {
 
   private _formatMemory(mb: number): string {
     const gb = mb / 1024;
-    return `${gb} GB`;
+    return localize("components.drive_card.value_gb", {
+      value0: formatNumber(gb, { maximumFractionDigits: 20 }),
+    });
   }
 
   private _getDiskSizeOptions(): number[] {
@@ -585,43 +595,73 @@ export class ProxmoxConfigureView extends LitElement {
   }
 
   private _formatDiskSize(gb: number): string {
-    return gb >= 1024 ? `${gb / 1024} TB` : `${gb} GB`;
+    return gb >= 1024
+      ? localize("components.drive_card.value_tb", {
+          value0: formatNumber(gb / 1024, { maximumFractionDigits: 20 }),
+        })
+      : localize("components.drive_card.value_gb", {
+          value0: formatNumber(gb, { maximumFractionDigits: 20 }),
+        });
   }
 
   private _getCpuDescription(): string {
     if (this._cpuCores <= 2) {
-      return "Minimum for basic operation";
+      return localize(
+        "views.proxmox.proxmox_configure_view.minimum_for_basic_operation"
+      );
     } else if (this._cpuCores <= 4) {
-      return "Recommended for most users";
+      return localize(
+        "views.proxmox.proxmox_configure_view.recommended_for_most_users"
+      );
     } else if (this._cpuCores <= 8) {
-      return "Better performance with many integrations";
+      return localize(
+        "views.proxmox.proxmox_configure_view.better_performance_with_many_integrations"
+      );
     } else {
-      return "Maximum performance for power users";
+      return localize(
+        "views.proxmox.proxmox_configure_view.maximum_performance_for_power_users"
+      );
     }
   }
 
   private _getMemoryDescription(): string {
     const gb = this._memoryMb / 1024;
     if (gb <= 2) {
-      return "Minimum for basic operation";
+      return localize(
+        "views.proxmox.proxmox_configure_view.minimum_for_basic_operation"
+      );
     } else if (gb <= 4) {
-      return "Recommended for most users";
+      return localize(
+        "views.proxmox.proxmox_configure_view.recommended_for_most_users"
+      );
     } else if (gb <= 8) {
-      return "Better for add-ons and many integrations";
+      return localize(
+        "views.proxmox.proxmox_configure_view.better_for_add_ons_and_many_integrations"
+      );
     } else {
-      return "Maximum performance for power users";
+      return localize(
+        "views.proxmox.proxmox_configure_view.maximum_performance_for_power_users"
+      );
     }
   }
 
   private _getDiskDescription(): string {
     if (this._diskSizeGb <= 32) {
-      return "Good for getting started";
+      return localize(
+        "views.proxmox.proxmox_configure_view.good_for_getting_started"
+      );
     } else if (this._diskSizeGb <= 64) {
-      return "Room for add-ons and history";
+      return localize(
+        "views.proxmox.proxmox_configure_view.room_for_add_ons_and_history"
+      );
     } else if (this._diskSizeGb <= 128) {
-      return "Plenty of space for long-term use";
+      return localize(
+        "views.proxmox.proxmox_configure_view.plenty_of_space_for_long_term_use"
+      );
     } else {
-      return "Extended storage for recordings and backups";
+      return localize(
+        "views.proxmox.proxmox_configure_view.extended_storage_for_recordings_and_backups"
+      );
     }
   }
 
@@ -685,8 +725,16 @@ export class ProxmoxConfigureView extends LitElement {
   render() {
     if (this._error) {
       return html`
-        <h2>Configure virtual machine</h2>
-        <p class="subtitle">Configure your Home Assistant VM on Proxmox</p>
+        <h2>
+          ${localize(
+            "views.proxmox.proxmox_configure_view.configure_virtual_machine"
+          )}
+        </h2>
+        <p class="subtitle">
+          ${localize(
+            "views.proxmox.proxmox_configure_view.configure_your_home_assistant_vm_on_proxmox"
+          )}
+        </p>
         <div class="config-card">
           <p class="error-text" role="alert" style="overflow-wrap: anywhere;">
             ${this._error.message}
@@ -698,7 +746,9 @@ export class ProxmoxConfigureView extends LitElement {
                 @click=${this._sessionExpired ? this._reconnect : this._retry}
                 ?disabled=${this._loadingNodes || this._loadingStorage}
               >
-                ${this._sessionExpired ? "Reconnect" : "Try again"}
+                ${this._sessionExpired
+                  ? localize("views.proxmox.proxmox_configure_view.reconnect")
+                  : localize("components.app_shell.try_again")}
               </wa-button>`
             : ""}
         </div>
@@ -714,8 +764,16 @@ export class ProxmoxConfigureView extends LitElement {
     const diskIndex = diskSizeOptions.indexOf(this._diskSizeGb);
 
     return html`
-      <h2>Configure virtual machine</h2>
-      <p class="subtitle">Configure your Home Assistant VM on Proxmox</p>
+      <h2>
+        ${localize(
+          "views.proxmox.proxmox_configure_view.configure_virtual_machine"
+        )}
+      </h2>
+      <p class="subtitle">
+        ${localize(
+          "views.proxmox.proxmox_configure_view.configure_your_home_assistant_vm_on_proxmox"
+        )}
+      </p>
 
       <div class="config-card">
         <!-- VM Name (Display Name) - First -->
@@ -723,7 +781,9 @@ export class ProxmoxConfigureView extends LitElement {
           <div class="setting-icon">${this._renderLabelIcon()}</div>
           <div class="setting-content">
             <wa-input
-              label="Display name"
+              label=${localize(
+                "views.proxmox.proxmox_configure_view.display_name"
+              )}
               type="text"
               size="s"
               .value=${this._vmName}
@@ -731,10 +791,14 @@ export class ProxmoxConfigureView extends LitElement {
               placeholder="home-assistant"
               maxlength="63"
               pattern="[a-zA-Z0-9._-]+"
-              title="Only letters, numbers, dash, underscore, and period allowed"
+              title=${localize(
+                "views.proxmox.proxmox_configure_view.only_letters_numbers_dash_underscore_and_period_allowed"
+              )}
             ></wa-input>
             <p class="setting-description">
-              Name shown in Proxmox (letters, numbers, dash, underscore only)
+              ${localize(
+                "views.proxmox.proxmox_configure_view.name_shown_in_proxmox_letters_numbers_dash_underscore_only"
+              )}
             </p>
           </div>
         </div>
@@ -744,10 +808,16 @@ export class ProxmoxConfigureView extends LitElement {
           <div class="setting-icon">${this._renderServerIcon()}</div>
           <div class="setting-content">
             ${this._loadingNodes
-              ? html`<span class="loading-text">Loading nodes...</span>`
+              ? html`<span class="loading-text"
+                  >${localize(
+                    "views.proxmox.proxmox_configure_view.loading_nodes"
+                  )}</span
+                >`
               : html`
                   <wa-select
-                    label="Node"
+                    label=${localize(
+                      "views.proxmox.proxmox_configure_view.node"
+                    )}
                     size="s"
                     .value=${this._selectedNode}
                     @change=${this._onNodeChange}
@@ -757,7 +827,18 @@ export class ProxmoxConfigureView extends LitElement {
                         <wa-option value=${node.name}>
                           ${`${node.name}${
                             node.cpu_usage != null
-                              ? ` (CPU: ${node.cpu_usage.toFixed(1)}%)`
+                              ? ` ${localize(
+                                  "views.proxmox.proxmox_configure_view.cpu_value",
+                                  {
+                                    value0: formatNumber(
+                                      Number(node.cpu_usage.toFixed(1)),
+                                      {
+                                        minimumFractionDigits: 1,
+                                        maximumFractionDigits: 1,
+                                      }
+                                    ),
+                                  }
+                                )}`
                               : ""
                           }`}
                         </wa-option>
@@ -766,7 +847,9 @@ export class ProxmoxConfigureView extends LitElement {
                   </wa-select>
                 `}
             <p class="setting-description">
-              Proxmox node where the VM will be created
+              ${localize(
+                "views.proxmox.proxmox_configure_view.proxmox_node_where_the_vm_will_be_created"
+              )}
             </p>
           </div>
         </div>
@@ -776,10 +859,14 @@ export class ProxmoxConfigureView extends LitElement {
           <div class="setting-icon">${this._renderDatabaseIcon()}</div>
           <div class="setting-content">
             ${this._loadingStorage
-              ? html`<span class="loading-text">Loading storage...</span>`
+              ? html`<span class="loading-text"
+                  >${localize(
+                    "views.proxmox.proxmox_configure_view.loading_storage"
+                  )}</span
+                >`
               : html`
                   <wa-select
-                    label="Storage"
+                    label=${localize("proxmox.storage_pool")}
                     size="s"
                     .value=${this._selectedStorage}
                     @change=${this._onStorageChange}
@@ -788,14 +875,22 @@ export class ProxmoxConfigureView extends LitElement {
                     ${this._storages.map(
                       (storage) => html`
                         <wa-option value=${storage.name}>
-                          ${`${storage.name} (${formatBytes(storage.available)} free)`}
+                          ${localize(
+                            "views.proxmox.proxmox_configure_view.value_value_free",
+                            {
+                              value0: storage.name,
+                              value1: formatBytes(storage.available),
+                            }
+                          )}
                         </wa-option>
                       `
                     )}
                   </wa-select>
                 `}
             <p class="setting-description">
-              Storage location for the VM disk image
+              ${localize(
+                "views.proxmox.proxmox_configure_view.storage_location_for_the_vm_disk_image"
+              )}
             </p>
           </div>
         </div>
@@ -805,12 +900,16 @@ export class ProxmoxConfigureView extends LitElement {
           <div class="setting-content">
             ${this._loadingStorage || this._loadingNodes
               ? html`<span class="loading-text"
-                  >Loading network bridges...</span
+                  >${localize(
+                    "views.proxmox.proxmox_configure_view.loading_network_bridges"
+                  )}</span
                 >`
               : html`
                   <wa-select
                     id="network-bridge"
-                    label="Network bridge"
+                    label=${localize(
+                      "views.proxmox.proxmox_configure_view.network_bridge"
+                    )}
                     size="s"
                     .value=${this._selectedBridge}
                     @change=${this._onBridgeChange}
@@ -820,7 +919,9 @@ export class ProxmoxConfigureView extends LitElement {
                       (bridge) => html`
                         <wa-option value=${bridge.name}>
                           ${bridge.name}${bridge.network_type === "vnet"
-                            ? " (SDN VNet)"
+                            ? ` ${localize(
+                                "views.proxmox.proxmox_configure_view.sdn_vnet"
+                              )}`
                             : ""}${bridge.comments
                             ? ` - ${bridge.comments.trim()}`
                             : ""}
@@ -834,14 +935,20 @@ export class ProxmoxConfigureView extends LitElement {
                     ? // A lookup error already offers its own retry above
                       html`<p class="error-text" role="alert">
                           ${this._selectedNode
-                            ? "No network bridges available on this node."
-                            : "No online Proxmox nodes found."}
+                            ? localize(
+                                "views.proxmox.proxmox_configure_view.no_network_bridges_available_on_this_node"
+                              )
+                            : localize(
+                                "views.proxmox.proxmox_configure_view.no_online_proxmox_nodes_found"
+                              )}
                         </p>
                         <wa-button
                           @click=${this._selectedNode
                             ? this._loadStorage
                             : this._loadNodes}
-                          >Try again</wa-button
+                          >${localize(
+                            "components.app_shell.try_again"
+                          )}</wa-button
                         >`
                     : ""}
                 `}
@@ -853,7 +960,7 @@ export class ProxmoxConfigureView extends LitElement {
           <div class="setting-icon">${this._renderIdIcon()}</div>
           <div class="setting-content">
             <wa-input
-              label="VM ID"
+              label=${localize("views.proxmox.proxmox_configure_view.vm_id")}
               type="number"
               size="s"
               .value=${String(this._vmId)}
@@ -862,7 +969,9 @@ export class ProxmoxConfigureView extends LitElement {
               max="999999999"
             ></wa-input>
             <p class="setting-description">
-              Unique identifier for the virtual machine
+              ${localize(
+                "views.proxmox.proxmox_configure_view.unique_identifier_for_the_virtual_machine"
+              )}
             </p>
           </div>
         </div>
@@ -880,11 +989,19 @@ export class ProxmoxConfigureView extends LitElement {
               .value=${coreIndex >= 0 ? coreIndex : 1}
               @input=${this._onCoresChange}
               .valueFormatter=${(index: number) =>
-                `${coreOptions[index]} cores`}
+                localize("views.proxmox.proxmox_configure_view.value_cores", {
+                  value0: coreOptions[index],
+                })}
               ><div slot="label" class="setting-header">
-                <span class="setting-label">CPU cores</span
+                <span class="setting-label"
+                  >${localize(
+                    "views.proxmox.proxmox_configure_view.cpu_cores"
+                  )}</span
                 ><span class="setting-value" aria-hidden="true"
-                  >${this._cpuCores} cores</span
+                  >${localize(
+                    "views.proxmox.proxmox_configure_view.value_cores",
+                    { value0: this._cpuCores }
+                  )}</span
                 >
               </div></wa-slider
             >
@@ -907,7 +1024,10 @@ export class ProxmoxConfigureView extends LitElement {
               .valueFormatter=${(index: number) =>
                 this._formatMemory(memoryOptions[index])}
               ><div slot="label" class="setting-header">
-                <span class="setting-label">Memory</span
+                <span class="setting-label"
+                  >${localize(
+                    "views.proxmox.proxmox_configure_view.memory"
+                  )}</span
                 ><span class="setting-value" aria-hidden="true"
                   >${this._formatMemory(this._memoryMb)}</span
                 >
@@ -932,7 +1052,10 @@ export class ProxmoxConfigureView extends LitElement {
               .valueFormatter=${(index: number) =>
                 this._formatDiskSize(diskSizeOptions[index])}
               ><div slot="label" class="setting-header">
-                <span class="setting-label">Disk size</span
+                <span class="setting-label"
+                  >${localize(
+                    "views.proxmox.proxmox_configure_view.disk_size"
+                  )}</span
                 ><span class="setting-value" aria-hidden="true"
                   >${this._formatDiskSize(this._diskSizeGb)}</span
                 >

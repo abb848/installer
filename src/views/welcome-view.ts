@@ -1,3 +1,4 @@
+import { localize } from "../localization/localize.js";
 import { LitElement, html, css } from "lit";
 import {
   ViewAccessibility,
@@ -156,12 +157,12 @@ export class WelcomeView extends LitElement {
         <img
           class="logo logo-light"
           src="/assets/home-assistant-logo-light.svg"
-          alt="Home Assistant"
+          alt=${localize("brand.home_assistant")}
         />
         <img
           class="logo logo-dark"
           src="/assets/home-assistant-logo-dark.svg"
-          alt="Home Assistant"
+          alt=${localize("brand.home_assistant")}
         />
       </h1>
 
@@ -169,12 +170,14 @@ export class WelcomeView extends LitElement {
 
       <div class="welcome-text">
         <p>
-          Welcome to Home Assistant, a local and privacy-first home automation
-          platform.
+          ${localize(
+            "views.welcome_view.welcome_to_home_assistant_a_local_and_privacy_first_home_automation_platfor"
+          )}
         </p>
         <p>
-          This installer guides you through setting up Home Assistant on your
-          hardware.
+          ${localize(
+            "views.welcome_view.this_installer_guides_you_through_setting_up_home_assistant_on_your_hardwar"
+          )}
         </p>
       </div>
 
@@ -184,8 +187,7 @@ export class WelcomeView extends LitElement {
         size="l"
         @click=${this._onLetsGo}
       >
-        Let's go
-        <span slot="end">→</span>
+        ${localize("views.welcome_view.let_s_go")} <span slot="end">→</span>
       </wa-button>
 
       <a
@@ -199,7 +201,9 @@ export class WelcomeView extends LitElement {
             "https://www.home-assistant.io/installation/"
           )}
       >
-        Learn more about installing Home Assistant
+        ${localize(
+          "views.welcome_view.learn_more_about_installing_home_assistant"
+        )}
       </a>
 
       <a
@@ -213,12 +217,12 @@ export class WelcomeView extends LitElement {
         <img
           class="ohf-logo ohf-logo-light"
           src="/assets/ohf-logo-light.svg"
-          alt="Open Home Foundation"
+          alt=${localize("views.welcome_view.open_home_foundation")}
         />
         <img
           class="ohf-logo ohf-logo-dark"
           src="/assets/ohf-logo-dark.svg"
-          alt="Open Home Foundation"
+          alt=${localize("views.welcome_view.open_home_foundation")}
         />
       </a>
     `;

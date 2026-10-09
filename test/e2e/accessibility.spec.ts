@@ -9,6 +9,8 @@ for (const [flow, tag, flag] of [
     page,
   }) => {
     await page.goto("/");
+    // The app shell loads after locale detection, so wait for it to render.
+    await page.locator("welcome-view").waitFor({ state: "attached" });
     await page.evaluate(
       async ({ flow, tag, flag }) => {
         const statePath = "/src/state/wizard-state.ts";
@@ -64,6 +66,7 @@ for (const tag of ["confirm-dialog", "info-dialog"]) {
   }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto("/");
+    await page.locator("welcome-view").waitFor({ state: "attached" });
     await page.evaluate((tag) => {
       document.querySelector("app-shell")!.remove();
       const dialog = document.createElement(tag) as HTMLElement & {
@@ -90,6 +93,7 @@ for (const tag of [
   }) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto("/");
+    await page.locator("welcome-view").waitFor({ state: "attached" });
     await page.evaluate((tag) => {
       document.querySelector("app-shell")!.remove();
       document.body.append(document.createElement(tag));
@@ -117,6 +121,7 @@ test("reduced motion reaches card shadow roots and the FAB button part", async (
 }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await page.goto("/");
+  await page.locator("welcome-view").waitFor({ state: "attached" });
   await page.evaluate(() => {
     document.querySelector("app-shell")!.remove();
     for (const tag of [
@@ -272,6 +277,7 @@ for (const tag of [
   }, testInfo) => {
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.goto("/");
+    await page.locator("welcome-view").waitFor({ state: "attached" });
     const initialStatus = await page.evaluate(async (tag) => {
       document.querySelector("app-shell")!.remove();
       const progress = document.createElement(tag) as HTMLElement & {

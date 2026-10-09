@@ -1,3 +1,4 @@
+import { localize, localizeContent } from "../../localization/localize.js";
 import { LitElement, html, css, nothing } from "lit";
 import { ViewAccessibility } from "../../utils/view-accessibility.js";
 import { logFrontendError } from "../../utils/diagnostics.js";
@@ -161,7 +162,7 @@ export class ConfirmationView extends LitElement {
   private _wizardState: WizardState = wizardState.getState();
 
   @state()
-  private _haosVersion: string = "";
+  private _haosVersion: string | null = "";
 
   private _unsubscribe?: () => void;
 
@@ -181,7 +182,7 @@ export class ConfirmationView extends LitElement {
       this._haosVersion = release.version;
     } catch (error) {
       logFrontendError(error);
-      this._haosVersion = "Unknown";
+      this._haosVersion = null;
     }
   }
 
@@ -192,9 +193,10 @@ export class ConfirmationView extends LitElement {
 
   render() {
     const selections = this._wizardState.selections;
-    const deviceName = (selections.deviceName as string) || "Unknown device";
+    const deviceName =
+      (selections.deviceName as string) || localize("common.unknown_device");
     const deviceImage = selections.deviceImage as string | undefined;
-    const driveName = selections.driveName || "Unknown drive";
+    const driveName = selections.driveName || localize("common.unknown_drive");
     const driveSize = selections.driveSize;
     // The path is what actually gets written to, so show it alongside the
     // friendly name: two identical cards are otherwise indistinguishable.
@@ -205,8 +207,14 @@ export class ConfirmationView extends LitElement {
     const deviceConfig = selections.deviceConfig;
 
     return html`
-      <h2>Ready to install</h2>
-      <p class="subtitle">Review your selections before installing</p>
+      <h2>
+        ${localize("views.proxmox.proxmox_confirm_view.ready_to_install")}
+      </h2>
+      <p class="subtitle">
+        ${localize(
+          "views.sbc.confirmation_view.review_your_selections_before_installing"
+        )}
+      </p>
 
       <div class="summary-card">
         <!-- Device -->
@@ -225,10 +233,16 @@ export class ConfirmationView extends LitElement {
                 </div>`}
           </div>
           <div class="summary-info">
-            <p class="summary-label">Device</p>
+            <p class="summary-label">
+              ${localize("components.confirm_dialog.device")}
+            </p>
             <p class="summary-value">${deviceName}</p>
             ${deviceConfig
-              ? html`<p class="summary-detail">Board: ${deviceConfig.board}</p>`
+              ? html`<p class="summary-detail">
+                  ${localizeContent("views.sbc.confirmation_view.board_value", {
+                    value0: deviceConfig.board,
+                  })}
+                </p>`
               : ""}
           </div>
         </div>
@@ -239,7 +253,9 @@ export class ConfirmationView extends LitElement {
         <div class="summary-row">
           <div class="icon-container">${this._renderDriveIcon()}</div>
           <div class="summary-info">
-            <p class="summary-label">Target drive</p>
+            <p class="summary-label">
+              ${localize("views.sbc.confirmation_view.target_drive")}
+            </p>
             <p class="summary-value">${driveName}</p>
             <p class="summary-detail">
               ${this._formatSize(driveSize)}${driveModel
@@ -258,13 +274,28 @@ export class ConfirmationView extends LitElement {
         <div class="summary-row">
           <div class="icon-container">${this._renderHaIcon()}</div>
           <div class="summary-info">
-            <p class="summary-label">Home Assistant Operating System</p>
-            <p class="summary-value">
-              ${this._haosVersion
-                ? `Version ${this._haosVersion}`
-                : "Loading..."}
+            <p class="summary-label">
+              ${localize(
+                "views.proxmox.proxmox_confirm_view.home_assistant_operating_system"
+              )}
             </p>
-            <p class="summary-detail">Latest stable release</p>
+            <p class="summary-value">
+              ${this._haosVersion === null
+                ? localize("common.version_unknown")
+                : this._haosVersion
+                  ? localize(
+                      "views.proxmox.proxmox_confirm_view.version_value",
+                      {
+                        value0: this._haosVersion,
+                      }
+                    )
+                  : localize("common.loading")}
+            </p>
+            <p class="summary-detail">
+              ${localize(
+                "views.proxmox.proxmox_confirm_view.latest_stable_release"
+              )}
+            </p>
           </div>
         </div>
       </div>
@@ -272,7 +303,8 @@ export class ConfirmationView extends LitElement {
   }
 
   private _formatSize(bytes: number | undefined): string {
-    if (bytes === undefined) return "Unknown size";
+    if (bytes === undefined)
+      return localize("views.sbc.confirmation_view.unknown_size");
     return formatBytes(bytes);
   }
 

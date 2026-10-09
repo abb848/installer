@@ -1,4 +1,5 @@
 import { LitElement, html, css, nothing } from "lit";
+import { formatNumber, localize } from "../localization/localize.js";
 import { customElement, property } from "lit/decorators.js";
 import { formatBytes } from "../api/index.js";
 import {
@@ -322,8 +323,12 @@ export class InstallProgress extends LitElement {
 
   @property({ attribute: false }) stages: InstallStage[] = [];
   @property() stage = "downloading";
-  @property() stageTitle = "Downloading";
-  @property() description = "Installing Home Assistant";
+  @property() stageTitle = localize(
+    "views.proxmox.proxmox_progress_view.downloading"
+  );
+  @property() description = localize(
+    "views.proxmox.proxmox_progress_view.installing_home_assistant"
+  );
   @property({ type: Number }) progress = 0;
   @property({ type: Number }) bytesProcessed = 0;
   @property({ type: Number }) totalBytes = 0;
@@ -351,7 +356,9 @@ export class InstallProgress extends LitElement {
         <div class="mascot-container" aria-hidden="true">
           ${renderCasitaSad()}
         </div>
-        <h2>Installation failed</h2>
+        <h2>
+          ${localize("views.proxmox.proxmox_progress_view.installation_failed")}
+        </h2>
         <p class="error-message" role="alert">${this.error}</p>
         ${renderErrorHelp()}
       `;
@@ -372,7 +379,12 @@ export class InstallProgress extends LitElement {
             : renderCasitaThinking(this.stageTitle)}
       </div>
       <h2>${this.description}</h2>
-      <ol class="stages-indicator" aria-label="Installation stages">
+      <ol
+        class="stages-indicator"
+        aria-label=${localize(
+          "components.install_progress.installation_stages"
+        )}
+      >
         ${this.stages.map(
           (stage, index) => html`
             <li
@@ -391,7 +403,9 @@ export class InstallProgress extends LitElement {
               <span class="stage-label"
                 >${stage.label}${this.stage === "complete" ||
                 index < currentIndex
-                  ? html`<span class="stage-status"> (completed)</span>`
+                  ? html`<span class="stage-status"
+                      >${` ${localize("components.install_progress.completed")}`}</span
+                    >`
                   : nothing}</span
               >
             </li>
@@ -411,7 +425,18 @@ export class InstallProgress extends LitElement {
                     >${this.showUnknownBytes && this.indeterminate
                       ? formatBytes(this.bytesProcessed)
                       : this.measurable && this.totalBytes > 0
-                        ? `${formatBytes(this.bytesProcessed)} / ${formatBytes(this.totalBytes)}${this.stage === "extracting" ? " compressed" : ""}`
+                        ? this.stage === "extracting"
+                          ? localize(
+                              "components.install_progress.byte_progress_compressed",
+                              {
+                                completed: formatBytes(this.bytesProcessed),
+                                total: formatBytes(this.totalBytes),
+                              }
+                            )
+                          : localize("format.byte_progress", {
+                              completed: formatBytes(this.bytesProcessed),
+                              total: formatBytes(this.totalBytes),
+                            })
                         : ""}</span
                   >
                   <span class="speed"
@@ -422,11 +447,17 @@ export class InstallProgress extends LitElement {
                 </div>
                 <div class="progress-right">
                   <span class="percentage"
-                    >${this.measurable ? `${this.progress}%` : ""}</span
+                    >${this.measurable
+                      ? formatNumber(this.progress / 100, {
+                          style: "percent",
+                          maximumFractionDigits: 20,
+                        })
+                      : ""}</span
                   >
                   <span class="eta"
                     >${this.measurable && this.totalBytes > 0
-                      ? this._calculateEta() || "Calculating..."
+                      ? this._calculateEta() ||
+                        localize("views.sbc.progress_view.calculating")
                       : ""}</span
                   >
                 </div>
@@ -435,7 +466,9 @@ export class InstallProgress extends LitElement {
           : ""}
       </div>
       <p class="stage-description">
-        Please keep this window open during installation
+        ${localize(
+          "views.proxmox.proxmox_progress_view.please_keep_this_window_open_during_installation"
+        )}
       </p>
     `;
   }
@@ -460,14 +493,22 @@ export class InstallProgress extends LitElement {
     if (remainingSeconds < 0 || !isFinite(remainingSeconds)) return null;
 
     if (remainingSeconds < 60) {
-      return "Less than a minute remaining";
+      return localize(
+        "views.proxmox.proxmox_progress_view.less_than_a_minute_remaining"
+      );
     } else if (remainingSeconds < 3600) {
       const minutes = Math.ceil(remainingSeconds / 60);
-      return `About ${minutes} minute${minutes !== 1 ? "s" : ""} remaining`;
+      return localize(
+        "views.proxmox.proxmox_progress_view.about_value_minutevalue_remaining",
+        { value0: minutes }
+      );
     } else {
       const hours = Math.floor(remainingSeconds / 3600);
       const minutes = Math.ceil((remainingSeconds % 3600) / 60);
-      return `About ${hours}h ${minutes}m remaining`;
+      return localize(
+        "views.proxmox.proxmox_progress_view.about_valueh_valuem_remaining",
+        { value0: hours, value1: minutes }
+      );
     }
   }
 
@@ -485,7 +526,9 @@ export class InstallProgress extends LitElement {
     const bytesPerSecond = bytesInStage / elapsed;
     if (bytesPerSecond <= 0 || !isFinite(bytesPerSecond)) return "";
 
-    return `${formatBytes(bytesPerSecond)}/s`;
+    return localize("views.proxmox.proxmox_progress_view.value_s", {
+      value0: formatBytes(bytesPerSecond),
+    });
   }
 }
 

@@ -1,3 +1,4 @@
+import { localize } from "../../localization/localize.js";
 import {
   installerError,
   type InstallerError,
@@ -84,7 +85,11 @@ export class ProgressView extends LitElement {
 
     if (!drive || !deviceConfig) {
       this._isFlashing = false;
-      this._setError("Missing drive or device configuration");
+      this._setError(
+        localize(
+          "views.sbc.progress_view.missing_drive_or_device_configuration"
+        )
+      );
       return;
     }
 
@@ -179,40 +184,48 @@ export class ProgressView extends LitElement {
   private _getStageTitle(stage: string): string {
     switch (stage) {
       case "downloading":
-        return "Downloading";
+        return localize("views.proxmox.proxmox_progress_view.downloading");
       case "extracting":
-        return "Extracting";
+        return localize("views.sbc.progress_view.extracting");
       case "writing":
-        return "Writing";
+        return localize("views.sbc.progress_view.writing");
       case "verifying":
-        return "Verifying";
+        return localize("views.sbc.progress_view.verifying");
       case "finalizing":
-        return "Finalizing";
+        return localize("views.sbc.progress_view.finalizing");
       case "complete":
-        return "Complete!";
+        return localize("views.proxmox.proxmox_progress_view.complete");
       case "error":
-        return "Error";
+        return localize("common.error");
       default:
-        return "Installing";
+        return localize("views.proxmox.proxmox_progress_view.installing");
     }
   }
 
   private _getStageDescription(stage: string): string {
     switch (stage) {
       case "downloading":
-        return "Fetching the Home Assistant image";
+        return localize(
+          "views.sbc.progress_view.fetching_the_home_assistant_image"
+        );
       case "extracting":
-        return "Extracting the image";
+        return localize("views.sbc.progress_view.extracting_the_image");
       case "writing":
-        return "Writing Home Assistant to your drive";
+        return localize(
+          "views.sbc.progress_view.writing_home_assistant_to_your_drive"
+        );
       case "verifying":
-        return "Verifying the written data";
+        return localize("views.sbc.progress_view.verifying_the_written_data");
       case "finalizing":
-        return "Finishing up the installation";
+        return localize(
+          "views.sbc.progress_view.finishing_up_the_installation"
+        );
       case "complete":
-        return "Installation complete!";
+        return localize("api.commands.installation_complete");
       default:
-        return "Installing Home Assistant";
+        return localize(
+          "views.proxmox.proxmox_progress_view.installing_home_assistant"
+        );
     }
   }
 }

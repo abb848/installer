@@ -1,3 +1,4 @@
+import { localize } from "../localization/localize.js";
 import { LitElement, html, css } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import {
@@ -86,7 +87,7 @@ export class WizardShell extends LitElement {
   private _wizardState: WizardState = wizardState.getState();
 
   @property({ type: String })
-  nextLabel = "Next";
+  nextLabel = localize("common.next");
 
   @property({ type: Boolean })
   nextDisabled = false;
@@ -139,8 +140,7 @@ export class WizardShell extends LitElement {
           ?disabled=${this.isFirstStep || this.hideBack}
           style=${this.hideBack ? "visibility: hidden" : ""}
         >
-          <span slot="start">←</span>
-          Back
+          <span slot="start">←</span> ${localize("common.back")}
         </wa-button>
 
         <div class="header-center">
@@ -162,7 +162,7 @@ export class WizardShell extends LitElement {
             <div class="footer">
               <div class="footer-left">
                 <wa-button appearance="plain" @click=${this._onCancel}>
-                  Cancel
+                  ${localize("common.cancel")}
                 </wa-button>
               </div>
               <div class="footer-right">

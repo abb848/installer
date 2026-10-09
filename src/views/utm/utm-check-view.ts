@@ -1,3 +1,4 @@
+import { localize, localizeContent } from "../../localization/localize.js";
 import {
   installerError,
   renderErrorHelp,
@@ -242,7 +243,10 @@ export class UtmCheckView extends LitElement {
       wizardState.setSelection("utmInstalled", status.installed);
     } catch (error) {
       if (this.isConnected) new InstallDiagnostics("utm").fail(error);
-      this._error = installerError(error, "Failed to check UTM status");
+      this._error = installerError(
+        error,
+        localize("views.utm.utm_check_view.failed_to_check_utm_status")
+      );
       wizardState.setSelection("utmInstalled", false);
     } finally {
       this._loading = false;
@@ -251,20 +255,37 @@ export class UtmCheckView extends LitElement {
 
   render() {
     return html`
-      <h2>Virtual machine setup</h2>
-      <p class="subtitle">Run Home Assistant in a virtual machine using UTM</p>
+      <h2>${localize("views.utm.utm_check_view.virtual_machine_setup")}</h2>
+      <p class="subtitle">
+        ${localize(
+          "views.utm.utm_check_view.run_home_assistant_in_a_virtual_machine_using_utm"
+        )}
+      </p>
 
       <div class="warning-card">
-        <p class="warning-title">Best for testing & evaluation</p>
+        <p class="warning-title">
+          ${localize("views.utm.utm_check_view.best_for_testing_evaluation")}
+        </p>
         <p class="warning-description">
-          A virtual machine in UTM is great for trying Home Assistant out, but
-          maybe not the best solution to run your actual smart home on.
+          ${localize(
+            "views.utm.utm_check_view.a_virtual_machine_in_utm_is_great_for_trying_home_assistant_out_but_maybe_n"
+          )}
         </p>
         <ul class="warning-list">
-          <li>Your Mac needs to be running and you need to be logged in</li>
-          <li>The virtual machine won't start automatically on boot</li>
           <li>
-            For always-on Home Assistant, dedicated hardware is recommended
+            ${localize(
+              "views.utm.utm_check_view.your_mac_needs_to_be_running_and_you_need_to_be_logged_in"
+            )}
+          </li>
+          <li>
+            ${localize(
+              "views.utm.utm_check_view.the_virtual_machine_won_t_start_automatically_on_boot"
+            )}
+          </li>
+          <li>
+            ${localize(
+              "views.utm.utm_check_view.for_always_on_home_assistant_dedicated_hardware_is_recommended"
+            )}
           </li>
         </ul>
       </div>
@@ -297,7 +318,9 @@ export class UtmCheckView extends LitElement {
           <div class="spinner"></div>
         </div>
         <div class="status-text">
-          <p class="status-title">Checking for UTM...</p>
+          <p class="status-title">
+            ${localize("views.utm.utm_check_view.checking_for_utm")}
+          </p>
         </div>
       </div>
     `;
@@ -314,7 +337,9 @@ export class UtmCheckView extends LitElement {
           </svg>
         </div>
         <div class="status-text">
-          <p class="status-title">Error checking UTM</p>
+          <p class="status-title">
+            ${localize("views.utm.utm_check_view.error_checking_utm")}
+          </p>
           <p class="status-description" style="overflow-wrap: anywhere;">
             ${this._error?.message}
           </p>
@@ -327,7 +352,9 @@ export class UtmCheckView extends LitElement {
             appearance="outlined"
             @click=${this._checkStatus}
           >
-            ${this._renderRefreshIcon()} Try again
+            ${localizeContent("views.utm.utm_check_view.value_try_again", {
+              value0: this._renderRefreshIcon(),
+            })}
           </wa-button>`
         : ""}
     `;
@@ -343,15 +370,20 @@ export class UtmCheckView extends LitElement {
         </div>
         <div class="status-text">
           <p class="status-title">
-            UTM is
-            installed${this._utmStatus?.version
-              ? html` <span class="version-info"
-                  >(v${this._utmStatus.version})</span
-                >`
-              : ""}
+            ${this._utmStatus?.version
+              ? localizeContent("utm.installed_with_version", {
+                  version: html`<span class="version-info"
+                    >${localize("utm.version", {
+                      version: this._utmStatus.version,
+                    })}</span
+                  >`,
+                })
+              : localize("utm.installed")}
           </p>
           <p class="status-description">
-            Ready to create a Home Assistant virtual machine
+            ${localize(
+              "views.utm.utm_check_view.ready_to_create_a_home_assistant_virtual_machine"
+            )}
           </p>
         </div>
       </div>
@@ -369,10 +401,13 @@ export class UtmCheckView extends LitElement {
           </svg>
         </div>
         <div class="status-text">
-          <p class="status-title">UTM is not installed</p>
+          <p class="status-title">
+            ${localize("views.utm.utm_check_view.utm_is_not_installed")}
+          </p>
           <p class="status-description">
-            Download and install UTM to continue. UTM is a free, open-source
-            virtualization app for macOS.
+            ${localize(
+              "views.utm.utm_check_view.download_and_install_utm_to_continue_utm_is_a_free_open_source_virtualizati"
+            )}
           </p>
         </div>
       </div>
@@ -381,14 +416,18 @@ export class UtmCheckView extends LitElement {
         appearance="accent"
         @click=${this._openUtmDownload}
       >
-        ${this._renderDownloadIcon()} Download UTM
+        ${localizeContent("views.utm.utm_check_view.value_download_utm", {
+          value0: this._renderDownloadIcon(),
+        })}
       </wa-button>
       <wa-button
         variant="brand"
         appearance="outlined"
         @click=${this._checkStatus}
       >
-        ${this._renderRefreshIcon()} I've installed UTM
+        ${localizeContent("views.utm.utm_check_view.value_i_ve_installed_utm", {
+          value0: this._renderRefreshIcon(),
+        })}
       </wa-button>
     `;
   }

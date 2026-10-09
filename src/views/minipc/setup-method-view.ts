@@ -1,3 +1,4 @@
+import { localize } from "../../localization/localize.js";
 import { LitElement, html, css } from "lit";
 import {
   ViewAccessibility,
@@ -51,24 +52,36 @@ export class MiniPCSetupMethodView extends LitElement {
 
   render() {
     return html`
-      <h2>How will you install?</h2>
+      <h2>
+        ${localize("views.minipc.setup_method_view.how_will_you_install")}
+      </h2>
       <p class="subtitle">
-        Choose how you want to install Home Assistant on your mini PC
+        ${localize(
+          "views.minipc.setup_method_view.choose_how_you_want_to_install_home_assistant_on_your_mini_pc"
+        )}
       </p>
 
       <div class="options">
         <option-card
           horizontal
-          title="I can connect the drive"
-          description="Connect the SSD or NVMe drive from your mini PC to this computer via USB adapter"
+          title=${localize(
+            "views.minipc.setup_method_view.i_can_connect_the_drive"
+          )}
+          description=${localize(
+            "views.minipc.setup_method_view.connect_the_ssd_or_nvme_drive_from_your_mini_pc_to_this_computer_via_usb_ad"
+          )}
           image="/assets/icons/drive-connect.svg"
           @click=${this._onConnectDrive}
           ><span slot="end" aria-hidden="true">→</span></option-card
         >
         <option-card
           horizontal
-          title="I need to boot from USB"
-          description="Create a bootable USB drive to install Home Assistant directly on the mini PC"
+          title=${localize(
+            "views.minipc.setup_method_view.i_need_to_boot_from_usb"
+          )}
+          description=${localize(
+            "views.minipc.setup_method_view.create_a_bootable_usb_drive_to_install_home_assistant_directly_on_the_mini_"
+          )}
           image="/assets/icons/usb-boot.svg"
           @click=${this._onUsbBoot}
           ><span slot="end" aria-hidden="true">→</span></option-card
@@ -77,10 +90,14 @@ export class MiniPCSetupMethodView extends LitElement {
 
       <info-dialog
         ?open=${this._showUsbDialog}
-        title="USB boot installation"
-        message="Creating bootable USB drives is not supported by this installer. However, we have detailed instructions in our documentation that will guide you through the process."
-        primaryLabel="View instructions"
-        secondaryLabel="Go back"
+        title=${localize(
+          "views.minipc.setup_method_view.usb_boot_installation"
+        )}
+        message=${localize(
+          "views.minipc.setup_method_view.creating_bootable_usb_drives_is_not_supported_by_this_installer_however_we_"
+        )}
+        primaryLabel=${localize("common.view_instructions")}
+        secondaryLabel=${localize("common.go_back")}
         @dialog-primary=${this._onOpenDocs}
         @dialog-secondary=${this._onCloseDialog}
       ></info-dialog>

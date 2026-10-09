@@ -51,11 +51,13 @@ pub fn write_image<D: Write + Seek>(
     disk_size: u64,
     progress: &mut dyn FnMut(u64, u64, u64),
 ) -> io::Result<u64> {
+    // Open the source first, so a vanished stick never leaves a wiped disk behind.
+    let file = File::open(image_xz)?;
+    let compressed_total = file.metadata()?.len();
+
     wipe_ends(disk, disk_size)?;
     disk.seek(SeekFrom::Start(0))?;
 
-    let file = File::open(image_xz)?;
-    let compressed_total = file.metadata()?.len();
     let compressed_read = Rc::new(Cell::new(0));
     let mut input = BufReader::with_capacity(
         BUFFER_BYTES,
@@ -175,6 +177,16 @@ mod tests {
         std::fs::write(&image_xz, data).unwrap();
         let mut disk = Cursor::new(vec![0u8; 8 * 1024 * 1024]);
         assert!(write_image(&image_xz, &mut disk, 8 * 1024 * 1024, &mut |_, _, _| {}).is_err());
+    }
+
+    #[test]
+    fn missing_image_leaves_the_disk_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let disk_size = 16 * 1024 * 1024;
+        let mut disk = Cursor::new(vec![0xffu8; disk_size]);
+        let missing = dir.path().join("gone.img.xz");
+        assert!(write_image(&missing, &mut disk, disk_size as u64, &mut |_, _, _| {}).is_err());
+        assert!(disk.get_ref().iter().all(|&b| b == 0xff));
     }
 
     /// Decompression speed on real HAOS: set `HAOS_XZ` to the cached `.img.xz` and run

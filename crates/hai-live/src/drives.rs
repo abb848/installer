@@ -3,7 +3,8 @@
 //! Only plain file reads, so the logic is testable on any OS against a fake sysfs folder.
 
 use std::fs;
-use std::path::Path;
+use std::io;
+use std::path::{Path, PathBuf};
 
 /// Disk types we offer as install targets.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,6 +42,8 @@ pub struct Disk {
     pub model: String,
     /// Size in bytes.
     pub size_bytes: u64,
+    /// Hardware serial, if the kernel reports one. Part of the identity re-checked before writing.
+    pub serial: Option<String>,
 }
 
 /// One entry of `/sys/block`.
@@ -58,11 +61,19 @@ pub enum Entry {
 }
 
 /// Lists every entry of `sys_block` (normally `/sys/block`), sorted by name.
-pub fn list(sys_block: &Path) -> std::io::Result<Vec<Entry>> {
+pub fn list(sys_block: &Path) -> io::Result<Vec<Entry>> {
+    list_with(sys_block, &|path| fs::read_link(path))
+}
+
+/// Like [`list`], with the symlink reader passed in so tests can fake the hardware tree.
+pub(crate) fn list_with(
+    sys_block: &Path,
+    read_link: &dyn Fn(&Path) -> io::Result<PathBuf>,
+) -> io::Result<Vec<Entry>> {
     let mut entries = Vec::new();
     for item in fs::read_dir(sys_block)? {
         let name = item?.file_name().to_string_lossy().into_owned();
-        entries.push(entry(sys_block, name));
+        entries.push(entry(sys_block, name, read_link));
     }
     entries.sort_by(|a, b| entry_name(a).cmp(entry_name(b)));
     Ok(entries)
@@ -75,14 +86,24 @@ fn entry_name(entry: &Entry) -> &str {
     }
 }
 
-fn entry(sys_block: &Path, name: String) -> Entry {
+fn entry(
+    sys_block: &Path,
+    name: String,
+    read_link: &dyn Fn(&Path) -> io::Result<PathBuf>,
+) -> Entry {
     let kind = match classify(&name) {
         Ok(kind) => kind,
         Err(reason) => return Entry::Skipped { name, reason },
     };
     let dir = sys_block.join(&name);
-    // /sys/block/<name> links to the device's place in the hardware tree.
-    let link = fs::read_link(&dir).unwrap_or_default();
+    // /sys/block/<name> links to the device's place in the hardware tree. If that can't be
+    // read we can't rule out USB, so the device is never offered.
+    let Ok(link) = read_link(&dir) else {
+        return Entry::Skipped {
+            name,
+            reason: "connection type unknown",
+        };
+    };
     if is_usb_path(&link.to_string_lossy()) {
         return Entry::Skipped {
             name,
@@ -101,6 +122,7 @@ fn entry(sys_block: &Path, name: String) -> Entry {
     }
     Entry::Disk(Disk {
         model: model(&dir, kind),
+        serial: serial(&dir),
         name,
         kind,
         size_bytes,
@@ -165,6 +187,12 @@ fn model(dir: &Path, kind: Kind) -> String {
     }
 }
 
+/// NVMe and eMMC report `device/serial`; SATA/SCSI disks usually only `device/wwid`, which embeds it.
+fn serial(dir: &Path) -> Option<String> {
+    let device = dir.join("device");
+    read_trimmed(&device.join("serial")).or_else(|| read_trimmed(&device.join("wwid")))
+}
+
 /// Partition names of `disk`: subfolders that contain a `partition` file.
 pub fn partitions(sys_block: &Path, disk: &str) -> Vec<String> {
     let Ok(items) = fs::read_dir(sys_block.join(disk)) else {
@@ -203,6 +231,19 @@ pub(crate) mod tests {
         let dir = sys.join(disk).join(part);
         fs::create_dir_all(&dir).unwrap();
         fs::write(dir.join("partition"), "1\n").unwrap();
+    }
+
+    /// Fake `/sys/block` symlinks: disks named `sdu*` are on USB, everything else on SATA.
+    pub(crate) fn fake_link(path: &Path) -> io::Result<PathBuf> {
+        let name = path.file_name().unwrap().to_string_lossy();
+        let bus = if name.starts_with("sdu") {
+            "usb1/1-2"
+        } else {
+            "ata1"
+        };
+        Ok(PathBuf::from(format!(
+            "../devices/pci0000:00/{bus}/host0/block/{name}"
+        )))
     }
 
     #[test]
@@ -251,19 +292,23 @@ pub(crate) mod tests {
             sys,
             "sda",
             34_359_738_368,
-            &[("vendor", "ATA"), ("model", "Samsung SSD 870")],
+            &[
+                ("vendor", "ATA"),
+                ("model", "Samsung SSD 870"),
+                ("wwid", "t10.ATA Samsung SSD 870 S5Y1NX0R"),
+            ],
         );
         add_block(
             sys,
             "nvme0n1",
             256_060_514_304,
-            &[("model", "WD Blue SN570")],
+            &[("model", "WD Blue SN570"), ("serial", "22123K801234")],
         );
         add_block(sys, "loop0", 307_429_376, &[]);
         add_block(sys, "sr0", 0, &[]);
         add_block(sys, "sdb", 0, &[("model", "Card Reader")]);
 
-        let entries = list(sys).unwrap();
+        let entries = list_with(sys, &fake_link).unwrap();
         let names: Vec<&str> = entries.iter().map(entry_name).collect();
         assert_eq!(names, ["loop0", "nvme0n1", "sda", "sdb", "sr0"]);
 
@@ -274,9 +319,11 @@ pub(crate) mod tests {
                 kind: Kind::Sata,
                 model: "ATA Samsung SSD 870".into(),
                 size_bytes: 34_359_738_368,
+                serial: Some("t10.ATA Samsung SSD 870 S5Y1NX0R".into()),
             })
         );
-        assert!(matches!(&entries[1], Entry::Disk(d) if d.model == "WD Blue SN570"));
+        assert!(matches!(&entries[1], Entry::Disk(d)
+            if d.model == "WD Blue SN570" && d.serial.as_deref() == Some("22123K801234")));
         assert!(matches!(
             entries[0],
             Entry::Skipped {
@@ -295,6 +342,36 @@ pub(crate) mod tests {
             entries[4],
             Entry::Skipped {
                 reason: "optical drive",
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn hides_usb_disks_and_disks_whose_bus_is_unknown() {
+        let dir = tempfile::tempdir().unwrap();
+        add_block(dir.path(), "sdu", 64_000_000_000, &[]);
+        add_block(dir.path(), "sdz", 64_000_000_000, &[]);
+        let unreadable = |path: &Path| {
+            if path.ends_with("sdz") {
+                Err(io::Error::from(io::ErrorKind::NotFound))
+            } else {
+                fake_link(path)
+            }
+        };
+
+        let entries = list_with(dir.path(), &unreadable).unwrap();
+        assert!(matches!(
+            entries[0],
+            Entry::Skipped {
+                reason: "USB device",
+                ..
+            }
+        ));
+        assert!(matches!(
+            entries[1],
+            Entry::Skipped {
+                reason: "connection type unknown",
                 ..
             }
         ));

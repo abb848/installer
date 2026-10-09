@@ -91,7 +91,9 @@ fn install(image: &BundledImage, disk: &Disk) {
     }
 
     let (sys_block, dev) = (Path::new(SYS_BLOCK), Path::new(DEV));
-    if !safety::still_usable(disk, sys_block, dev) {
+    let unchanged = drives::list(sys_block)
+        .is_ok_and(|current| safety::still_usable(disk, current, sys_block, dev));
+    if !unchanged {
         return fail("The disk changed or disappeared. Nothing was written.");
     }
 

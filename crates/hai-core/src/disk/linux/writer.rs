@@ -14,9 +14,11 @@ use zbus::Connection;
 pub async fn write_image<P: ProgressCallback>(
     image_path: &Path,
     device_id: &str,
+    expected: &ExpectedDevice,
     verify: bool,
     progress_callback: &P,
 ) -> Result<()> {
+    check_identity(&super::device::list_devices().await?, device_id, expected)?;
     let connection = Connection::system()
         .await
         .map_err(|e| map_udisks_error(e, "connecting to the system bus"))?;
@@ -29,6 +31,18 @@ pub async fn write_image<P: ProgressCallback>(
 
     super::device::ensure_safe_target(device_id)?;
     let device = open_device_rw(&connection, &block_path).await?;
+
+    // Authorization may take a while. Check again before the first write.
+    // rdev ties the fd to the enumerated node, but is not a hardware serial:
+    // Linux can reuse device numbers after unplugging a drive.
+    check_identity(&super::device::list_devices().await?, device_id, expected)?;
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    let opened = device.metadata()?;
+    // Unplugged between the checks: report the disconnect, not a missing path
+    let current = std::fs::metadata(device_id).map_err(device_io_error)?;
+    if !opened.file_type().is_block_device() || opened.rdev() != current.rdev() {
+        return Err(Error::DriveDisconnected);
+    }
 
     progress_callback.on_progress(FlashProgress::new(
         FlashStage::Writing,

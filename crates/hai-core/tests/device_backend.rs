@@ -13,6 +13,7 @@ impl DeviceBackend for BackendAuthorizingDuringWrite {
         &self,
         _image_path: &Path,
         _device_id: &str,
+        _expected: &hai_core::ExpectedDevice,
         _verify: bool,
         _progress_callback: &P,
     ) -> Result<()> {

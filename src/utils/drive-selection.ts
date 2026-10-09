@@ -6,9 +6,8 @@ import { wizardState, type WizardSelections } from "../state/wizard-state.js";
  *
  * The device id doubles as the path handed to the backend (`/dev/sda`,
  * `disk2`, `\\.\PhysicalDrive1`), and the OS is free to hand that same path to
- * a different device once the original is unplugged. `BlockDevice` carries no
- * serial number, so identity is the id plus every other field that
- * distinguishes two devices that could end up sharing it.
+ * a different device once the original is unplugged. Compare the hardware
+ * serial when available, along with the size, model and vendor.
  *
  * `undefined` means the value is unknown.
  */
@@ -18,6 +17,7 @@ export interface DriveIdentity {
   size?: number;
   model?: string;
   vendor?: string;
+  serial?: string;
 }
 
 export function driveIdentity(drive: BlockDevice): DriveIdentity {
@@ -28,23 +28,29 @@ export function driveIdentity(drive: BlockDevice): DriveIdentity {
     // The backend sends null for a value the device does not report.
     model: drive.model ?? undefined,
     vendor: drive.vendor ?? undefined,
+    serial: drive.serial ?? undefined,
   };
 }
 
 /**
- * Whether two snapshots describe the same physical device.
+ * Whether the current snapshot still matches the selected device.
  *
  * `name` is deliberately excluded: it is a display label some enumerators
  * build from the mount state, so it can change while the device does not.
  * An unknown size never matches, since every enumerated device has one.
+ * Only require a serial when it was known at selection time.
  */
-export function isSameDrive(a: DriveIdentity, b: DriveIdentity): boolean {
+export function isSameDrive(
+  selected: DriveIdentity,
+  current: DriveIdentity
+): boolean {
   return (
-    a.id === b.id &&
-    a.size !== undefined &&
-    a.size === b.size &&
-    a.model === b.model &&
-    a.vendor === b.vendor
+    selected.id === current.id &&
+    selected.size !== undefined &&
+    selected.size === current.size &&
+    selected.model === current.model &&
+    selected.vendor === current.vendor &&
+    (selected.serial === undefined || selected.serial === current.serial)
   );
 }
 
@@ -110,7 +116,7 @@ export function findDrive(
   return (
     drives
       .filter((drive) => isEligibleFlashTarget(drive, config))
-      .find((drive) => isSameDrive(driveIdentity(drive), identity)) ?? null
+      .find((drive) => isSameDrive(identity, driveIdentity(drive))) ?? null
   );
 }
 
@@ -127,6 +133,7 @@ export function readDriveSelection(
     size: selections.driveSize,
     model: selections.driveModel,
     vendor: selections.driveVendor,
+    serial: selections.driveSerial,
   };
 }
 
@@ -138,6 +145,7 @@ export function storeDriveSelection(drive: BlockDevice) {
   wizardState.setSelection("driveSize", identity.size);
   wizardState.setSelection("driveModel", identity.model);
   wizardState.setSelection("driveVendor", identity.vendor);
+  wizardState.setSelection("driveSerial", identity.serial);
 }
 
 export function clearDriveSelection() {
@@ -146,4 +154,5 @@ export function clearDriveSelection() {
   wizardState.setSelection("driveSize", undefined);
   wizardState.setSelection("driveModel", undefined);
   wizardState.setSelection("driveVendor", undefined);
+  wizardState.setSelection("driveSerial", undefined);
 }

@@ -66,6 +66,8 @@ describe("progress-view", () => {
         size: MOCK_BLOCK_DEVICES[0].size,
         model: MOCK_BLOCK_DEVICES[0].model,
         vendor: MOCK_BLOCK_DEVICES[0].vendor,
+        // The backend re-checks the hardware serial right before writing
+        serial: MOCK_BLOCK_DEVICES[0].serial,
       },
     });
     const progress: FlashProgress = {

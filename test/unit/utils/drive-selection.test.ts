@@ -4,6 +4,7 @@ import { MOCK_MANIFEST } from "../../../src/api/mock-data.js";
 import { wizardState } from "../../../src/state/wizard-state.js";
 import {
   driveIdentity,
+  clearDriveSelection,
   findDrive,
   isSameDrive,
   getDriveFit,
@@ -21,6 +22,7 @@ const makeDrive = (overrides: Partial<BlockDevice> = {}): BlockDevice => ({
   removable: true,
   model: "Ultra Fit",
   vendor: "SanDisk",
+  serial: "STICK-A",
   ...overrides,
 });
 
@@ -28,6 +30,44 @@ describe("drive-selection", () => {
   afterEach(() => wizardState.reset());
 
   describe("isSameDrive", () => {
+    it("rejects an identical stick or a missing previously known serial", () => {
+      const selected = driveIdentity(makeDrive());
+      for (const serial of ["STICK-B", null, undefined]) {
+        expect(isSameDrive(selected, driveIdentity(makeDrive({ serial })))).to
+          .be.false;
+      }
+      expect(isSameDrive(selected, driveIdentity(makeDrive()))).to.be.true;
+    });
+
+    it("keeps the existing fallback for drives without a serial", () => {
+      expect(
+        isSameDrive(
+          driveIdentity(makeDrive({ serial: null, model: null, vendor: null })),
+          driveIdentity(
+            makeDrive({
+              serial: undefined,
+              model: undefined,
+              vendor: undefined,
+            })
+          )
+        )
+      ).to.be.true;
+    });
+
+    it("accepts a newly discovered serial but still checks the other metadata", () => {
+      const selected = driveIdentity(makeDrive({ serial: null }));
+      expect(isSameDrive(selected, driveIdentity(makeDrive()))).to.be.true;
+      for (const change of [
+        { id: "/dev/sdb" },
+        { size: 1 },
+        { model: null },
+        { vendor: null },
+      ]) {
+        expect(isSameDrive(selected, driveIdentity(makeDrive(change)))).to.be
+          .false;
+      }
+    });
+
     it("rejects another device that took over the same path", () => {
       expect(
         isSameDrive(
@@ -96,6 +136,20 @@ describe("drive-selection", () => {
     expect(findDrive([makeDrive()], driveIdentity(makeDrive()))).to.be.null;
   });
 
+  it("uses the selected serial when finding a drive", () => {
+    const known = makeDrive();
+    const unknown = makeDrive({ serial: null });
+    expect(findDrive([known], driveIdentity(unknown), config)).to.equal(known);
+    expect(findDrive([unknown], driveIdentity(known), config)).to.be.null;
+    expect(
+      findDrive(
+        [makeDrive({ serial: "STICK-B" })],
+        driveIdentity(known),
+        config
+      )
+    ).to.be.null;
+  });
+
   it("stores the full identity, not just the path", () => {
     const drive = makeDrive();
     storeDriveSelection(drive);
@@ -103,5 +157,15 @@ describe("drive-selection", () => {
     expect(readDriveSelection(wizardState.getState().selections)).to.deep.equal(
       driveIdentity(drive)
     );
+  });
+
+  it("clears the serial when clearing or replacing the selection", () => {
+    storeDriveSelection(makeDrive());
+    clearDriveSelection();
+    expect(wizardState.getState().selections.driveSerial).to.be.undefined;
+    storeDriveSelection(makeDrive());
+    storeDriveSelection(makeDrive({ serial: null }));
+    expect(readDriveSelection(wizardState.getState().selections)?.serial).to.be
+      .undefined;
   });
 });

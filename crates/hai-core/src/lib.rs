@@ -93,8 +93,9 @@ pub trait ReleaseSource {
 ///
 /// On Linux, enumeration excludes read-only disks and disks backing system
 /// mounts, active swap, or active storage. The writer repeats these checks before
-/// unmounting and opening the device. Callers must still validate the target's
-/// identity and enforce their removability policy across platforms.
+/// unmounting and opening the device. Callers must choose an eligible target
+/// and capture its identity; real writers re-check that identity, including a
+/// known hardware serial, before writing.
 pub trait DeviceBackend {
     /// Check process privileges before preparing an image, without opening a drive.
     /// Defaults to success for backends that authorize access during `write_image`.
@@ -107,12 +108,13 @@ pub trait DeviceBackend {
 
     /// Write an image to the device with this id, reporting progress.
     ///
-    /// Platform safety checks do not replace caller validation of device
-    /// identity and removability.
+    /// Re-checks the expected identity. Platform safety checks do not replace
+    /// caller validation of removability.
     async fn write_image<P: ProgressCallback>(
         &self,
         image_path: &Path,
         device_id: &str,
+        expected: &ExpectedDevice,
         verify: bool,
         progress_callback: &P,
     ) -> Result<()>;

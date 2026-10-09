@@ -83,6 +83,7 @@ fn optional_values_serialize_as_required_nullable_fields() {
             removable: true,
             model: None,
             vendor: None,
+            serial: None,
         })
         .unwrap(),
         serde_json::to_value(ProxmoxNode {

@@ -29,7 +29,11 @@ model: string | null,
 /**
  * Vendor name if available
  */
-vendor: string | null, };
+vendor: string | null,
+/**
+ * Hardware serial, when reported by the device (not a filesystem UUID).
+ */
+serial: string | null, };
 
 export type DeviceType = "sd_card" | "usb_drive" | "ssd" | "hdd" | "nvme" | "unknown";
 
@@ -127,7 +131,7 @@ verify: boolean,
  */
 expected_device: ExpectedDevice, };
 
-export type ExpectedDevice = { size?: number | null, model?: string | null, vendor?: string | null, };
+export type ExpectedDevice = { size?: number | null, model?: string | null, vendor?: string | null, serial?: string | null, };
 
 export type HaosRelease = {
 /**

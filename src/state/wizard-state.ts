@@ -29,6 +29,7 @@ export interface WizardSelections {
   driveSize?: number;
   driveModel?: string;
   driveVendor?: string;
+  driveSerial?: string;
 
   /** VM configuration, shared by the UTM and Proxmox "Configure VM" steps. */
   vmName?: string;

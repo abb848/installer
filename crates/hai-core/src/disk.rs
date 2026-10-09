@@ -7,7 +7,7 @@
 use crate::error::{Error, Result};
 #[cfg(any(target_os = "linux", target_os = "windows"))]
 use crate::types::DeviceType;
-use crate::types::{BlockDevice, FlashProgress, FlashStage};
+use crate::types::{BlockDevice, ExpectedDevice, FlashProgress, FlashStage};
 use crate::{Backend, DeviceBackend, ProgressCallback};
 use std::path::Path;
 
@@ -45,6 +45,10 @@ mod windows_transfer;
 #[path = "disk/macos/device.rs"]
 mod macos_device_tests;
 
+#[cfg(any(target_os = "windows", test))]
+#[path = "disk/windows/serial.rs"]
+mod windows_serial;
+
 #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
 compile_error!("hai-core supports only Linux, macOS and Windows");
 
@@ -59,6 +63,26 @@ const FAST_DRIVE_BUFFER_SIZE: usize = 64 * 1024 * 1024;
 /// How often to send progress updates (every N bytes)
 #[allow(dead_code)]
 const PROGRESS_UPDATE_INTERVAL: u64 = 10 * 1024 * 1024; // 10 MB
+
+pub(super) fn normalize_serial(serial: Option<&str>) -> Option<String> {
+    serial
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned)
+}
+
+fn check_identity(devices: &[BlockDevice], id: &str, expected: &ExpectedDevice) -> Result<()> {
+    if devices
+        .iter()
+        .any(|device| device.id == id && expected.matches(device))
+    {
+        Ok(())
+    } else {
+        Err(Error::DeviceNotFound(
+            "The selected drive changed or was disconnected. Select it again.".into(),
+        ))
+    }
+}
 
 /// Whether a media type/model string refers to an SD card. Matches "SD" as
 /// its own word (plus SDHC/SDXC/microSD variants) so names like "Samsung
@@ -197,12 +221,13 @@ async fn list_devices() -> Result<Vec<BlockDevice>> {
 async fn write_image<P: ProgressCallback>(
     image_path: &Path,
     device_id: &str,
+    expected: &ExpectedDevice,
     verify: bool,
     progress_callback: &P,
 ) -> Result<()> {
     std::fs::metadata(image_path)?;
 
-    imp::write_image(image_path, device_id, verify, progress_callback).await
+    imp::write_image(image_path, device_id, expected, verify, progress_callback).await
 }
 
 impl DeviceBackend for Backend {
@@ -222,10 +247,11 @@ impl DeviceBackend for Backend {
         &self,
         image_path: &Path,
         device_id: &str,
+        expected: &ExpectedDevice,
         verify: bool,
         progress_callback: &P,
     ) -> Result<()> {
-        write_image(image_path, device_id, verify, progress_callback).await
+        write_image(image_path, device_id, expected, verify, progress_callback).await
     }
 }
 
@@ -456,7 +482,14 @@ mod tests {
         // The image metadata check runs before any platform code, so a
         // missing image surfaces as Io and the device id is never touched.
         let image_path = Path::new("/nonexistent/image/file.img");
-        let result = write_image(image_path, "unused-device-id", false, &crate::NoOpProgress).await;
+        let result = write_image(
+            image_path,
+            "unused-device-id",
+            &ExpectedDevice::default(),
+            false,
+            &crate::NoOpProgress,
+        )
+        .await;
         assert!(matches!(result.unwrap_err(), Error::Io(_)));
     }
 }

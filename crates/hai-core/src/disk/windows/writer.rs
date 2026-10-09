@@ -11,14 +11,19 @@ use windows_sys::Win32::System::Ioctl::IOCTL_DISK_IS_WRITABLE;
 pub async fn write_image<P: ProgressCallback>(
     image_path: &Path,
     device_id: &str,
+    expected: &ExpectedDevice,
     verify: bool,
     progress_callback: &P,
 ) -> Result<()> {
     let disk_number = parse_disk_number(device_id)?;
+    check_identity(&super::device::list_devices_sync()?, device_id, expected)?;
     let mut source = File::open(image_path)?;
     let image_size = source.metadata()?.len();
     // Keep this exact handle for clearing, writing, verification and refresh.
     let mut device = open_device_for_write(device_id)?;
+    // The serial is read from the handle we write through, so a different
+    // drive that took over this disk number is refused.
+    check_handle_serial(&device, expected)?;
     ensure_media_writable(&device)?;
 
     progress_callback.on_progress(FlashProgress::new(
@@ -84,6 +89,21 @@ fn open_device_for_write(device_path: &str) -> Result<File> {
         })
 }
 
+fn check_handle_serial(device: &File, expected: &ExpectedDevice) -> Result<()> {
+    // A known serial must match exactly (apart from surrounding whitespace):
+    // do not silently fall back when a driver omits or changes it.
+    let Some(expected_serial) = &expected.serial else {
+        return Ok(());
+    };
+    let serial = crate::disk::windows_serial::read_serial(device)?;
+    if serial.as_ref() != Some(expected_serial) {
+        return Err(Error::DeviceNotFound(
+            "The selected drive's serial changed or is unavailable. Select it again.".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Unsupported writability probes are left for the actual write to report.
 fn ensure_media_writable(device: &File) -> Result<()> {
     match control(device, IOCTL_DISK_IS_WRITABLE) {
@@ -142,6 +162,7 @@ mod tests {
         let result = write_image(
             image.path(),
             "\\\\.\\PhysicalDrive1; echo injected",
+            &ExpectedDevice::default(),
             false,
             &crate::NoOpProgress,
         )

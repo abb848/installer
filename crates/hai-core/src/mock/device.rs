@@ -18,6 +18,7 @@ fn mock_block_devices() -> Vec<BlockDevice> {
             removable: true,
             model: Some("SanDisk Ultra".to_string()),
             vendor: Some("SanDisk".to_string()),
+            serial: Some("MOCK-SD-32".into()),
         },
         BlockDevice {
             id: "mock-sd-card-64gb".to_string(),
@@ -27,6 +28,7 @@ fn mock_block_devices() -> Vec<BlockDevice> {
             removable: true,
             model: Some("Samsung EVO Plus".to_string()),
             vendor: Some("Samsung".to_string()),
+            serial: None,
         },
         BlockDevice {
             id: "mock-usb-drive-128gb".to_string(),
@@ -36,6 +38,7 @@ fn mock_block_devices() -> Vec<BlockDevice> {
             removable: true,
             model: Some("USB Flash Drive".to_string()),
             vendor: Some("Kingston".to_string()),
+            serial: Some("MOCK-USB-128".into()),
         },
         BlockDevice {
             id: "mock-ssd-256gb".to_string(),
@@ -45,6 +48,7 @@ fn mock_block_devices() -> Vec<BlockDevice> {
             removable: true,
             model: Some("Portable SSD T7".to_string()),
             vendor: Some("Samsung".to_string()),
+            serial: None,
         },
         BlockDevice {
             id: "mock-nvme-500gb".to_string(),
@@ -54,6 +58,7 @@ fn mock_block_devices() -> Vec<BlockDevice> {
             removable: false,
             model: Some("970 EVO Plus".to_string()),
             vendor: Some("Samsung".to_string()),
+            serial: None,
         },
     ]
 }
@@ -67,6 +72,7 @@ impl DeviceBackend for BackendMock {
         &self,
         _image_path: &Path,
         _device_id: &str,
+        _expected: &crate::types::ExpectedDevice,
         _verify: bool,
         progress_callback: &P,
     ) -> Result<()> {

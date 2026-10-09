@@ -30,6 +30,8 @@ pub(super) struct LsblkDevice {
     #[serde(default)]
     pub(super) vendor: Option<String>,
     #[serde(default)]
+    pub(super) serial: Option<String>,
+    #[serde(default)]
     pub(super) hotplug: Option<bool>,
     // Required in JSON: missing safety information must not mean "safe".
     pub(super) mountpoints: Vec<Option<String>>,
@@ -49,7 +51,7 @@ fn read_devices() -> Result<LsblkOutput> {
             "-b",     // Size in bytes
             "--tree", // Include partitions and device-mapper/RAID holders
             "-o",     // Output columns
-            "NAME,SIZE,TYPE,RM,RO,TRAN,MODEL,VENDOR,HOTPLUG,MOUNTPOINTS,MAJ:MIN",
+            "NAME,SIZE,TYPE,RM,RO,TRAN,MODEL,VENDOR,SERIAL,HOTPLUG,MOUNTPOINTS,MAJ:MIN",
         ])
         .output()
         .map_err(Error::Io)?;
@@ -285,6 +287,7 @@ pub async fn list_devices() -> Result<Vec<BlockDevice>> {
             removable: is_removable,
             model,
             vendor,
+            serial: normalize_serial(dev.serial.as_deref()),
         });
     }
 
@@ -533,6 +536,27 @@ mod tests {
             assert!(swapfiles(&format!("{header}{row}\n")).is_err(), "{row}");
         }
         assert!(swapfiles("").is_err());
+    }
+
+    #[test]
+    fn reads_optional_lsblk_serial() {
+        for (serial, expected) in [
+            ("null", None),
+            ("\"  \"", None),
+            ("\" ABC123 \"", Some("ABC123")),
+        ] {
+            let dev: LsblkDevice = serde_json::from_str(&format!(
+                r#"{{"name":"sdb","mountpoints":[],"maj:min":"8:16","serial":{serial}}}"#
+            ))
+            .unwrap();
+            assert_eq!(
+                crate::disk::normalize_serial(dev.serial.as_deref()).as_deref(),
+                expected
+            );
+        }
+        let dev: LsblkDevice =
+            serde_json::from_str(r#"{"name":"sdb","mountpoints":[],"maj:min":"8:16"}"#).unwrap();
+        assert_eq!(dev.serial, None);
     }
 
     #[test]

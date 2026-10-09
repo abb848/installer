@@ -91,6 +91,14 @@ describe("drive-selection-view", () => {
     expect(el.shadowRoot!.querySelector(".notice")).to.exist;
   });
 
+  it("clears a selection when an identical model has a different serial", async () => {
+    storeDriveSelection({ ...CONNECTED, serial: "ANOTHER-STICK" });
+    const el = await mountLoaded();
+    expect(wizardState.getState().selections.drive).to.be.undefined;
+    expect(wizardState.getState().selections.driveSerial).to.be.undefined;
+    expect(selectedIds(el)).to.be.empty;
+  });
+
   it("ignores a scan that finishes after the view is gone", async () => {
     const scan = holdDeviceScan();
     try {
@@ -273,6 +281,7 @@ function drive(overrides: Partial<BlockDevice> = {}): BlockDevice {
     removable: true,
     model: null,
     vendor: null,
+    serial: null,
     ...overrides,
   };
 }

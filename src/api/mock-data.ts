@@ -12,6 +12,7 @@ export const MOCK_BLOCK_DEVICES: BlockDevice[] = [
     removable: true,
     model: "SanDisk Ultra",
     vendor: "SanDisk",
+    serial: "MOCK-SD-32",
   },
   {
     id: "mock-sd-card-64gb",
@@ -21,6 +22,7 @@ export const MOCK_BLOCK_DEVICES: BlockDevice[] = [
     removable: true,
     model: "Samsung EVO Plus",
     vendor: "Samsung",
+    serial: null,
   },
   {
     id: "mock-usb-drive-128gb",
@@ -30,6 +32,7 @@ export const MOCK_BLOCK_DEVICES: BlockDevice[] = [
     removable: true,
     model: "USB Flash Drive",
     vendor: "Kingston",
+    serial: "MOCK-USB-128",
   },
 ];
 

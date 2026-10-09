@@ -32,7 +32,7 @@ impl Contents {
 /// `hai_live` is the static Linux build of the `hai-live` program.
 pub async fn prepare<P: ProgressCallback>(hai_live: &Path, progress: &P) -> Result<Contents> {
     let hai_live = std::fs::read(hai_live)?;
-    if !hai_live.starts_with(b"\x7fELF") {
+    if !is_static_x86_64_elf(&hai_live) {
         return Err(Error::NotLinuxBinary);
     }
 
@@ -111,8 +111,10 @@ fn unpack_alpine(cache: &Path, alpine: &downloads::Download) -> Result<PathBuf> 
     let dir = cache
         .join("work")
         .join(format!("alpine-{}", alpine.version));
+    // The marker holds the checksum of the ISO it was unpacked from, so a re-downloaded
+    // ISO with the same version (or a half-written marker) gets unpacked again.
     let done = dir.join(".unpacked");
-    if done.exists() {
+    if std::fs::read(&done).is_ok_and(|marker| marker == alpine.sha256.as_bytes()) {
         return Ok(dir.join("files"));
     }
     if dir.exists() {
@@ -121,4 +123,99 @@ fn unpack_alpine(cache: &Path, alpine: &downloads::Download) -> Result<PathBuf> 
     iso::extract(&alpine.path, &dir.join("files"))?;
     std::fs::write(&done, alpine.sha256.as_bytes())?;
     Ok(dir.join("files"))
+}
+
+/// Whether `bin` is a 64-bit little-endian x86-64 ELF program with no dynamic loader
+/// (no `PT_INTERP` header), i.e. something the live stick can run as is.
+fn is_static_x86_64_elf(bin: &[u8]) -> bool {
+    const PT_INTERP: u32 = 3;
+    let u16_at = |at: usize| {
+        bin.get(at..at + 2)
+            .map(|b| u16::from_le_bytes([b[0], b[1]]))
+    };
+    let u32_at = |at: usize| {
+        bin.get(at..at + 4)
+            .map(|b| u32::from_le_bytes(b.try_into().unwrap()))
+    };
+    let u64_at = |at: usize| {
+        bin.get(at..at + 8)
+            .map(|b| u64::from_le_bytes(b.try_into().unwrap()))
+    };
+
+    let header_ok = bin.starts_with(b"\x7fELF")
+        && bin.get(4) == Some(&2) // 64-bit
+        && bin.get(5) == Some(&1) // little endian
+        && u16_at(18) == Some(0x3e); // x86-64
+    if !header_ok {
+        return false;
+    }
+    let (Some(phoff), Some(phentsize), Some(phnum)) = (u64_at(0x20), u16_at(0x36), u16_at(0x38))
+    else {
+        return false;
+    };
+    let Ok(phoff) = usize::try_from(phoff) else {
+        return false;
+    };
+    (0..usize::from(phnum)).all(|i| {
+        let p_type = phoff
+            .checked_add(i * usize::from(phentsize))
+            .and_then(&u32_at);
+        p_type.is_some_and(|t| t != PT_INTERP)
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A minimal ELF header with one program header of type `p_type`.
+    fn elf(class: u8, machine: u16, p_type: u32) -> Vec<u8> {
+        let mut bin = vec![0u8; 64 + 56];
+        bin[..4].copy_from_slice(b"\x7fELF");
+        bin[4] = class;
+        bin[5] = 1;
+        bin[18..20].copy_from_slice(&machine.to_le_bytes());
+        bin[0x20..0x28].copy_from_slice(&64u64.to_le_bytes());
+        bin[0x36..0x38].copy_from_slice(&56u16.to_le_bytes());
+        bin[0x38..0x3a].copy_from_slice(&1u16.to_le_bytes());
+        bin[64..68].copy_from_slice(&p_type.to_le_bytes());
+        bin
+    }
+
+    #[test]
+    fn accepts_only_static_x86_64_elf() {
+        assert!(is_static_x86_64_elf(&elf(2, 0x3e, 1)));
+        assert!(
+            !is_static_x86_64_elf(&elf(2, 0x3e, 3)),
+            "dynamically linked"
+        );
+        assert!(!is_static_x86_64_elf(&elf(2, 0xb7, 1)), "aarch64");
+        assert!(!is_static_x86_64_elf(&elf(1, 0x3e, 1)), "32-bit");
+        assert!(!is_static_x86_64_elf(b"MZ\x90\x00"), "Windows exe");
+        assert!(!is_static_x86_64_elf(&elf(2, 0x3e, 1)[..66]), "truncated");
+    }
+
+    #[test]
+    fn unpacks_again_when_the_marker_does_not_match() {
+        let cache = tempfile::tempdir().unwrap();
+        let alpine = downloads::Download {
+            path: cache.path().join("missing.iso"),
+            version: "3.24.2".into(),
+            sha256: "abc".into(),
+        };
+        let dir = cache.path().join("work").join("alpine-3.24.2");
+        std::fs::create_dir_all(dir.join("files")).unwrap();
+
+        std::fs::write(dir.join(".unpacked"), "abc").unwrap();
+        assert_eq!(
+            unpack_alpine(cache.path(), &alpine).unwrap(),
+            dir.join("files")
+        );
+
+        // Different checksum: the old files are dropped and extraction is tried (and fails,
+        // because the test ISO doesn't exist).
+        std::fs::write(dir.join(".unpacked"), "old").unwrap();
+        assert!(unpack_alpine(cache.path(), &alpine).is_err());
+        assert!(!dir.join(".unpacked").exists());
+    }
 }

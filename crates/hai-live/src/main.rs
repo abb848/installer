@@ -11,7 +11,7 @@ use std::io::{BufRead, Write};
 use std::path::Path;
 use std::process::Command;
 
-use drives::Disk;
+use drives::{Disk, Entry};
 use image::BundledImage;
 
 const SYS_BLOCK: &str = "/sys/block";
@@ -91,14 +91,19 @@ fn install(image: &BundledImage, disk: &Disk) {
     }
 
     let (sys_block, dev) = (Path::new(SYS_BLOCK), Path::new(DEV));
+    let usable = drives::list(sys_block)
+        .is_ok_and(|current| safety::still_usable(disk, current, sys_block, dev));
+    if !usable {
+        return fail("The disk changed or disappeared. Nothing was written.");
+    }
     let path = dev.join(&disk.name);
     let mut target = match writer::open_disk(&path) {
         Ok(file) => file,
         Err(error) => return fail(&format!("Could not open {}: {error}", disk.name)),
     };
-    // Checked after opening, so the disk can't be swapped between the check and the write.
+    // Checked again after opening, so the disk can't be swapped between the check and the write.
     let unchanged = drives::list(sys_block)
-        .is_ok_and(|current| safety::still_usable(disk, current, sys_block, dev))
+        .is_ok_and(|current| current.contains(&Entry::Disk(disk.clone())))
         && writer::is_same_device(&target, &path);
     if !unchanged {
         return fail("The disk changed or disappeared. Nothing was written.");

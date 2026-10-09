@@ -1,10 +1,6 @@
 //! Command line for testing `hai-usb` without the desktop app.
 //!
-//! Usage:
-//!   hai-usb download
-//!   hai-usb build <hai-live-linux-binary> <output-dir>
-//!   hai-usb devices
-//!   hai-usb write <image> <device-id>
+//! Usage: see `USAGE` below. `<hai-live>` is the Linux build of `hai-live`.
 
 use std::io::{BufRead, Write};
 use std::path::Path;
@@ -13,10 +9,12 @@ use std::sync::Mutex;
 use hai_core::{BlockDevice, ExpectedDevice, FlashProgress, FlashStage, ProgressCallback};
 
 const USAGE: &str = "usage:
-  hai-usb download
-  hai-usb build <hai-live-linux-binary> <output-dir>
-  hai-usb devices
-  hai-usb write <image> <device-id>";
+  hai-usb usb <hai-live> <device-id>     prepare and write a USB stick
+  hai-usb iso <hai-live> <output-dir>    prepare an ISO
+  hai-usb img <hai-live> <output-dir>    prepare a raw disk image (for VMs)
+  hai-usb devices                        list removable drives
+  hai-usb download                       download Alpine and HAOS into the cache
+  hai-usb write <image> <device-id>      write an existing image to a USB stick";
 
 /// Prints progress in whole 10% steps, starting again for each stage (download, write, verify).
 #[derive(Default)]
@@ -46,16 +44,19 @@ async fn main() -> hai_usb::Result<()> {
         .as_slice()
     {
         ["download"] => download().await,
-        ["build", hai_live, out_dir] => {
-            let outputs = hai_usb::build(
-                Path::new(hai_live),
-                Path::new(out_dir),
-                &PrintProgress::default(),
-            )
-            .await?;
-            println!("Home Assistant OS {}", outputs.haos_version);
-            println!("  USB image: {}", outputs.disk_image.display());
-            println!("  ISO:       {}", outputs.iso.display());
+        ["usb", hai_live, device_id] => usb(Path::new(hai_live), device_id).await,
+        ["iso", hai_live, out_dir] => {
+            let contents = prepare(hai_live).await?;
+            println!("Writing ISO...");
+            let path = hai_usb::write_iso(&contents, Path::new(out_dir))?;
+            println!("ISO: {}", path.display());
+            Ok(())
+        }
+        ["img", hai_live, out_dir] => {
+            let contents = prepare(hai_live).await?;
+            println!("Writing disk image...");
+            let path = hai_usb::write_image(&contents, Path::new(out_dir))?;
+            println!("Disk image: {}", path.display());
             Ok(())
         }
         ["devices"] => devices().await,
@@ -65,6 +66,54 @@ async fn main() -> hai_usb::Result<()> {
             std::process::exit(2);
         }
     }
+}
+
+async fn prepare(hai_live: &str) -> hai_usb::Result<hai_usb::Contents> {
+    println!("Preparing (downloads are reused from the cache when possible)...");
+    let contents = hai_usb::prepare(Path::new(hai_live), &PrintProgress::default()).await?;
+    println!("Home Assistant OS {}", contents.haos_version);
+    Ok(contents)
+}
+
+/// Lists removable drives, finds `device_id`, shows it and asks for `erase`.
+/// Returns what the drive looked like, or `None` if the user cancelled.
+async fn confirm_drive(device_id: &str, what: &str) -> hai_usb::Result<Option<ExpectedDevice>> {
+    let drives = hai_usb::list_usb_drives().await?;
+    let Some(drive) = drives.iter().find(|d| d.id == device_id) else {
+        eprintln!("{device_id} is not a removable drive. Run `hai-usb devices` to list them.");
+        std::process::exit(1);
+    };
+    println!("Writing {what} to:\n\n  {}\n", describe(drive));
+    println!("EVERYTHING ON THIS DRIVE WILL BE ERASED.");
+    print!("Type erase to continue: ");
+    let _ = std::io::stdout().flush();
+    let mut answer = String::new();
+    std::io::stdin().lock().read_line(&mut answer)?;
+    if answer.trim() != "erase" {
+        println!("Cancelled, nothing written.");
+        return Ok(None);
+    }
+    Ok(Some(ExpectedDevice {
+        size: Some(drive.size),
+        model: drive.model.clone(),
+        vendor: drive.vendor.clone(),
+    }))
+}
+
+async fn usb(hai_live: &Path, device_id: &str) -> hai_usb::Result<()> {
+    if !hai_live.is_file() {
+        eprintln!("hai-live not found: {}", hai_live.display());
+        std::process::exit(1);
+    }
+    // Ask first, so the user isn't waiting through the preparation before confirming.
+    let Some(expected) = confirm_drive(device_id, "the HAI live USB stick").await? else {
+        return Ok(());
+    };
+    let contents = prepare(&hai_live.to_string_lossy()).await?;
+    println!("Building the stick image and writing it...");
+    hai_usb::write_stick(&contents, device_id, &expected, &PrintProgress::default()).await?;
+    println!("Done. The USB stick is ready.");
+    Ok(())
 }
 
 fn describe(drive: &BlockDevice) -> String {
@@ -101,26 +150,9 @@ async fn write(image: &Path, device_id: &str) -> hai_usb::Result<()> {
         eprintln!("Image not found: {}", image.display());
         std::process::exit(1);
     }
-    let drives = hai_usb::list_usb_drives().await?;
-    let Some(drive) = drives.iter().find(|d| d.id == device_id) else {
-        eprintln!("{device_id} is not a removable drive. Run `hai-usb devices` to list them.");
-        std::process::exit(1);
-    };
-    println!("Writing {} to:\n\n  {}\n", image.display(), describe(drive));
-    println!("EVERYTHING ON THIS DRIVE WILL BE ERASED.");
-    print!("Type erase to continue: ");
-    let _ = std::io::stdout().flush();
-    let mut answer = String::new();
-    std::io::stdin().lock().read_line(&mut answer)?;
-    if answer.trim() != "erase" {
-        println!("Cancelled, nothing written.");
+    let what = image.display().to_string();
+    let Some(expected) = confirm_drive(device_id, &what).await? else {
         return Ok(());
-    }
-
-    let expected = ExpectedDevice {
-        size: Some(drive.size),
-        model: drive.model.clone(),
-        vendor: drive.vendor.clone(),
     };
     hai_usb::write_to_usb(image, device_id, &expected, &PrintProgress::default()).await?;
     println!("Done. The USB stick is ready.");

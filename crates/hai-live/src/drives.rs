@@ -110,6 +110,17 @@ fn entry(
             reason: "USB device",
         };
     }
+    // mmcblk is used for both soldered eMMC and SD cards; only eMMC reports "MMC".
+    if kind == Kind::Emmc {
+        let reason = match read_trimmed(&dir.join("device").join("type")).as_deref() {
+            Some("MMC") => None,
+            Some("SD") => Some("SD card"),
+            _ => Some("card type unknown"),
+        };
+        if let Some(reason) = reason {
+            return Entry::Skipped { name, reason };
+        }
+    }
     let size_bytes = read_trimmed(&dir.join("size"))
         .and_then(|s| s.parse::<u64>().ok())
         .unwrap_or(0)
@@ -194,17 +205,14 @@ fn serial(dir: &Path) -> Option<String> {
 }
 
 /// Partition names of `disk`: subfolders that contain a `partition` file.
-pub fn partitions(sys_block: &Path, disk: &str) -> Vec<String> {
-    let Ok(items) = fs::read_dir(sys_block.join(disk)) else {
-        return Vec::new();
-    };
-    let mut names: Vec<String> = items
+pub fn partitions(sys_block: &Path, disk: &str) -> io::Result<Vec<String>> {
+    let mut names: Vec<String> = fs::read_dir(sys_block.join(disk))?
         .flatten()
         .filter(|item| item.path().join("partition").is_file())
         .map(|item| item.file_name().to_string_lossy().into_owned())
         .collect();
     names.sort();
-    names
+    Ok(names)
 }
 
 fn read_trimmed(path: &Path) -> Option<String> {
@@ -348,6 +356,31 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn offers_emmc_but_hides_sd_cards() {
+        let dir = tempfile::tempdir().unwrap();
+        add_block(dir.path(), "mmcblk0", 64_000_000_000, &[("type", "MMC")]);
+        add_block(dir.path(), "mmcblk1", 64_000_000_000, &[("type", "SD")]);
+        add_block(dir.path(), "mmcblk2", 64_000_000_000, &[]);
+
+        let entries = list_with(dir.path(), &fake_link).unwrap();
+        assert!(matches!(&entries[0], Entry::Disk(d) if d.kind == Kind::Emmc));
+        assert!(matches!(
+            entries[1],
+            Entry::Skipped {
+                reason: "SD card",
+                ..
+            }
+        ));
+        assert!(matches!(
+            entries[2],
+            Entry::Skipped {
+                reason: "card type unknown",
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn hides_usb_disks_and_disks_whose_bus_is_unknown() {
         let dir = tempfile::tempdir().unwrap();
         add_block(dir.path(), "sdu", 64_000_000_000, &[]);
@@ -383,6 +416,6 @@ pub(crate) mod tests {
         add_block(dir.path(), "sda", 1 << 30, &[]);
         add_partition(dir.path(), "sda", "sda2");
         add_partition(dir.path(), "sda", "sda1");
-        assert_eq!(partitions(dir.path(), "sda"), ["sda1", "sda2"]);
+        assert_eq!(partitions(dir.path(), "sda").unwrap(), ["sda1", "sda2"]);
     }
 }

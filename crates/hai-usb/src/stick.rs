@@ -125,9 +125,12 @@ fn unpack_alpine(cache: &Path, alpine: &downloads::Download) -> Result<PathBuf> 
     Ok(dir.join("files"))
 }
 
-/// Whether `bin` is a 64-bit little-endian x86-64 ELF program with no dynamic loader
-/// (no `PT_INTERP` header), i.e. something the live stick can run as is.
+/// Whether `bin` is a 64-bit little-endian x86-64 ELF program with an entry point, at least one
+/// loadable segment and no dynamic loader (`PT_INTERP`), i.e. something the live stick can run as is.
 fn is_static_x86_64_elf(bin: &[u8]) -> bool {
+    const ET_EXEC: u16 = 2;
+    const ET_DYN: u16 = 3; // static-pie, which is what musl builds produce
+    const PT_LOAD: u32 = 1;
     const PT_INTERP: u32 = 3;
     let u16_at = |at: usize| {
         bin.get(at..at + 2)
@@ -145,7 +148,9 @@ fn is_static_x86_64_elf(bin: &[u8]) -> bool {
     let header_ok = bin.starts_with(b"\x7fELF")
         && bin.get(4) == Some(&2) // 64-bit
         && bin.get(5) == Some(&1) // little endian
-        && u16_at(18) == Some(0x3e); // x86-64
+        && matches!(u16_at(16), Some(ET_EXEC | ET_DYN))
+        && u16_at(18) == Some(0x3e) // x86-64
+        && u64_at(0x18).is_some_and(|entry| entry != 0);
     if !header_ok {
         return false;
     }
@@ -156,12 +161,14 @@ fn is_static_x86_64_elf(bin: &[u8]) -> bool {
     let Ok(phoff) = usize::try_from(phoff) else {
         return false;
     };
-    (0..usize::from(phnum)).all(|i| {
-        let p_type = phoff
-            .checked_add(i * usize::from(phentsize))
-            .and_then(&u32_at);
-        p_type.is_some_and(|t| t != PT_INTERP)
-    })
+    let types: Option<Vec<u32>> = (0..usize::from(phnum))
+        .map(|i| {
+            phoff
+                .checked_add(i * usize::from(phentsize))
+                .and_then(u32_at)
+        })
+        .collect();
+    types.is_some_and(|types| types.contains(&PT_LOAD) && !types.contains(&PT_INTERP))
 }
 
 #[cfg(test)]
@@ -174,7 +181,9 @@ mod tests {
         bin[..4].copy_from_slice(b"\x7fELF");
         bin[4] = class;
         bin[5] = 1;
+        bin[16..18].copy_from_slice(&2u16.to_le_bytes());
         bin[18..20].copy_from_slice(&machine.to_le_bytes());
+        bin[0x18..0x20].copy_from_slice(&0x40_1000u64.to_le_bytes());
         bin[0x20..0x28].copy_from_slice(&64u64.to_le_bytes());
         bin[0x36..0x38].copy_from_slice(&56u16.to_le_bytes());
         bin[0x38..0x3a].copy_from_slice(&1u16.to_le_bytes());
@@ -193,6 +202,23 @@ mod tests {
         assert!(!is_static_x86_64_elf(&elf(1, 0x3e, 1)), "32-bit");
         assert!(!is_static_x86_64_elf(b"MZ\x90\x00"), "Windows exe");
         assert!(!is_static_x86_64_elf(&elf(2, 0x3e, 1)[..66]), "truncated");
+
+        let changed = |at: usize, bytes: &[u8]| {
+            let mut bin = elf(2, 0x3e, 1);
+            bin[at..at + bytes.len()].copy_from_slice(bytes);
+            bin
+        };
+        assert!(is_static_x86_64_elf(&changed(16, &[3, 0])), "static-pie");
+        assert!(!is_static_x86_64_elf(&changed(16, &[1, 0])), "object file");
+        assert!(
+            !is_static_x86_64_elf(&changed(0x18, &[0; 8])),
+            "no entry point"
+        );
+        assert!(
+            !is_static_x86_64_elf(&changed(0x38, &[0, 0])),
+            "no program headers"
+        );
+        assert!(!is_static_x86_64_elf(&elf(2, 0x3e, 6)), "no PT_LOAD");
     }
 
     #[test]

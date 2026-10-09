@@ -61,21 +61,30 @@ pub fn build(out: &Path, src: &Path, extra: &[StickFile]) -> Result<()> {
 fn image_size(src: &Path, extra: &[StickFile]) -> Result<u64> {
     let mut content = dir_size(src)?;
     for item in extra {
-        content += item.size()?;
+        let size = item.size()?;
+        if size > u64::from(u32::MAX) {
+            return Err(Error::DiskImage(format!(
+                "{} is larger than the 4 GiB FAT32 file limit",
+                item.name
+            )));
+        }
+        content = content.saturating_add(size);
     }
-    let size = content + content / 10 + 64 * MIB;
-    Ok(size.div_ceil(MIB) * MIB)
+    let size = content
+        .saturating_add(content / 10)
+        .saturating_add(64 * MIB);
+    Ok(size.div_ceil(MIB).saturating_mul(MIB))
 }
 
 fn dir_size(dir: &Path) -> Result<u64> {
-    let mut total = 0;
+    let mut total: u64 = 0;
     for entry in std::fs::read_dir(dir)? {
         let entry = entry?;
-        total += if entry.file_type()?.is_dir() {
+        total = total.saturating_add(if entry.file_type()?.is_dir() {
             dir_size(&entry.path())?
         } else {
             entry.metadata()?.len()
-        };
+        });
     }
     Ok(total)
 }

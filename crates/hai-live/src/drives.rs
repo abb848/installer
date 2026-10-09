@@ -205,12 +205,21 @@ fn serial(dir: &Path) -> Option<String> {
 }
 
 /// Partition names of `disk`: subfolders that contain a `partition` file.
+/// Any read error is returned, so callers can't mistake a partial list for a complete one.
 pub fn partitions(sys_block: &Path, disk: &str) -> io::Result<Vec<String>> {
-    let mut names: Vec<String> = fs::read_dir(sys_block.join(disk))?
-        .flatten()
-        .filter(|item| item.path().join("partition").is_file())
-        .map(|item| item.file_name().to_string_lossy().into_owned())
-        .collect();
+    let mut names = Vec::new();
+    for item in fs::read_dir(sys_block.join(disk))? {
+        let item = item?;
+        // Partitions are real folders; skip files and symlinks such as `size` and `device`.
+        if !item.file_type()?.is_dir() {
+            continue;
+        }
+        match fs::metadata(item.path().join("partition")) {
+            Ok(_) => names.push(item.file_name().to_string_lossy().into_owned()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
     names.sort();
     Ok(names)
 }
@@ -416,6 +425,8 @@ pub(crate) mod tests {
         add_block(dir.path(), "sda", 1 << 30, &[]);
         add_partition(dir.path(), "sda", "sda2");
         add_partition(dir.path(), "sda", "sda1");
+        fs::create_dir(dir.path().join("sda").join("queue")).unwrap();
         assert_eq!(partitions(dir.path(), "sda").unwrap(), ["sda1", "sda2"]);
+        assert!(partitions(dir.path(), "sdb").is_err());
     }
 }

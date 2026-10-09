@@ -22,6 +22,24 @@ pub fn open_disk(path: &Path) -> io::Result<File> {
     options.open(path)
 }
 
+/// Whether the opened `disk` is still the block device that `path` points to now.
+#[cfg(unix)]
+pub fn is_same_device(disk: &File, path: &Path) -> bool {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt};
+    match (disk.metadata(), std::fs::metadata(path)) {
+        (Ok(opened), Ok(current)) => {
+            opened.file_type().is_block_device() && opened.rdev() == current.rdev()
+        }
+        _ => false,
+    }
+}
+
+/// hai-live only runs on Linux; elsewhere nothing is ever confirmed.
+#[cfg(not(unix))]
+pub fn is_same_device(_disk: &File, _path: &Path) -> bool {
+    false
+}
+
 /// Zeroes the start and end of `disk` (old partition tables and signatures can break HAOS's
 /// first-boot resize), then writes the decompressed `image_xz` from the start.
 ///
@@ -108,6 +126,12 @@ impl<W: Write> Write for ProgressWriter<'_, W> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn regular_files_are_never_the_same_device() {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        assert!(!is_same_device(file.as_file(), file.path()));
+    }
     use std::io::Cursor;
 
     fn xz(data: &[u8]) -> Vec<u8> {

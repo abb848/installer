@@ -67,7 +67,10 @@ export class LiveIsoLocationView extends LitElement {
       this._problem = installerError(error).message;
       return false;
     }
-    if (!exists) return true;
+    if (!exists) {
+      wizardState.setSelection("liveIsoOverwrite", false);
+      return true;
+    }
     this._askReplace = true;
     const replace = await new Promise<boolean>((resolve) => {
       this._answerReplace = resolve;
@@ -119,7 +122,7 @@ export class LiveIsoLocationView extends LitElement {
   private _setFolder(folder: string) {
     this._folder = folder;
     this._problem = "";
-    wizardState.setSelection("liveIsoFolder", folder.trim());
+    wizardState.setSelection("liveIsoFolder", folder);
     wizardState.setSelection("liveIsoOverwrite", false);
   }
 

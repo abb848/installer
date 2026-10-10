@@ -292,7 +292,7 @@ export class AppShell extends LitElement {
       if (stepId === "location") {
         return (
           !selections.liveReady ||
-          !selections.liveIsoFolder ||
+          !selections.liveIsoFolder?.trim() ||
           !selections.liveIsoName
         );
       }
@@ -591,9 +591,12 @@ export class AppShell extends LitElement {
           this._checkingLocation = false;
         }
       }
+      const now = this._wizardState;
       if (
-        this._wizardState.currentFlow !== started.currentFlow ||
-        this._wizardState.currentStepIndex !== started.currentStepIndex
+        now.currentFlow !== started.currentFlow ||
+        now.currentStepIndex !== started.currentStepIndex ||
+        now.selections.liveIsoFolder !== started.selections.liveIsoFolder ||
+        now.selections.liveIsoName !== started.selections.liveIsoName
       )
         return;
     }

@@ -46,10 +46,16 @@ export class LiveUsbSuccessView extends LitElement {
     const iso = selections.liveMedia === "iso";
     const path = selections.liveIsoPath ?? "";
     const boot = [
-      localize("views.live_usb.success_view.bios_settings"),
-      localize("views.live_usb.success_view.boot_from_usb"),
+      iso
+        ? localize("views.live_usb.success_view.iso_bios_settings")
+        : localize("views.live_usb.success_view.bios_settings"),
+      iso
+        ? localize("views.live_usb.success_view.boot_from_media")
+        : localize("views.live_usb.success_view.boot_from_usb"),
       localize("views.live_usb.success_view.pick_drive_and_erase"),
-      localize("views.live_usb.success_view.remove_and_restart"),
+      iso
+        ? localize("views.live_usb.success_view.iso_remove_and_restart")
+        : localize("views.live_usb.success_view.remove_and_restart"),
       html`${localizeContent(
         "views.live_usb.success_view.open_home_assistant",
         {

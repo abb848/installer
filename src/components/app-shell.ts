@@ -35,8 +35,6 @@ import "../views/proxmox/proxmox-success-view.js";
 // Import components
 import "./wizard-shell.js";
 import "./confirm-dialog.js";
-// No screen opens it right now; kept registered for reuse later in the live USB flow.
-import "./info-dialog.js";
 import "./diagnostics-actions.js";
 
 // Import state

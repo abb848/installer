@@ -88,6 +88,8 @@ export class MiniPCMediaView extends LitElement {
   private _choose(media: "usb" | "iso") {
     // A drive picked earlier (perhaps an SSD on the other path) must be picked again.
     clearDriveSelection();
+    // The stick replaces the board's drive rules, so the direct path must pick its board again.
+    wizardState.setSelection("device", undefined);
     wizardState.setSelection(
       "deviceConfig",
       media === "usb" ? LIVE_USB_STICK : undefined

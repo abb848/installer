@@ -94,9 +94,18 @@ pub fn check_iso_location(folder: String, file_name: String) -> Result<IsoLocati
     let target = iso_target(folder, &file_name, true)?;
     if !cfg!(feature = "mock") {
         // Removed again at once; it only proves the folder can be written.
-        tempfile::Builder::new()
-            .prefix(".hai-live-")
-            .tempdir_in(folder)?;
+        if target.exists() {
+            tempfile::Builder::new()
+                .prefix(".hai-live-")
+                .tempdir_in(folder)?;
+        } else {
+            // The exact name, so names the file system refuses fail now, not after the build.
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&target)?;
+            std::fs::remove_file(&target)?;
+        }
     }
     Ok(IsoLocation {
         exists: target.exists(),
@@ -239,6 +248,13 @@ fn iso_target(folder: &Path, file_name: &str, overwrite: bool) -> Result<PathBuf
             false,
         ));
     }
+    if !is_portable_file_name(name) {
+        return Err(CommandError::new(
+            "invalid_file_name",
+            "This file name can't be used. Leave out < > : \" | ? * and don't use names like CON or NUL.",
+            false,
+        ));
+    }
     if !folder.is_dir() {
         return Err(CommandError::new(
             "folder_not_found",
@@ -262,6 +278,25 @@ fn iso_target(folder: &Path, file_name: &str, overwrite: bool) -> Result<PathBuf
         ));
     }
     Ok(target)
+}
+
+/// Whether Windows accepts `name` (checked everywhere, since the ISO may be copied there):
+/// no reserved characters, no trailing dot, and not a device name such as `CON.iso`.
+fn is_portable_file_name(name: &str) -> bool {
+    if name.ends_with(['.', ' '])
+        || name
+            .chars()
+            .any(|c| c.is_control() || "<>:\"|?*".contains(c))
+    {
+        return false;
+    }
+    let stem = name.split('.').next().unwrap_or(name).trim_end();
+    let stem = stem.to_ascii_uppercase();
+    let numbered = |prefix: &str| {
+        stem.strip_prefix(prefix)
+            .is_some_and(|n| n.len() == 1 && n.as_bytes()[0].is_ascii_digit())
+    };
+    !(matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL") || numbered("COM") || numbered("LPT"))
 }
 
 /// The first place `hai-live` is found: the environment variable alone if it is set,
@@ -392,12 +427,28 @@ mod tests {
             iso_target(dir.path(), " stick.iso ", false).unwrap(),
             dir.path().join("stick.iso")
         );
-        for name in ["", "  ", "..", "sub/stick.iso", "sub\\stick.iso"] {
+        for name in [
+            "",
+            "  ",
+            "..",
+            "sub/stick.iso",
+            "sub\\stick.iso",
+            "CON.iso",
+            "nul",
+            "com1.iso",
+            "Lpt9",
+            "a:b.iso",
+            "what?.iso",
+            "stick.iso.",
+        ] {
             assert_eq!(
                 iso_target(dir.path(), name, true).unwrap_err().code,
                 "invalid_file_name",
                 "{name:?}"
             );
+        }
+        for name in ["console.iso", "COM10.iso", "my stick (1).iso"] {
+            assert!(iso_target(dir.path(), name, false).is_ok(), "{name:?}");
         }
         assert_eq!(
             iso_target(&dir.path().join("missing"), "stick.iso", true)

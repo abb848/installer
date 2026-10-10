@@ -6,6 +6,8 @@ for (const flow of ["sbc", "utm", "proxmox"]) {
     test(`${flow} artwork and caption fit at ${width}px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 844 });
       await page.goto("/");
+      // The app shell loads after locale detection, so wait for it to render.
+      await page.locator("welcome-view").waitFor({ state: "attached" });
       await page.evaluate(async (flow) => {
         document.body.replaceChildren();
         document.body.style.padding = "24px";

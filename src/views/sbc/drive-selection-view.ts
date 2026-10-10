@@ -312,13 +312,17 @@ export class DriveSelectionView extends LitElement {
 
   render() {
     const isMiniPC = this._isMiniPCFlow();
-    const subtitle = isMiniPC
-      ? localize(
-          "views.sbc.drive_selection_view.choose_the_nvme_ssd_drive_to_install_home_assistant_on"
-        )
-      : localize(
-          "views.sbc.drive_selection_view.choose_the_sd_card_or_usb_drive_to_install_home_assistant_on"
-        );
+    const liveUsb =
+      wizardState.getState().selections.installMethod === "usb-boot";
+    const subtitle = liveUsb
+      ? localize("views.live_usb.drive_view.choose_the_usb_stick")
+      : isMiniPC
+        ? localize(
+            "views.sbc.drive_selection_view.choose_the_nvme_ssd_drive_to_install_home_assistant_on"
+          )
+        : localize(
+            "views.sbc.drive_selection_view.choose_the_sd_card_or_usb_drive_to_install_home_assistant_on"
+          );
 
     return html`
       <h2>${localize("views.sbc.drive_selection_view.select_your_drive")}</h2>

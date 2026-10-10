@@ -11,6 +11,7 @@ edition = "2021"
 [workspace.dependencies]
 # Internal crates
 hai-core = { path = "crates/hai-core" }
+hai-usb = { path = "crates/hai-usb" }
 
 # Async runtime
 tokio = { version = "1", features = ["time", "fs", "io-util", "rt", "macros"] }
@@ -87,6 +88,7 @@ windows-sys = { version = "0.61", features = [
 tauri = { version = "~2.12.0", features = [] }
 tauri-build = { version = "2", features = [] }
 tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
 tauri-plugin-os = "=2.3.2"
 tauri-plugin-single-instance = "2"
 tauri-plugin-log = "2"

@@ -30,13 +30,13 @@ impl PendingUtmImages {
 // =============================================================================
 
 /// Adapter that bridges Tauri's Channel with hai-core's ProgressCallback trait
-struct TauriProgressCallback<'a> {
+pub(crate) struct TauriProgressCallback<'a> {
     channel: &'a Channel<FlashProgress>,
-    operation: Operation,
+    pub(crate) operation: Operation,
 }
 
 impl<'a> TauriProgressCallback<'a> {
-    fn new(channel: &'a Channel<FlashProgress>, name: &'static str) -> Self {
+    pub(crate) fn new(channel: &'a Channel<FlashProgress>, name: &'static str) -> Self {
         Self {
             channel,
             operation: Operation::new(name),

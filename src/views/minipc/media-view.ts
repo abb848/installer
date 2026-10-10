@@ -1,15 +1,25 @@
 import { localize } from "../../localization/localize.js";
 import { LitElement, html, css } from "lit";
+import { customElement } from "lit/decorators.js";
 import {
   ViewAccessibility,
   reducedMotionStyles,
 } from "../../utils/view-accessibility.js";
-import { customElement } from "lit/decorators.js";
 import { MINIPC_STEPS, wizardState } from "../../state/wizard-state.js";
+import { clearDriveSelection } from "../../utils/drive-selection.js";
+import type { HaosConfig } from "../../api/types.js";
 import "../../components/option-card.js";
 
-@customElement("minipc-setup-method-view")
-export class MiniPCSetupMethodView extends LitElement {
+/** Drive rules for the stick: removable and 2 GB or more (the drive list allows 5% less). */
+const LIVE_USB_STICK: HaosConfig = {
+  board: "generic-x86-64",
+  download_url: "",
+  minimum_storage_bytes: 2_000_000_000,
+  recommended_storage_bytes: 2_000_000_000,
+};
+
+@customElement("minipc-media-view")
+export class MiniPCMediaView extends LitElement {
   protected readonly _accessibility = new ViewAccessibility(this);
   static styles = css`
     ${reducedMotionStyles}
@@ -47,59 +57,49 @@ export class MiniPCSetupMethodView extends LitElement {
 
   render() {
     return html`
-      <h2>
-        ${localize("views.minipc.setup_method_view.how_will_you_install")}
-      </h2>
-      <p class="subtitle">
-        ${localize(
-          "views.minipc.setup_method_view.choose_how_you_want_to_install_home_assistant_on_your_mini_pc"
-        )}
-      </p>
+      <h2>${localize("views.minipc.media_view.create_bootable_media")}</h2>
+      <p class="subtitle">${localize("views.minipc.media_view.subtitle")}</p>
 
       <div class="options">
         <option-card
           horizontal
-          title=${localize(
-            "views.minipc.setup_method_view.i_can_connect_the_drive"
-          )}
+          title=${localize("views.minipc.media_view.write_to_a_usb_stick")}
           description=${localize(
-            "views.minipc.setup_method_view.connect_the_ssd_or_nvme_drive_from_your_mini_pc_to_this_computer_via_usb_ad"
+            "views.minipc.media_view.write_to_a_usb_stick_description"
           )}
-          image="/assets/icons/drive-connect.svg"
-          @click=${this._onConnectDrive}
+          image="/assets/icons/usb-boot.svg"
+          @click=${() => this._choose("usb")}
           ><span slot="end" aria-hidden="true">→</span></option-card
         >
         <option-card
           horizontal
-          title=${localize(
-            "views.minipc.setup_method_view.i_need_to_boot_from_usb"
-          )}
+          title=${localize("views.minipc.media_view.save_an_iso_file")}
           description=${localize(
-            "views.minipc.setup_method_view.create_a_bootable_usb_drive_to_install_home_assistant_directly_on_the_mini_"
+            "views.minipc.media_view.save_an_iso_file_description"
           )}
-          image="/assets/icons/usb-boot.svg"
-          @click=${this._onUsbBoot}
+          icon="disc"
+          @click=${() => this._choose("iso")}
           ><span slot="end" aria-hidden="true">→</span></option-card
         >
       </div>
     `;
   }
 
-  private _onConnectDrive() {
-    wizardState.setSteps(MINIPC_STEPS.direct);
-    wizardState.setSelection("installMethod", "direct");
-    wizardState.nextStep();
-  }
-
-  private _onUsbBoot() {
-    wizardState.setSteps(MINIPC_STEPS.usb);
-    wizardState.setSelection("installMethod", "usb-boot");
+  private _choose(media: "usb" | "iso") {
+    // A drive picked earlier (perhaps an SSD on the other path) must be picked again.
+    clearDriveSelection();
+    wizardState.setSelection(
+      "deviceConfig",
+      media === "usb" ? LIVE_USB_STICK : undefined
+    );
+    wizardState.setSteps(MINIPC_STEPS[media]);
+    wizardState.setSelection("liveMedia", media);
     wizardState.nextStep();
   }
 }
 
 declare global {
   interface HTMLElementTagNameMap {
-    "minipc-setup-method-view": MiniPCSetupMethodView;
+    "minipc-media-view": MiniPCMediaView;
   }
 }

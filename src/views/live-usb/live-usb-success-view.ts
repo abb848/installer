@@ -8,7 +8,7 @@ import "@home-assistant/webawesome/dist/components/button/button.js";
 import "../../components/install-success.js";
 
 const GUIDE = "https://www.home-assistant.io/installation/generic-x86-64/";
-const HOME_ASSISTANT = "http://homeassistant.local:8123";
+const HOME_ASSISTANT = "http://homeassistant.local";
 
 /** Next steps on the computer being installed, for a stick or for the saved ISO. */
 @customElement("live-usb-success-view")
@@ -58,7 +58,7 @@ export class LiveUsbSuccessView extends LitElement {
             target="_blank"
             rel="noopener noreferrer"
             @click=${(event: Event) => openExternalLink(event, HOME_ASSISTANT)}
-            >${"homeassistant.local:8123"}</a
+            >${"homeassistant.local"}</a
           >`,
         }
       )}`,

@@ -75,6 +75,19 @@ describe("live-usb-progress-view", () => {
         .shadowRoot!.querySelector("progress-bar")!.progress
     ).to.equal(40);
 
+    // Windows and Linux writers finish with this stage after verifying
+    calls[0].args.progressChannel.onmessage({
+      stage: "finalizing",
+      progress: 100,
+      bytes_processed: 1000,
+      total_bytes: 1000,
+      message: "",
+    });
+    await settle();
+    expect(
+      el.shadowRoot!.querySelector("install-progress")!.stageTitle
+    ).to.equal("Finalizing");
+
     calls[0].result.resolve(undefined);
     await settle();
     expect(completed).to.equal(1);

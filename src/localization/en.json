@@ -141,6 +141,7 @@
   "views.live_usb.progress_view.preparing_description": "Preparing the USB stick",
   "views.live_usb.progress_view.building_description": "Building the ISO file",
   "views.live_usb.progress_view.writing_description": "Writing to the USB stick",
+  "views.live_usb.progress_view.finalizing_description": "Finishing up the USB stick",
   "views.live_usb.progress_view.do_not_remove": "Don't remove the USB stick until this is finished.",
   "views.live_usb.progress_view.creating": "Creating the bootable media",
   "views.live_usb.success_view.usb_ready": "Your USB stick is ready.",

@@ -222,14 +222,7 @@ async fn run_save_live_iso<P: ProgressCallback>(
         // hai-usb picks its own name; building in a temporary folder means an existing
         // file with that name next to the target is never overwritten.
         iso_target(folder, file_name, overwrite)?;
-        if overwrite {
-            match std::fs::remove_file(&target) {
-                Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-                    return Err(error.into())
-                }
-                _ => {}
-            }
-        }
+        // Replaces an existing file in one step on every platform, so a failure keeps the old one.
         std::fs::rename(&built, &target)?;
         drop(temp);
         report(callback, FlashStage::Complete, "ISO saved");
@@ -350,8 +343,8 @@ fn live_usb_error(error: hai_usb::Error) -> CommandError {
         Error::NotLinuxBinary => CommandError::new(
             "hai_live_invalid",
             "The program for the USB stick (hai-live) is not the Linux build. Rebuild it \
-             for x86_64-unknown-linux-musl, then restart the installer.",
-            false,
+             for x86_64-unknown-linux-musl, then try again.",
+            true,
         ),
         Error::NotRemovable(_) => CommandError::new(
             "invalid_config",

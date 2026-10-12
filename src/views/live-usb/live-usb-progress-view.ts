@@ -142,7 +142,7 @@ export class LiveUsbProgressView extends LitElement {
 
   render() {
     const stages = this._usb
-      ? ["downloading", "extracting", "writing", "verifying"]
+      ? ["downloading", "extracting", "writing", "verifying", "finalizing"]
       : ["downloading", "extracting"];
     const stage = this._progress?.stage || "downloading";
     return html`
@@ -182,6 +182,8 @@ export class LiveUsbProgressView extends LitElement {
         return localize("views.sbc.progress_view.writing");
       case "verifying":
         return localize("views.sbc.progress_view.verifying");
+      case "finalizing":
+        return localize("views.sbc.progress_view.finalizing");
       case "complete":
         return localize("views.proxmox.proxmox_progress_view.complete");
       default:
@@ -203,6 +205,8 @@ export class LiveUsbProgressView extends LitElement {
         return localize("views.live_usb.progress_view.writing_description");
       case "verifying":
         return localize("views.sbc.progress_view.verifying_the_written_data");
+      case "finalizing":
+        return localize("views.live_usb.progress_view.finalizing_description");
       default:
         return localize("views.live_usb.progress_view.creating");
     }

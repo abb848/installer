@@ -34,14 +34,6 @@ pub enum Error {
     /// The given `hai-live` file is not a Linux program.
     #[error("hai-live must be the Linux build (x86_64-unknown-linux-musl), not a Windows or macOS program")]
     NotLinuxBinary,
-
-    /// The chosen drive is not removable, so it is never written.
-    #[error("{0} is not a removable drive and will not be written")]
-    NotRemovable(String),
-
-    /// The drive at this id is no longer the one the user picked.
-    #[error("the drive at {0} is no longer the one you picked; list drives and pick again")]
-    DeviceChanged(String),
 }
 
 /// Result type for `hai-usb`.

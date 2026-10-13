@@ -5,7 +5,7 @@
 pub enum Error {
     /// Download, checksum or cache folder error from `hai-core`.
     #[error(transparent)]
-    Core(#[from] hai_core::Error),
+    Core(#[from] crate::Error),
 
     /// Local file error.
     #[error(transparent)]

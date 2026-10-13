@@ -14,8 +14,8 @@ use hadris_iso::write::{
     FileSource, InputEntry, InputEntryKind, InputMetadata, InputTree, IsoImageWriter,
 };
 
-use crate::stick_file::{Source, StickFile};
-use crate::{Error, Result};
+use super::stick_file::{Source, StickFile};
+use super::{Error, Result};
 
 const ISO_SECTOR: u64 = 2048;
 /// Alpine's EFI boot image: a small FAT image holding `efi/boot/bootx64.efi`.

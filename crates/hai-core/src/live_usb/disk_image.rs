@@ -9,8 +9,8 @@ use fscommon::{BufStream, StreamSlice};
 use gpt::disk::LogicalBlockSize;
 use gpt::mbr::ProtectiveMBR;
 
-use crate::stick_file::{Source, StickFile};
-use crate::{Error, Result};
+use super::stick_file::{Source, StickFile};
+use super::{Error, Result};
 
 const SECTOR: u64 = 512;
 const MIB: u64 = 1024 * 1024;

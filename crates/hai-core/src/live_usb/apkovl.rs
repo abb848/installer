@@ -6,12 +6,12 @@ use std::io::Write;
 use flate2::{write::GzEncoder, Compression};
 use tar::{EntryType, Header};
 
-use crate::Result;
+use super::Result;
 
 /// File name on the boot media. Alpine picks up any `*.apkovl.tar.gz` at the root.
 pub const APKOVL_NAME: &str = "hai.apkovl.tar.gz";
 
-const INITTAB: &str = include_str!("../overlay/inittab");
+const INITTAB: &str = include_str!("inittab");
 
 /// Returns the apkovl as gzipped tar bytes, with `hai_live` as `/usr/local/bin/hai-live`.
 pub fn build(hai_live: &[u8]) -> Result<Vec<u8>> {

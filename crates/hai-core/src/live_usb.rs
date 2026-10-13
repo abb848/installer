@@ -1,11 +1,22 @@
 //! Assembles the stick contents and turns them into an ISO, a disk image, or a written USB stick.
 
+mod apkovl;
+mod disk_image;
+mod downloads;
+mod error;
+mod iso;
+mod stick_file;
+mod usb;
+
 use std::path::{Path, PathBuf};
 
-use hai_core::{ExpectedDevice, ProgressCallback};
+use crate::{ExpectedDevice, ProgressCallback};
 
-use crate::stick_file::{Source, StickFile};
-use crate::{apkovl, disk_image, downloads, iso, usb, Error, Result};
+pub use downloads::{cache_dir, fetch_alpine, fetch_haos, Download, ALPINE_VERSION, HAOS_BOARD};
+pub use error::{Error, Result};
+pub use usb::{list_usb_drives, write_to_usb};
+
+use stick_file::{Source, StickFile};
 
 /// Everything that goes on the stick, ready to be written out.
 #[derive(Debug, Clone)]

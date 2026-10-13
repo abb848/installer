@@ -1885,8 +1885,13 @@ version = "0.1.0"
 dependencies = [
  "core-foundation 0.10.1",
  "directories",
+ "fatfs",
+ "flate2",
  "fs2",
+ "fscommon",
  "futures-util",
+ "gpt",
+ "hadris-iso",
  "hex",
  "libc",
  "mockito",
@@ -1901,6 +1906,7 @@ dependencies = [
  "serde_json",
  "serial_test",
  "sha2 0.11.0",
+ "tar",
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
@@ -1949,17 +1955,7 @@ dependencies = [
 name = "hai-usb"
 version = "0.1.0"
 dependencies = [
- "fatfs",
- "flate2",
- "fscommon",
- "gpt",
- "hadris-iso",
  "hai-core",
- "hex",
- "sha2 0.11.0",
- "tar",
- "tempfile",
- "thiserror 2.0.17",
  "tokio",
 ]
 

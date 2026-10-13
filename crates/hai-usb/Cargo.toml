@@ -7,17 +7,7 @@ edition.workspace = true
 description = "Prepares a live USB stick or ISO that installs Home Assistant OS on a generic x86-64 PC"
 
 [dependencies]
-hai-core = { workspace = true }
+hai-core = { workspace = true, features = ["live-usb"] }
 tokio = { workspace = true }
-sha2 = { workspace = true }
-hex = { workspace = true }
-thiserror = { workspace = true }
-fatfs = { workspace = true }
-fscommon = { workspace = true }
-flate2 = { workspace = true }
-gpt = { workspace = true }
-hadris-iso = { workspace = true }
-tar = { workspace = true }
-tempfile = { workspace = true }
 
 [dev-dependencies]

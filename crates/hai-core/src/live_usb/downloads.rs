@@ -6,10 +6,11 @@
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
-use crate::{Backend, HaosImage, ImageFormat, ProgressCallback, ReleaseSource};
 use sha2::{Digest, Sha256};
 
-use super::{Error, Result};
+use crate::download::{expected_sha256, parse_version};
+use crate::error::{Error, Result};
+use crate::{HaosImage, ImageFormat, ProgressCallback, ReleaseSource};
 
 /// Pinned Alpine release. Bumping it means updating the name, URL, checksum and size below.
 pub const ALPINE_VERSION: &str = "3.24.2";
@@ -34,16 +35,20 @@ pub struct Download {
     pub sha256: String,
 }
 
-/// The `hai-usb` cache folder, created if missing.
-pub fn cache_dir() -> Result<PathBuf> {
+/// The live USB cache folder, created if missing.
+pub fn cache_dir<B: ReleaseSource>(backend: &B) -> Result<PathBuf> {
     // A subfolder, so hai-desktop's startup cleanup (`prune_cached_images`) leaves it alone.
-    let dir = Backend.cache_dir()?.join("live-usb");
+    let dir = backend.cache_dir()?.join("live-usb");
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
 }
 
 /// Returns the pinned Alpine ISO from `cache`, downloading and verifying it if needed.
-pub async fn fetch_alpine<P: ProgressCallback>(cache: &Path, progress: &P) -> Result<Download> {
+pub async fn fetch_alpine<B: ReleaseSource, P: ProgressCallback>(
+    backend: &B,
+    cache: &Path,
+    progress: &P,
+) -> Result<Download> {
     // hai-core's downloader takes a HaosImage; it's only used here as "URL + size + digest".
     let image = HaosImage {
         board: "alpine".into(),
@@ -53,7 +58,7 @@ pub async fn fetch_alpine<P: ProgressCallback>(cache: &Path, progress: &P) -> Re
         digest: Some(format!("sha256:{ALPINE_ISO_SHA256}")),
     };
     let path = cache.join("alpine").join(ALPINE_ISO_NAME);
-    fetch(&image, &path, ALPINE_ISO_SHA256, progress).await?;
+    fetch(backend, &image, &path, ALPINE_ISO_SHA256, progress).await?;
     Ok(Download {
         path,
         version: ALPINE_VERSION.into(),
@@ -63,29 +68,35 @@ pub async fn fetch_alpine<P: ProgressCallback>(cache: &Path, progress: &P) -> Re
 
 /// Returns the latest stable HAOS generic x86-64 image (still xz-compressed) from `cache`,
 /// downloading and verifying it if needed. Needs network to look up the latest version.
-pub async fn fetch_haos<P: ProgressCallback>(cache: &Path, progress: &P) -> Result<Download> {
-    let release = Backend
+pub async fn fetch_haos<B: ReleaseSource, P: ProgressCallback>(
+    backend: &B,
+    cache: &Path,
+    progress: &P,
+) -> Result<Download> {
+    let release = backend
         .get_latest_haos_release_for_board(HAOS_BOARD)
         .await?;
     let version = release.version.clone();
-    if !is_plain_version(&version) {
-        return Err(Error::InvalidVersion(version));
+    // The version becomes a folder name.
+    if parse_version(&version).is_none() {
+        return Err(Error::LiveUsbReleaseUnusable(format!(
+            "unexpected version {version:?}"
+        )));
     }
     let image = release
         .image_for(HAOS_BOARD, ImageFormat::Raw)
-        .ok_or_else(|| Error::MissingImage(version.clone()))?;
-    let sha256 = image
-        .digest
-        .as_deref()
-        .and_then(|digest| digest.strip_prefix("sha256:"))
-        .ok_or_else(|| Error::MissingChecksum(image.download_url.clone()))?
-        .to_ascii_lowercase();
+        .ok_or_else(|| {
+            Error::LiveUsbReleaseUnusable(format!("{version} has no generic x86-64 image"))
+        })?;
+    let sha256 = expected_sha256(image).map(hex::encode).map_err(|_| {
+        Error::LiveUsbReleaseUnusable(format!("{version} has no usable SHA-256 checksum"))
+    })?;
 
     let path = cache
         .join("haos")
         .join(&version)
         .join(format!("haos_{HAOS_BOARD}-{version}.img.xz"));
-    fetch(image, &path, &sha256, progress).await?;
+    fetch(backend, image, &path, &sha256, progress).await?;
     Ok(Download {
         path,
         version,
@@ -93,7 +104,8 @@ pub async fn fetch_haos<P: ProgressCallback>(cache: &Path, progress: &P) -> Resu
     })
 }
 
-async fn fetch<P: ProgressCallback>(
+async fn fetch<B: ReleaseSource, P: ProgressCallback>(
+    backend: &B,
     image: &HaosImage,
     path: &Path,
     sha256: &str,
@@ -106,7 +118,7 @@ async fn fetch<P: ProgressCallback>(
         std::fs::create_dir_all(dir)?;
     }
     // Verifies size and SHA-256, and only moves the file into place once both match.
-    Backend.download_image(image, path, progress).await?;
+    backend.download_image(image, path, progress).await?;
     Ok(())
 }
 
@@ -137,14 +149,6 @@ fn sha256_of(path: &Path) -> std::io::Result<String> {
         }
         hasher.update(&buffer[..read]);
     }
-}
-
-/// The version becomes a folder name, so only allow digits and dots.
-fn is_plain_version(version: &str) -> bool {
-    !version.is_empty()
-        && version.bytes().all(|c| c.is_ascii_digit() || c == b'.')
-        && !version.starts_with('.')
-        && !version.contains("..")
 }
 
 #[cfg(test)]
@@ -183,14 +187,14 @@ mod tests {
     }
 
     #[test]
-    fn only_plain_versions_are_accepted() {
-        for ok in ["17.1", "16", "2026.10.0"] {
-            assert!(is_plain_version(ok), "{ok}");
+    fn only_versions_that_are_safe_folder_names_are_accepted() {
+        for ok in ["17.1", "2026.10.0"] {
+            assert!(parse_version(ok).is_some(), "{ok}");
         }
         for bad in [
-            "", "..", "../17.1", "17.1/..", "17.1-rc1", ".17", "17..1", "17.1\\x",
+            "", "16", "..", "../17.1", "17.1/..", "17.1-rc1", ".17", "17..1", "17.1\\x",
         ] {
-            assert!(!is_plain_version(bad), "{bad}");
+            assert!(parse_version(bad).is_none(), "{bad}");
         }
     }
 }

@@ -9,13 +9,17 @@ use fscommon::{BufStream, StreamSlice};
 use gpt::disk::LogicalBlockSize;
 use gpt::mbr::ProtectiveMBR;
 
-use super::stick_file::{Source, StickFile};
-use super::{Error, Result};
+use super::{Source, StickFile};
+use crate::error::{Error, Result};
 
 const SECTOR: u64 = 512;
 const MIB: u64 = 1024 * 1024;
 /// FAT labels are 11 bytes, space padded. `hai-live` finds its own stick by this label.
 pub const VOLUME_LABEL: &[u8; 11] = b"HAI-LIVE   ";
+
+fn disk_image_error(error: impl std::fmt::Display) -> Error {
+    Error::LiveUsbBuild(format!("disk image: {error}"))
+}
 
 /// Writes a disk image to `out`: everything under `src`, plus `extra` at the partition root.
 /// The image is sized to fit the content with some headroom.
@@ -63,7 +67,7 @@ fn image_size(src: &Path, extra: &[StickFile]) -> Result<u64> {
     for item in extra {
         let size = item.size()?;
         if size > u64::from(u32::MAX) {
-            return Err(Error::DiskImage(format!(
+            return Err(disk_image_error(format!(
                 "{} is larger than the 4 GiB FAT32 file limit",
                 item.name
             )));
@@ -91,17 +95,16 @@ fn dir_size(dir: &Path) -> Result<u64> {
 
 /// Writes a protective MBR and GPT; returns the ESP's byte range.
 fn write_partition_table(file: &mut File, size: u64) -> Result<(u64, u64)> {
-    let gpt_error = |e: gpt::GptError| Error::DiskImage(e.to_string());
     let sectors = size / SECTOR;
     ProtectiveMBR::with_lb_size(u32::try_from(sectors - 1).unwrap_or(u32::MAX))
         .overwrite_lba0(file)
-        .map_err(|e| Error::DiskImage(e.to_string()))?;
+        .map_err(disk_image_error)?;
 
     let mut disk = gpt::GptConfig::new()
         .writable(true)
         .logical_block_size(LogicalBlockSize::Lb512)
         .create_from_device(file, None)
-        .map_err(gpt_error)?;
+        .map_err(disk_image_error)?;
     // Leave 1 MiB at each end for the GPT headers and alignment.
     let id = disk
         .add_partition(
@@ -111,9 +114,9 @@ fn write_partition_table(file: &mut File, size: u64) -> Result<(u64, u64)> {
             0,
             Some(2048),
         )
-        .map_err(gpt_error)?;
+        .map_err(disk_image_error)?;
     let part = disk.partitions()[&id].clone();
-    disk.write().map_err(gpt_error)?;
+    disk.write().map_err(disk_image_error)?;
     Ok((part.first_lba * SECTOR, (part.last_lba + 1) * SECTOR))
 }
 
@@ -123,7 +126,7 @@ fn copy_dir<T: fatfs::ReadWriteSeek>(src: &Path, dst: &fatfs::Dir<T>) -> Result<
         let name = entry.file_name();
         let name = name
             .to_str()
-            .ok_or_else(|| Error::DiskImage(format!("non-UTF-8 file name: {name:?}")))?;
+            .ok_or_else(|| disk_image_error(format!("non-UTF-8 file name: {name:?}")))?;
         if entry.file_type()?.is_dir() {
             copy_dir(&entry.path(), &dst.create_dir(name)?)?;
         } else {

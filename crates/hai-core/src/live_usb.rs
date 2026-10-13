@@ -1,20 +1,19 @@
-//! Assembles the stick contents and turns them into an ISO, a disk image, or a written USB stick.
+//! Live USB stick and ISO that install Home Assistant OS on a generic x86-64 PC.
+//!
+//! Assembles the stick contents (the official Alpine ISO, an overlay that starts `hai-live`,
+//! and the HAOS image) and turns them into an ISO or a raw disk image.
 
 mod apkovl;
 mod disk_image;
 mod downloads;
-mod error;
 mod iso;
-mod stick_file;
 
 use std::path::{Path, PathBuf};
 
-use crate::ProgressCallback;
+use crate::error::{Error, Result};
+use crate::{ProgressCallback, ReleaseSource};
 
 pub use downloads::{cache_dir, fetch_alpine, fetch_haos, Download, ALPINE_VERSION, HAOS_BOARD};
-pub use error::{Error, Result};
-
-use stick_file::{Source, StickFile};
 
 /// Everything that goes on the stick, ready to be written out.
 #[derive(Debug, Clone)]
@@ -35,17 +34,49 @@ impl Contents {
     }
 }
 
+/// Where a stick file's bytes come from.
+#[derive(Debug, Clone)]
+enum Source {
+    /// Small generated content, held in memory.
+    Bytes(Vec<u8>),
+    /// A file on disk, streamed so large files (HAOS) never sit in memory.
+    File(PathBuf),
+}
+
+/// A file placed at the root of the boot media, on top of the Alpine ISO contents.
+#[derive(Debug, Clone)]
+struct StickFile {
+    /// File name at the root of the boot media.
+    name: String,
+    /// Content.
+    source: Source,
+}
+
+impl StickFile {
+    /// Size in bytes.
+    fn size(&self) -> std::io::Result<u64> {
+        match &self.source {
+            Source::Bytes(bytes) => Ok(bytes.len() as u64),
+            Source::File(path) => Ok(std::fs::metadata(path)?.len()),
+        }
+    }
+}
+
 /// Downloads (or reuses) Alpine and HAOS and assembles the stick contents.
 /// `hai_live` is the static Linux build of the `hai-live` program.
-pub async fn prepare<P: ProgressCallback>(hai_live: &Path, progress: &P) -> Result<Contents> {
+pub async fn prepare<B: ReleaseSource, P: ProgressCallback>(
+    backend: &B,
+    hai_live: &Path,
+    progress: &P,
+) -> Result<Contents> {
     let hai_live = std::fs::read(hai_live)?;
     if !is_static_x86_64_elf(&hai_live) {
-        return Err(Error::NotLinuxBinary);
+        return Err(Error::LiveUsbInvalidHaiLive);
     }
 
-    let cache = downloads::cache_dir()?;
-    let alpine = downloads::fetch_alpine(&cache, progress).await?;
-    let haos = downloads::fetch_haos(&cache, progress).await?;
+    let cache = downloads::cache_dir(backend)?;
+    let alpine = downloads::fetch_alpine(backend, &cache, progress).await?;
+    let haos = downloads::fetch_haos(backend, &cache, progress).await?;
 
     let files = unpack_alpine(&cache, &alpine)?;
     let label = iso::read_label(&alpine.path)?;
@@ -53,7 +84,7 @@ pub async fn prepare<P: ProgressCallback>(hai_live: &Path, progress: &P) -> Resu
         .path
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| Error::Iso("HAOS file name is not valid UTF-8".into()))?
+        .ok_or_else(|| Error::LiveUsbBuild("HAOS file name is not valid UTF-8".into()))?
         .to_string();
 
     let extra = vec![
@@ -265,7 +296,7 @@ mod tests {
         let out = std::env::var_os("LIVE_USB_OUT_DIR")
             .map_or_else(|| temp.path().to_path_buf(), PathBuf::from);
 
-        let contents = prepare(Path::new(&hai_live), &crate::NoOpProgress)
+        let contents = prepare(&crate::Backend, Path::new(&hai_live), &crate::NoOpProgress)
             .await
             .unwrap();
         let iso = write_iso(&contents, &out).unwrap();

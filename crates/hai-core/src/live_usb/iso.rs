@@ -14,8 +14,8 @@ use hadris_iso::write::{
     FileSource, InputEntry, InputEntryKind, InputMetadata, InputTree, IsoImageWriter,
 };
 
-use super::stick_file::{Source, StickFile};
-use super::{Error, Result};
+use super::{Source, StickFile};
+use crate::error::{Error, Result};
 
 const ISO_SECTOR: u64 = 2048;
 /// Alpine's EFI boot image: a small FAT image holding `efi/boot/bootx64.efi`.
@@ -24,7 +24,7 @@ const EFI_IMAGE: &str = "boot/grub/efi.img";
 type Image = IsoImage<BufReader<File>>;
 
 fn iso_error(error: impl std::fmt::Display) -> Error {
-    Error::Iso(error.to_string())
+    Error::LiveUsbBuild(format!("ISO: {error}"))
 }
 
 fn open(iso: &Path) -> Result<Image> {
@@ -78,7 +78,7 @@ fn safe_name(raw: &str) -> Result<String> {
         .unwrap_or_default()
         .trim_end_matches('.');
     if name.is_empty() || name == ".." || name.contains(['/', '\\', '\0']) {
-        return Err(Error::Iso(format!("unsafe file name in ISO: {raw:?}")));
+        return Err(iso_error(format!("unsafe file name in ISO: {raw:?}")));
     }
     Ok(name.to_string())
 }
@@ -150,7 +150,7 @@ fn tree_from_dir(dir: &Path) -> Result<Vec<InputEntry>> {
         let name = item
             .file_name()
             .into_string()
-            .map_err(|name| Error::Iso(format!("non-UTF-8 file name: {name:?}")))?;
+            .map_err(|name| iso_error(format!("non-UTF-8 file name: {name:?}")))?;
         entries.push(if item.file_type()?.is_dir() {
             entry(
                 name,

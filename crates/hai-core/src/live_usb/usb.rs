@@ -2,9 +2,9 @@
 
 use std::path::Path;
 
-use hai_core::{Backend, BlockDevice, DeviceBackend, ExpectedDevice, ProgressCallback};
+use crate::{Backend, BlockDevice, DeviceBackend, ExpectedDevice, ProgressCallback};
 
-use crate::{Error, Result};
+use super::{Error, Result};
 
 /// Removable drives only: the stick must never be written to a system or internal disk.
 pub async fn list_usb_drives() -> Result<Vec<BlockDevice>> {
@@ -42,21 +42,21 @@ fn find_target<'a>(
     let device = devices
         .iter()
         .find(|d| d.id == device_id)
-        .ok_or_else(|| hai_core::Error::DeviceNotFound(device_id.into()))?;
+        .ok_or_else(|| crate::Error::DeviceNotFound(device_id.into()))?;
     if !device.removable {
         return Err(Error::NotRemovable(device_id.into()));
     }
     if !expected.matches(device) {
         return Err(Error::DeviceChanged(device_id.into()));
     }
-    hai_core::disk::ensure_image_fits(image_size, device.size)?;
+    crate::disk::ensure_image_fits(image_size, device.size)?;
     Ok(device)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hai_core::DeviceType;
+    use crate::DeviceType;
 
     fn drive(id: &str, size: u64, removable: bool) -> BlockDevice {
         BlockDevice {
@@ -108,13 +108,13 @@ mod tests {
 
         let err = find_target(&devices, "usb", &expected(&stick), 3_000_000_000).unwrap_err();
         assert!(
-            matches!(err, Error::Core(hai_core::Error::ImageTooLarge { .. })),
+            matches!(err, Error::Core(crate::Error::ImageTooLarge { .. })),
             "{err}"
         );
 
         let err = find_target(&devices, "gone", &expected(&stick), 1).unwrap_err();
         assert!(
-            matches!(err, Error::Core(hai_core::Error::DeviceNotFound(_))),
+            matches!(err, Error::Core(crate::Error::DeviceNotFound(_))),
             "{err}"
         );
     }

@@ -6,10 +6,10 @@
 use std::fs::File;
 use std::path::{Path, PathBuf};
 
-use hai_core::{Backend, HaosImage, ImageFormat, ProgressCallback, ReleaseSource};
+use crate::{Backend, HaosImage, ImageFormat, ProgressCallback, ReleaseSource};
 use sha2::{Digest, Sha256};
 
-use crate::{Error, Result};
+use super::{Error, Result};
 
 /// Pinned Alpine release. Bumping it means updating the name, URL, checksum and size below.
 pub const ALPINE_VERSION: &str = "3.24.2";

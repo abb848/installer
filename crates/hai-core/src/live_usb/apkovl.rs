@@ -6,7 +6,7 @@ use std::io::Write;
 use flate2::{write::GzEncoder, Compression};
 use tar::{EntryType, Header};
 
-use super::Result;
+use crate::error::Result;
 
 /// File name on the boot media. Alpine picks up any `*.apkovl.tar.gz` at the root.
 pub const APKOVL_NAME: &str = "hai.apkovl.tar.gz";

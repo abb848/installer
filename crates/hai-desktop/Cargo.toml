@@ -22,8 +22,7 @@ mock = ["hai-core/mock"]
 
 [dependencies]
 # Internal crates
-hai-core = { workspace = true, features = ["proxmox", "utm"] }
-hai-usb = { workspace = true }
+hai-core = { workspace = true, features = ["proxmox", "utm", "live-usb"] }
 
 # Tauri
 tauri = { workspace = true }

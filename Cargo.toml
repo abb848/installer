@@ -11,7 +11,6 @@ edition = "2021"
 [workspace.dependencies]
 # Internal crates
 hai-core = { path = "crates/hai-core" }
-hai-usb = { path = "crates/hai-usb" }
 
 # Async runtime
 tokio = { version = "1", features = ["time", "fs", "io-util", "rt", "macros"] }

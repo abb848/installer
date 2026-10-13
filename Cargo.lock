@@ -1924,7 +1924,6 @@ name = "hai-desktop"
 version = "0.1.0"
 dependencies = [
  "hai-core",
- "hai-usb",
  "log",
  "os_info",
  "plist",

@@ -13,7 +13,6 @@ import "../../components/option-card.js";
 /** Drive rules for the stick: removable and 2 GB or more (the drive list allows 5% less). */
 const LIVE_USB_STICK: HaosConfig = {
   board: "generic-x86-64",
-  download_url: "",
   minimum_storage_bytes: 2_000_000_000,
   recommended_storage_bytes: 2_000_000_000,
 };

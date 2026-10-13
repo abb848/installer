@@ -1,11 +1,13 @@
-//! Live USB commands: build a bootable stick or ISO for a mini PC with `hai-usb`.
+//! Live USB commands: build a bootable stick or ISO for a mini PC with `hai_core::live_usb`.
 //!
-//! With the `mock` feature these commands only report fake progress. `hai-usb` always
-//! uses the real backend, so calling it from a mock build would download and write for real.
+//! With the `mock` feature these commands only report fake progress: building the media
+//! needs the real Alpine and HAOS downloads, and a mock build must never write a drive.
 
 use std::path::{Path, PathBuf};
 
-use hai_core::{DeviceBackend, ExpectedDevice, FlashProgress, FlashStage, ProgressCallback};
+use hai_core::{
+    BlockDevice, DeviceBackend, ExpectedDevice, FlashProgress, FlashStage, ProgressCallback,
+};
 use serde::Serialize;
 use tauri::ipc::Channel;
 
@@ -143,9 +145,7 @@ async fn run_create_live_usb<P: ProgressCallback>(
         .check_write_privileges()
         .map_err(CommandError::from)?;
     let hai_live = find_hai_live().ok_or_else(hai_live_missing)?;
-    let contents = hai_usb::prepare(&hai_live, callback)
-        .await
-        .map_err(live_usb_error)?;
+    let contents = hai_core::live_usb::prepare(&Backend, &hai_live, callback).await?;
 
     report(
         callback,
@@ -154,19 +154,68 @@ async fn run_create_live_usb<P: ProgressCallback>(
     );
     let temp = tempfile::Builder::new()
         .prefix("usb-image-")
-        .tempdir_in(hai_usb::cache_dir().map_err(live_usb_error)?)?;
+        .tempdir_in(hai_core::live_usb::cache_dir(&Backend)?)?;
     let out_dir = temp.path().to_path_buf();
-    let image = tokio::task::spawn_blocking(move || hai_usb::write_image(&contents, &out_dir))
-        .await
-        .map_err(|_| stopped())?
-        .map_err(live_usb_error)?;
+    let image =
+        tokio::task::spawn_blocking(move || hai_core::live_usb::write_image(&contents, &out_dir))
+            .await
+            .map_err(|_| stopped())??;
 
-    hai_usb::write_to_usb(&image, device_id, expected, callback)
-        .await
-        .map_err(live_usb_error)?;
+    write_to_usb(&image, device_id, expected, callback).await?;
     drop(temp);
     report(callback, FlashStage::Complete, "USB stick ready");
     Ok(())
+}
+
+/// Writes `image` to the stick `device_id` with read-back verification.
+#[cfg(not(feature = "mock"))]
+async fn write_to_usb<P: ProgressCallback>(
+    image: &Path,
+    device_id: &str,
+    expected: &ExpectedDevice,
+    progress: &P,
+) -> Result<(), CommandError> {
+    Backend.check_write_privileges()?;
+    let image_size = std::fs::metadata(image)?.len();
+    let devices = Backend.list_devices().await?;
+    find_live_usb_target(&devices, device_id, expected, image_size)?;
+    Backend
+        .write_image(image, device_id, expected, true, progress)
+        .await?;
+    Ok(())
+}
+
+/// Find the stick among the currently attached devices.
+///
+/// The safety gate before writing, like `find_flash_target` for the regular flash: the
+/// device must be removable, still the drive the user selected, and big enough for `image_size`.
+#[cfg_attr(feature = "mock", allow(dead_code))]
+fn find_live_usb_target<'a>(
+    devices: &'a [BlockDevice],
+    device_id: &str,
+    expected: &ExpectedDevice,
+    image_size: u64,
+) -> Result<&'a BlockDevice, CommandError> {
+    let device = devices
+        .iter()
+        .find(|d| d.id == device_id)
+        .ok_or_else(|| hai_core::Error::DeviceNotFound(device_id.into()))?;
+    if !device.removable {
+        return Err(CommandError::new(
+            "invalid_config",
+            "The selected drive is not removable, so it won't be written.",
+            false,
+        ));
+    }
+    if !expected.matches(device) {
+        return Err(CommandError::new(
+            "device_not_found",
+            "The USB stick is no longer the one you selected. Select it again.",
+            false,
+        ));
+    }
+    hai_core::disk::ensure_image_fits(image_size, device.size)?;
+    Ok(device)
 }
 
 #[cfg(feature = "mock")]
@@ -209,17 +258,15 @@ async fn run_save_live_iso<P: ProgressCallback>(
         let temp = tempfile::Builder::new()
             .prefix(".hai-live-")
             .tempdir_in(folder)?;
-        let contents = hai_usb::prepare(&hai_live, callback)
-            .await
-            .map_err(live_usb_error)?;
+        let contents = hai_core::live_usb::prepare(&Backend, &hai_live, callback).await?;
 
         report(callback, FlashStage::Extracting, "Building the ISO...");
         let out_dir = temp.path().to_path_buf();
-        let built = tokio::task::spawn_blocking(move || hai_usb::write_iso(&contents, &out_dir))
-            .await
-            .map_err(|_| stopped())?
-            .map_err(live_usb_error)?;
-        // hai-usb picks its own name; building in a temporary folder means an existing
+        let built =
+            tokio::task::spawn_blocking(move || hai_core::live_usb::write_iso(&contents, &out_dir))
+                .await
+                .map_err(|_| stopped())??;
+        // hai-core picks its own name; building in a temporary folder means an existing
         // file with that name next to the target is never overwritten.
         iso_target(folder, file_name, overwrite)?;
         // Replaces an existing file in one step on every platform, so a failure keeps the old one.
@@ -333,44 +380,6 @@ fn stopped() -> CommandError {
     )
 }
 
-/// Fixed messages only: `hai-usb` errors can contain paths and device names.
-#[cfg_attr(feature = "mock", allow(dead_code))]
-fn live_usb_error(error: hai_usb::Error) -> CommandError {
-    use hai_usb::Error;
-    match error {
-        Error::Core(error) => error.into(),
-        Error::Io(error) => error.into(),
-        Error::NotLinuxBinary => CommandError::new(
-            "hai_live_invalid",
-            "The program for the USB stick (hai-live) is not the Linux build. Rebuild it \
-             for x86_64-unknown-linux-musl, then try again.",
-            true,
-        ),
-        Error::NotRemovable(_) => CommandError::new(
-            "invalid_config",
-            "The selected drive is not removable, so it won't be written.",
-            false,
-        ),
-        Error::DeviceChanged(_) => CommandError::new(
-            "device_not_found",
-            "The USB stick is no longer the one you selected. Select it again.",
-            false,
-        ),
-        Error::MissingImage(_) | Error::MissingChecksum(_) | Error::InvalidVersion(_) => {
-            CommandError::new(
-                "release_unavailable",
-                "The latest Home Assistant OS release can't be used right now. Try again later.",
-                true,
-            )
-        }
-        Error::DiskImage(_) | Error::Iso(_) => CommandError::new(
-            "image_build_failed",
-            "The bootable media could not be built. Check available storage, then try again.",
-            true,
-        ),
-    }
-}
-
 fn report<P: ProgressCallback>(callback: &P, stage: FlashStage, message: &str) {
     let progress = if stage == FlashStage::Complete {
         100
@@ -479,22 +488,65 @@ mod tests {
     }
 
     #[test]
-    fn live_usb_errors_never_include_paths_or_device_names() {
-        for error in [
-            hai_usb::Error::NotRemovable(r"\\.\PhysicalDrive7".into()),
-            hai_usb::Error::DeviceChanged("/dev/sdq".into()),
-            hai_usb::Error::Iso(r"C:\Users\secret\x.iso".into()),
-            hai_usb::Error::DiskImage("/home/secret/img".into()),
-        ] {
-            let message = live_usb_error(error).message;
-            assert!(!message.contains("PhysicalDrive7"), "{message}");
-            assert!(!message.contains("sdq"), "{message}");
-            assert!(!message.contains("secret"), "{message}");
-        }
+    fn live_usb_target_accepts_the_same_removable_drive_with_room() {
+        let devices = [drive("usb", 2_000_000_000, true)];
+        let found =
+            find_live_usb_target(&devices, "usb", &expected(&devices[0]), 1_000_000_000).unwrap();
+        assert_eq!(found.id, "usb");
+    }
+
+    #[test]
+    fn live_usb_target_refuses_unsafe_targets_without_naming_devices() {
+        let fixed = drive("/dev/sdq", 500_000_000_000, false);
+        let stick = drive(r"\\.\PhysicalDrive7", 2_000_000_000, true);
+        let devices = [fixed.clone(), stick.clone()];
+        let refused = |id: &str, expected: &ExpectedDevice, image_size: u64| {
+            let error = find_live_usb_target(&devices, id, expected, image_size).unwrap_err();
+            assert!(!error.message.contains("sdq"), "{error}");
+            assert!(!error.message.contains("PhysicalDrive7"), "{error}");
+            error.code
+        };
+
+        assert_eq!(refused(&fixed.id, &expected(&fixed), 1), "invalid_config");
+
+        let mut swapped = expected(&stick);
+        swapped.size = Some(4_000_000_000);
+        assert_eq!(refused(&stick.id, &swapped, 1), "device_not_found");
+
+        let mut same_model_other_stick = expected(&stick);
+        same_model_other_stick.serial = Some("SN-2".into());
         assert_eq!(
-            live_usb_error(hai_usb::Error::NotLinuxBinary).code,
-            "hai_live_invalid"
+            refused(&stick.id, &same_model_other_stick, 1),
+            "device_not_found"
         );
+
+        assert_eq!(
+            refused(&stick.id, &expected(&stick), 3_000_000_000),
+            "image_too_large"
+        );
+        assert_eq!(refused("gone", &expected(&stick), 1), "device_not_found");
+    }
+
+    fn drive(id: &str, size: u64, removable: bool) -> BlockDevice {
+        BlockDevice {
+            id: id.into(),
+            name: id.into(),
+            size,
+            device_type: hai_core::DeviceType::UsbDrive,
+            removable,
+            model: Some("Stick".into()),
+            vendor: Some("Acme".into()),
+            serial: Some("SN-1".into()),
+        }
+    }
+
+    fn expected(device: &BlockDevice) -> ExpectedDevice {
+        ExpectedDevice {
+            size: Some(device.size),
+            model: device.model.clone(),
+            vendor: device.vendor.clone(),
+            serial: device.serial.clone(),
+        }
     }
 
     #[test]

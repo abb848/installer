@@ -6,15 +6,13 @@ mod downloads;
 mod error;
 mod iso;
 mod stick_file;
-mod usb;
 
 use std::path::{Path, PathBuf};
 
-use crate::{ExpectedDevice, ProgressCallback};
+use crate::ProgressCallback;
 
 pub use downloads::{cache_dir, fetch_alpine, fetch_haos, Download, ALPINE_VERSION, HAOS_BOARD};
 pub use error::{Error, Result};
-pub use usb::{list_usb_drives, write_to_usb};
 
 use stick_file::{Source, StickFile};
 
@@ -27,8 +25,6 @@ pub struct Contents {
     extra: Vec<StickFile>,
     /// Alpine's ISO volume label, which our ISO must keep.
     label: String,
-    /// The cache folder, used for the temporary image when writing a stick.
-    cache: PathBuf,
     /// HAOS version on the stick.
     pub haos_version: String,
 }
@@ -80,7 +76,6 @@ pub async fn prepare<P: ProgressCallback>(hai_live: &Path, progress: &P) -> Resu
         files,
         extra,
         label,
-        cache,
         haos_version: haos.version,
     })
 }
@@ -99,22 +94,6 @@ pub fn write_image(contents: &Contents, out_dir: &Path) -> Result<PathBuf> {
     let path = out_dir.join(format!("{}.img", contents.stem()));
     disk_image::build(&path, &contents.files, &contents.extra)?;
     Ok(path)
-}
-
-/// Builds the stick image in a temporary folder, writes it to the USB drive `device_id`
-/// with read-back verification, then deletes the temporary image.
-pub async fn write_stick<P: ProgressCallback>(
-    contents: &Contents,
-    device_id: &str,
-    expected: &ExpectedDevice,
-    progress: &P,
-) -> Result<()> {
-    // Deleted when it goes out of scope, also on error.
-    let temp = tempfile::Builder::new()
-        .prefix("usb-image-")
-        .tempdir_in(&contents.cache)?;
-    let image = write_image(contents, temp.path())?;
-    usb::write_to_usb(&image, device_id, expected, progress).await
 }
 
 /// Unpacks the Alpine ISO into the cache once per version and returns the folder.
@@ -273,5 +252,27 @@ mod tests {
         std::fs::write(dir.join(".unpacked"), "old").unwrap();
         assert!(unpack_alpine(cache.path(), &alpine).is_err());
         assert!(!dir.join(".unpacked").exists());
+    }
+
+    /// Builds a real ISO and disk image, without writing to any disk. Set `LIVE_USB_OUT_DIR`
+    /// to keep the files; otherwise they go to a temporary folder.
+    #[tokio::test]
+    #[ignore = "downloads Alpine and HAOS and needs HAI_LIVE_PATH; run explicitly"]
+    async fn builds_iso_and_disk_image() {
+        let hai_live = std::env::var_os("HAI_LIVE_PATH")
+            .expect("set HAI_LIVE_PATH to the Linux build of hai-live");
+        let temp = tempfile::tempdir().unwrap();
+        let out = std::env::var_os("LIVE_USB_OUT_DIR")
+            .map_or_else(|| temp.path().to_path_buf(), PathBuf::from);
+
+        let contents = prepare(Path::new(&hai_live), &crate::NoOpProgress)
+            .await
+            .unwrap();
+        let iso = write_iso(&contents, &out).unwrap();
+        let image = write_image(&contents, &out).unwrap();
+
+        assert_eq!(iso::read_label(&iso).unwrap(), contents.label);
+        assert!(std::fs::metadata(&image).unwrap().len() > 0);
+        println!("ISO: {}\nDisk image: {}", iso.display(), image.display());
     }
 }

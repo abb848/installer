@@ -6,7 +6,7 @@ use std::path::Path;
 
 use crate::drives::{self, Disk, Entry};
 
-/// FAT volume label `hai-usb` gives the stick (must match `hai-usb`'s `VOLUME_LABEL`).
+/// FAT volume label the installer gives the stick (must match `VOLUME_LABEL` in hai-core's `live_usb`).
 const STICK_LABEL: &[u8; 11] = b"HAI-LIVE   ";
 
 /// HAOS needs a 32 GB disk. Same 5% allowance as hai-core, because "32 GB" disks report a bit less.

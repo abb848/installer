@@ -49,6 +49,9 @@ test("writes a bootable USB stick", async ({ page }) => {
   await expect(page.locator("live-usb-success-view")).toContainText(
     "type erase to confirm"
   );
+  await expect(page.locator("live-usb-success-view")).toContainText(
+    "use your operating system's eject option"
+  );
 });
 
 test("saves an ISO file without the erase confirmation", async ({ page }) => {

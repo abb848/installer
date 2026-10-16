@@ -104,6 +104,9 @@ export class LiveUsbSuccessView extends LitElement {
         .steps=${iso
           ? [localize("views.live_usb.success_view.write_the_iso"), ...boot]
           : [
+              localize(
+                "views.sbc.success_view.eject_the_drive_before_disconnecting"
+              ),
               localize("views.live_usb.success_view.plug_in_the_stick"),
               ...boot,
             ]}

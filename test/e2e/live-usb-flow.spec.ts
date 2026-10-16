@@ -98,7 +98,7 @@ test("asks before replacing an existing ISO file", async ({ page }) => {
   await location.getByLabel("File name").fill("existing.iso");
 
   await next(page);
-  const dialog = page.locator("info-dialog");
+  const dialog = location.locator("info-dialog");
   await expect(dialog).toContainText("Replace the existing file?");
   await dialog.getByRole("button", { name: "Cancel" }).click();
   await expect(location).toBeVisible();
@@ -180,6 +180,47 @@ test("a failed write can be tried again", async ({ page }) => {
   await expect(page.locator("live-usb-success-view")).toContainText(
     "Your USB stick is ready.",
     { timeout: 20000 }
+  );
+});
+
+test("stopping a USB stick asks first and can be tried again", async ({
+  page,
+}) => {
+  await openMediaChoice(page);
+  await startUsbWrite(page);
+  const progress = page.locator("live-usb-progress-view");
+  await expect(progress).toBeVisible();
+  const stopDialog = page.locator("app-shell > info-dialog.stop-dialog");
+  const cancel = page.getByRole("button", { name: "Cancel", exact: true });
+
+  await cancel.click();
+  await expect(stopDialog).toContainText("If writing to the drive has started");
+  await stopDialog.getByRole("button", { name: "Keep installing" }).click();
+  await expect(stopDialog.getByText("Stop the installation?")).toBeHidden();
+
+  await cancel.click();
+  await stopDialog.getByRole("button", { name: "Stop installation" }).click();
+  await expect(progress).toContainText("Stopped.");
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect(page.locator("live-usb-success-view")).toContainText(
+    "Your USB stick is ready.",
+    { timeout: 20000 }
+  );
+});
+
+test("stopping an ISO says nothing was saved", async ({ page }) => {
+  await openMediaChoice(page);
+  await chooseMedia(page, "ISO file");
+  await next(page);
+  await next(page, "Create");
+  await expect(page.locator("live-usb-progress-view")).toBeVisible();
+
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  const stopDialog = page.locator("app-shell > info-dialog.stop-dialog");
+  await expect(stopDialog).toContainText("The ISO file won't be saved.");
+  await stopDialog.getByRole("button", { name: "Stop installation" }).click();
+  await expect(page.locator("live-usb-progress-view")).toContainText(
+    "Stopped. No ISO file was saved."
   );
 });
 

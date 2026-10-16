@@ -138,12 +138,13 @@ async fn is_cached<P: ProgressCallback>(
     Ok(actual.eq_ignore_ascii_case(sha256))
 }
 
-/// Hashing a cached HAOS image takes several seconds, so it reports progress like a download.
+/// Hashing a cached HAOS image takes several seconds, so it reports progress like a download
+/// and stops with `Error::Cancelled` when asked to.
 async fn sha256_with_progress<P: ProgressCallback>(
     path: &Path,
     size: u64,
     progress: &P,
-) -> std::io::Result<String> {
+) -> Result<String> {
     use tokio::io::AsyncReadExt;
     const REPORT_EVERY: u64 = 32 * 1024 * 1024;
 
@@ -161,6 +162,9 @@ async fn sha256_with_progress<P: ProgressCallback>(
     let mut buffer = vec![0; 1024 * 1024];
     let (mut done, mut next_report) = (0u64, 0u64);
     loop {
+        if progress.is_cancelled() {
+            return Err(Error::Cancelled);
+        }
         if done >= next_report {
             report(done);
             next_report = done + REPORT_EVERY;
@@ -241,6 +245,27 @@ mod tests {
         let seen = recorder.0.into_inner().unwrap();
         assert_eq!(seen.first(), Some(&(0, 5)));
         assert_eq!(seen.last(), Some(&(5, 5)));
+    }
+
+    struct Cancelled;
+
+    impl ProgressCallback for Cancelled {
+        fn on_progress(&self, _: FlashProgress) {}
+
+        fn is_cancelled(&self) -> bool {
+            true
+        }
+    }
+
+    #[tokio::test]
+    async fn checking_a_cached_file_stops_when_cancelled() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("file");
+        std::fs::write(&path, b"hello").unwrap();
+        let error = is_cached(&path, 5, HELLO_SHA256, &Cancelled)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, Error::Cancelled), "{error:?}");
     }
 
     #[test]

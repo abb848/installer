@@ -67,6 +67,8 @@ export class LiveIsoLocationView extends LitElement {
       this._problem = installerError(error).message;
       return false;
     }
+    // Back or Cancel while checking: nobody is left to answer a prompt
+    if (!this.isConnected) return false;
     if (!exists) {
       wizardState.setSelection("liveIsoOverwrite", false);
       return true;

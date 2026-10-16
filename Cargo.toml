@@ -90,7 +90,7 @@ windows-sys = { version = "0.61", features = [
 tauri = { version = "~2.12.0", features = [] }
 tauri-build = { version = "2", features = [] }
 tauri-plugin-opener = "2"
-tauri-plugin-dialog = "2"
+tauri-plugin-dialog = "~2.8"
 tauri-plugin-os = "=2.4.0"
 tauri-plugin-single-instance = "2"
 tauri-plugin-log = "2"

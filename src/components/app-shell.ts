@@ -179,9 +179,7 @@ export class AppShell extends LitElement {
         class="stop-dialog"
         ?open=${this._showStopDialog}
         .title=${localize("components.app_shell.stop_installation_title")}
-        .message=${wizardState.currentStep?.id === "flash"
-          ? localize("components.app_shell.stop_installation_message")
-          : localize("components.app_shell.stop_vm_installation_message")}
+        .message=${this._stopDialogMessage()}
         .primaryLabel=${localize("components.app_shell.stop_installation")}
         .secondaryLabel=${localize("components.app_shell.keep_installing")}
         primaryVariant="danger"
@@ -202,6 +200,20 @@ export class AppShell extends LitElement {
         @dialog-secondary=${this._onKeepInstallingOnQuit}
       ></info-dialog>
     `;
+  }
+
+  private _stopDialogMessage(): string {
+    if (wizardState.currentStep?.id !== "flash") {
+      return localize("components.app_shell.stop_vm_installation_message");
+    }
+    const selections = this._wizardState.selections;
+    if (
+      selections.installMethod === "usb-boot" &&
+      selections.liveMedia === "iso"
+    ) {
+      return localize("components.app_shell.stop_iso_message");
+    }
+    return localize("components.app_shell.stop_installation_message");
   }
 
   private _renderView() {
@@ -823,7 +835,9 @@ export class AppShell extends LitElement {
 
     const progressView = this.shadowRoot
       ?.querySelector("wizard-shell")
-      ?.querySelector("progress-view");
+      ?.querySelector("progress-view, live-usb-progress-view") as
+      | (HTMLElement & { stop: () => void })
+      | null;
     if (!progressView) return;
 
     this._stoppingFlash = true;

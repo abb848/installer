@@ -29,16 +29,21 @@ export async function getLiveUsbStatus(): Promise<LiveUsbStatus> {
   return invoke<LiveUsbStatus>("live_usb_status");
 }
 
-/** Build the bootable stick and write it to `deviceId`, with verification. */
+/**
+ * Build the bootable stick and write it to `deviceId`, with verification.
+ * `attempt` names this run, so `cancelLiveUsb` can never stop another.
+ */
 export async function createLiveUsb(
   deviceId: string,
   expectedDevice: ExpectedDevice,
-  onProgress: (progress: FlashProgress) => void
+  onProgress: (progress: FlashProgress) => void,
+  attempt: string
 ): Promise<void> {
   if (MOCK_ALLOWED && isBrowserOnly()) {
     await simulate(
       ["downloading", "extracting", "writing", "verifying"],
-      onProgress
+      onProgress,
+      attempt
     );
     return;
   }
@@ -47,6 +52,7 @@ export async function createLiveUsb(
   await invoke("create_live_usb", {
     deviceId,
     expectedDevice,
+    attempt,
     progressChannel: channel,
   });
 }
@@ -56,10 +62,11 @@ export async function saveLiveIso(
   folder: string,
   fileName: string,
   overwrite: boolean,
-  onProgress: (progress: FlashProgress) => void
+  onProgress: (progress: FlashProgress) => void,
+  attempt: string
 ): Promise<string> {
   if (MOCK_ALLOWED && isBrowserOnly()) {
-    await simulate(["downloading", "extracting"], onProgress);
+    await simulate(["downloading", "extracting"], onProgress, attempt);
     return `${folder}/${fileName}`;
   }
   const channel = new Channel<FlashProgress>();
@@ -68,8 +75,25 @@ export async function saveLiveIso(
     folder,
     fileName,
     overwrite,
+    attempt,
     progressChannel: channel,
   });
+}
+
+/** The simulated run in browser-only mode, and whether it was stopped. */
+let mockAttempt: string | undefined;
+let mockCancelled = false;
+
+/**
+ * Ask the stick or ISO run started as `attempt` to stop. It then rejects with
+ * `cancelled`. The backend runs these like a flash, so this is `cancel_flash`.
+ */
+export async function cancelLiveUsb(attempt: string): Promise<void> {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
+    if (attempt === mockAttempt) mockCancelled = true;
+    return;
+  }
+  await invoke("cancel_flash", { attempt });
 }
 
 /** Checks the save location before anything is downloaded. */
@@ -127,12 +151,24 @@ export async function chooseFolder(start: string): Promise<string | null> {
 
 async function simulate(
   stages: FlashProgress["stage"][],
-  onProgress: (progress: FlashProgress) => void
+  onProgress: (progress: FlashProgress) => void,
+  attempt: string
 ) {
+  mockAttempt = attempt;
+  mockCancelled = false;
   const total = 500_000_000;
   for (const stage of stages) {
     const measured = stage !== "extracting";
     for (let percent = 0; percent <= 100; percent += 20) {
+      // Shaped like the native rejection
+      if (mockCancelled) {
+        throw {
+          code: "cancelled",
+          message: "Installation was cancelled.",
+          retryable: true,
+          details: {},
+        };
+      }
       onProgress({
         stage,
         progress: percent,
@@ -141,7 +177,8 @@ async function simulate(
         message: "",
       });
       if (stage === "writing" && percent === 0) failMockOperation("flash");
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Slow enough that browser tests can stop it halfway
+      await new Promise((resolve) => setTimeout(resolve, 250));
     }
   }
   onProgress({

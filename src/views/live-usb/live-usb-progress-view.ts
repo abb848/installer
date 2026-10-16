@@ -7,18 +7,22 @@ import { LitElement, html, css } from "lit";
 import { customElement, state } from "lit/decorators.js";
 import { wizardState } from "../../state/wizard-state.js";
 import {
+  cancelLiveUsb,
   createLiveUsb,
   saveLiveIso,
   type FlashProgress,
 } from "../../api/index.js";
 import { readDriveSelection } from "../../utils/drive-selection.js";
-import { InstallDiagnostics } from "../../utils/diagnostics.js";
+import {
+  InstallDiagnostics,
+  logFrontendError,
+} from "../../utils/diagnostics.js";
 import "../../components/install-progress.js";
 
 /**
- * Creates the stick or ISO. Fires the same `flash-complete` / `flash-error`
- * events as the regular progress view, so the shell handles retry and going
- * back the same way.
+ * Creates the stick or ISO. Fires the same `flash-complete` / `flash-error` /
+ * `flash-stop-failed` events as the regular progress view, so the shell
+ * handles stopping, retry and going back the same way.
  */
 @customElement("live-usb-progress-view")
 export class LiveUsbProgressView extends LitElement {
@@ -50,6 +54,11 @@ export class LiveUsbProgressView extends LitElement {
   private _error: InstallerError | null = null;
 
   private _running = false;
+  private _stopping = false;
+  /** Whether this attempt got as far as the stick. */
+  private _reachedDrive = false;
+  /** Names the running attempt, so a late stop can never hit a retry. */
+  private _attempt = "";
   private _stageStartTime: number | null = null;
   private _stageStartBytes = 0;
   private _diagnostics?: InstallDiagnostics;
@@ -59,6 +68,24 @@ export class LiveUsbProgressView extends LitElement {
     this._error = null;
     this._progress = null;
     void this._start();
+  }
+
+  /** Stop the running build or write. It ends as a retryable `cancelled` error. */
+  stop(): void {
+    if (!this._running || this._stopping) return;
+
+    this._stopping = true;
+    const attempt = this._attempt;
+    cancelLiveUsb(attempt).catch((error: unknown) => {
+      logFrontendError(error);
+      // A late failure must not touch a retry that is stopping by now
+      if (attempt !== this._attempt || !this._running) return;
+
+      this._stopping = false;
+      this.dispatchEvent(
+        new CustomEvent("flash-stop-failed", { bubbles: true, composed: true })
+      );
+    });
   }
 
   connectedCallback() {
@@ -73,6 +100,8 @@ export class LiveUsbProgressView extends LitElement {
   private async _start() {
     if (this._running) return;
     this._running = true;
+    this._reachedDrive = false;
+    this._attempt = crypto.randomUUID();
     this._diagnostics = new InstallDiagnostics("flash");
     this._stageStartTime = null;
     this._stageStartBytes = 0;
@@ -88,6 +117,9 @@ export class LiveUsbProgressView extends LitElement {
       ) {
         this._stageStartTime = Date.now();
         this._stageStartBytes = progress.bytes_processed;
+      }
+      if (["writing", "verifying", "finalizing"].includes(progress.stage)) {
+        this._reachedDrive = true;
       }
       this._progress = progress;
     };
@@ -108,14 +140,16 @@ export class LiveUsbProgressView extends LitElement {
             vendor: drive.vendor,
             serial: drive.serial,
           },
-          onProgress
+          onProgress,
+          this._attempt
         );
       } else {
         const path = await saveLiveIso(
           selections.liveIsoFolder ?? "",
           selections.liveIsoName ?? "",
           selections.liveIsoOverwrite === true,
-          onProgress
+          onProgress,
+          this._attempt
         );
         wizardState.setSelection("liveIsoPath", path);
       }
@@ -128,6 +162,8 @@ export class LiveUsbProgressView extends LitElement {
         error,
         error instanceof Error ? error.message : undefined
       );
+      const stopped = this._stoppedMessage(error);
+      if (stopped) this._error = { ...this._error, message: stopped };
       this.dispatchEvent(
         new CustomEvent("flash-error", {
           detail: { retryable: this._error.retryable },
@@ -137,7 +173,21 @@ export class LiveUsbProgressView extends LitElement {
       );
     } finally {
       this._running = false;
+      this._stopping = false;
     }
+  }
+
+  /** Say what a stop left behind, rather than a generic "cancelled". */
+  private _stoppedMessage(error: unknown): string | undefined {
+    if (!this._stopping || installerError(error).code !== "cancelled") {
+      return undefined;
+    }
+    if (!this._usb) {
+      return localize("views.live_usb.progress_view.stopped_no_iso");
+    }
+    return this._reachedDrive
+      ? localize("views.live_usb.progress_view.stopped_stick_not_ready")
+      : localize("views.live_usb.progress_view.stopped_nothing_written");
   }
 
   render() {

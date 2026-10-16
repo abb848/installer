@@ -12,8 +12,9 @@ use serde::Serialize;
 use tauri::ipc::Channel;
 
 use crate::backend::Backend;
+use crate::close_guard::running_job;
 use crate::command_error::CommandError;
-use crate::commands::TauriProgressCallback;
+use crate::commands::{check_cancelled, keep_awake, TauriProgressCallback};
 use crate::flash_state::FlashState;
 
 /// Lets testers point the app at a `hai-live` build kept anywhere, such as Downloads.
@@ -42,17 +43,22 @@ pub async fn live_usb_status() -> LiveUsbStatus {
 }
 
 /// Downloads Alpine and HAOS (or reuses the cache), builds the stick image and writes it to
-/// the removable drive `device_id` with read-back verification.
+/// the removable drive `device_id` with read-back verification. `cancel_flash(attempt)`
+/// stops it.
 #[tauri::command]
 pub async fn create_live_usb(
     device_id: String,
     expected_device: ExpectedDevice,
+    attempt: String,
     progress_channel: Channel<FlashProgress>,
     state: tauri::State<'_, FlashState>,
 ) -> Result<(), CommandError> {
     state
-        .run(async move {
-            let callback = TauriProgressCallback::new(&progress_channel, "live_usb");
+        .run(attempt, |cancelled| async move {
+            let _running = running_job();
+            let _awake = keep_awake("Creating a Home Assistant USB stick").await;
+            let callback =
+                TauriProgressCallback::new(&progress_channel, "live_usb").cancellable(cancelled);
             let result = run_create_live_usb(&device_id, &expected_device, &callback).await;
             callback.operation.finish(result)
         })
@@ -60,18 +66,22 @@ pub async fn create_live_usb(
 }
 
 /// Builds the ISO and saves it as `folder/file_name`, replacing an existing file only
-/// with `overwrite`. Returns the saved path.
+/// with `overwrite`. Returns the saved path. `cancel_flash(attempt)` stops it.
 #[tauri::command]
 pub async fn save_live_iso(
     folder: String,
     file_name: String,
     overwrite: bool,
+    attempt: String,
     progress_channel: Channel<FlashProgress>,
     state: tauri::State<'_, FlashState>,
 ) -> Result<String, CommandError> {
     state
-        .run(async move {
-            let callback = TauriProgressCallback::new(&progress_channel, "live_iso");
+        .run(attempt, |cancelled| async move {
+            let _running = running_job();
+            let _awake = keep_awake("Creating a Home Assistant ISO file").await;
+            let callback =
+                TauriProgressCallback::new(&progress_channel, "live_iso").cancellable(cancelled);
             let result =
                 run_save_live_iso(Path::new(&folder), &file_name, overwrite, &callback).await;
             callback
@@ -146,6 +156,7 @@ async fn run_create_live_usb<P: ProgressCallback>(
         .map_err(CommandError::from)?;
     let hai_live = find_hai_live().ok_or_else(hai_live_missing)?;
     let contents = hai_core::live_usb::prepare(&Backend, &hai_live, callback).await?;
+    check_cancelled(callback)?;
 
     report(
         callback,
@@ -161,6 +172,8 @@ async fn run_create_live_usb<P: ProgressCallback>(
             .await
             .map_err(|_| stopped())??;
 
+    // Last point where the stick is still untouched
+    check_cancelled(callback)?;
     write_to_usb(&image, device_id, expected, callback).await?;
     drop(temp);
     report(callback, FlashStage::Complete, "USB stick ready");
@@ -230,7 +243,7 @@ async fn run_create_live_usb<P: ProgressCallback>(
         FlashStage::Writing,
         FlashStage::Verifying,
     ] {
-        mock::simulate(callback, stage).await;
+        mock::simulate(callback, stage).await?;
     }
     report(callback, FlashStage::Complete, "USB stick ready (mock)");
     Ok(())
@@ -246,7 +259,7 @@ async fn run_save_live_iso<P: ProgressCallback>(
     #[cfg(feature = "mock")]
     {
         for stage in [FlashStage::Downloading, FlashStage::Extracting] {
-            mock::simulate(callback, stage).await;
+            mock::simulate(callback, stage).await?;
         }
         report(callback, FlashStage::Complete, "ISO saved (mock)");
         Ok(target)
@@ -259,6 +272,7 @@ async fn run_save_live_iso<P: ProgressCallback>(
             .prefix(".hai-live-")
             .tempdir_in(folder)?;
         let contents = hai_core::live_usb::prepare(&Backend, &hai_live, callback).await?;
+        check_cancelled(callback)?;
 
         report(callback, FlashStage::Extracting, "Building the ISO...");
         let out_dir = temp.path().to_path_buf();
@@ -266,6 +280,7 @@ async fn run_save_live_iso<P: ProgressCallback>(
             tokio::task::spawn_blocking(move || hai_core::live_usb::write_iso(&contents, &out_dir))
                 .await
                 .map_err(|_| stopped())??;
+        check_cancelled(callback)?;
         // hai-core picks its own name; building in a temporary folder means an existing
         // file with that name next to the target is never overwritten.
         iso_target(folder, file_name, overwrite)?;
@@ -402,9 +417,13 @@ mod mock {
     const MOCK_BYTES: u64 = 500_000_000;
 
     /// A few seconds of progress for one stage, so the screens can be tried out.
-    pub(super) async fn simulate<P: ProgressCallback>(callback: &P, stage: FlashStage) {
+    pub(super) async fn simulate<P: ProgressCallback>(
+        callback: &P,
+        stage: FlashStage,
+    ) -> Result<(), CommandError> {
         let measured = stage != FlashStage::Extracting;
         for percent in (0..=100).step_by(10) {
+            check_cancelled(callback)?;
             let bytes = MOCK_BYTES * percent / 100;
             callback.on_progress(FlashProgress {
                 stage: stage.clone(),
@@ -415,6 +434,7 @@ mod mock {
             });
             tokio::time::sleep(std::time::Duration::from_millis(150)).await;
         }
+        Ok(())
     }
 }
 

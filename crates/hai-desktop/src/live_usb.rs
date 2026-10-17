@@ -284,12 +284,42 @@ async fn run_save_live_iso<P: ProgressCallback>(
         // hai-core picks its own name; building in a temporary folder means an existing
         // file with that name next to the target is never overwritten.
         iso_target(folder, file_name, overwrite)?;
-        // Replaces an existing file in one step on every platform, so a failure keeps the old one.
-        std::fs::rename(&built, &target)?;
+        publish_iso(&built, &target, overwrite)?;
         drop(temp);
         report(callback, FlashStage::Complete, "ISO saved");
         Ok(target)
     }
+}
+
+/// Moves the finished ISO to `target`. Without `overwrite` the name is claimed first, so a
+/// file that appeared there during the build is never replaced.
+#[cfg_attr(feature = "mock", allow(dead_code))]
+fn publish_iso(built: &Path, target: &Path, overwrite: bool) -> Result<(), CommandError> {
+    if !overwrite {
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(target)
+            .map_err(|error| match error.kind() {
+                std::io::ErrorKind::AlreadyExists => file_exists(),
+                _ => error.into(),
+            })?;
+    }
+    // Replaces in one step on every platform, so a failure keeps the old file.
+    std::fs::rename(built, target).map_err(|error| {
+        if !overwrite {
+            let _ = std::fs::remove_file(target);
+        }
+        CommandError::from(error)
+    })
+}
+
+fn file_exists() -> CommandError {
+    CommandError::new(
+        "file_exists",
+        "A file with this name already exists. Choose another name or folder.",
+        false,
+    )
 }
 
 /// Where the ISO goes, refusing names that point elsewhere, and replacing an existing
@@ -326,11 +356,7 @@ fn iso_target(folder: &Path, file_name: &str, overwrite: bool) -> Result<PathBuf
         ));
     }
     if target.exists() && !overwrite {
-        return Err(CommandError::new(
-            "file_exists",
-            "A file with this name already exists. Choose another name or folder.",
-            false,
-        ));
+        return Err(file_exists());
     }
     Ok(target)
 }
@@ -489,6 +515,35 @@ mod tests {
             iso_target(dir.path(), "taken.iso", true).unwrap_err().code,
             "folder_name_taken"
         );
+    }
+
+    #[test]
+    fn publishing_never_replaces_a_file_that_appeared_during_the_build() {
+        let dir = tempfile::tempdir().unwrap();
+        let built = dir.path().join("built.iso");
+        let target = dir.path().join("stick.iso");
+        std::fs::write(&built, b"ours").unwrap();
+        std::fs::write(&target, b"theirs").unwrap();
+
+        let error = publish_iso(&built, &target, false).unwrap_err();
+        assert_eq!(error.code, "file_exists");
+        assert_eq!(std::fs::read(&target).unwrap(), b"theirs");
+        assert!(built.exists());
+    }
+
+    #[test]
+    fn publishing_saves_a_new_file_and_replaces_only_when_allowed() {
+        let dir = tempfile::tempdir().unwrap();
+        let built = dir.path().join("built.iso");
+        let target = dir.path().join("stick.iso");
+        std::fs::write(&built, b"first").unwrap();
+        publish_iso(&built, &target, false).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"first");
+        assert!(!built.exists());
+
+        std::fs::write(&built, b"second").unwrap();
+        publish_iso(&built, &target, true).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"second");
     }
 
     #[test]

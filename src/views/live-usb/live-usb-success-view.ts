@@ -18,15 +18,6 @@ export class LiveUsbSuccessView extends LitElement {
       display: block;
       height: 100%;
     }
-    .saved {
-      overflow-wrap: anywhere;
-    }
-    .saved-row {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 0.5rem 1rem;
-    }
   `;
 
   @state()
@@ -76,7 +67,10 @@ export class LiveUsbSuccessView extends LitElement {
           ? localize("views.live_usb.success_view.iso_saved")
           : localize("views.live_usb.success_view.usb_ready")}
         .notice=${iso
-          ? html`<span class="saved-row">
+          ? html`<span
+              class="saved-row"
+              style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem"
+            >
               <span class="saved"
                 >${localize("views.live_usb.success_view.saved_to", {
                   path,

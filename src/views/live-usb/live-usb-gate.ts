@@ -1,7 +1,10 @@
 import { localize } from "../../localization/localize.js";
 import { LitElement, html, css } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
-import { ViewAccessibility } from "../../utils/view-accessibility.js";
+import {
+  ViewAccessibility,
+  activeElement,
+} from "../../utils/view-accessibility.js";
 import {
   installerError,
   type InstallerError,
@@ -53,9 +56,42 @@ export class LiveUsbGate extends LitElement {
   @state()
   private _relaunchError = "";
 
+  private _initialFocus: Element | null = null;
+  private _contentFocused = false;
+
   connectedCallback() {
     super.connectedCallback();
+    this._initialFocus = activeElement();
+    this._contentFocused = false;
     void this._check();
+  }
+
+  private get _ready(): boolean {
+    return (
+      !this._error &&
+      !!this._status?.hai_live_found &&
+      !(this.admin && this._status.needs_admin)
+    );
+  }
+
+  updated() {
+    if (this._contentFocused || !this._ready) return;
+    this._contentFocused = true;
+    // The content's own heading focus ran while it was still hidden
+    const active = activeElement();
+    if (active !== this._initialFocus && active !== document.body) return;
+    const slot = this.renderRoot.querySelector("slot");
+    for (const element of slot?.assignedElements() ?? []) {
+      const heading = element.matches("h1, h2")
+        ? element
+        : (element.shadowRoot?.querySelector("h1, h2") ??
+          element.querySelector("h1, h2"));
+      if (heading instanceof HTMLElement) {
+        heading.tabIndex = -1;
+        heading.focus();
+        return;
+      }
+    }
   }
 
   private async _check() {

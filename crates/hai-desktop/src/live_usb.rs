@@ -3,7 +3,9 @@
 //! With the `mock` feature these commands only report fake progress: building the media
 //! needs the real Alpine and HAOS downloads, and a mock build must never write a drive.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use hai_core::{
     BlockDevice, DeviceBackend, ExpectedDevice, FlashProgress, FlashStage, ProgressCallback,
@@ -381,12 +383,21 @@ fn is_portable_file_name(name: &str) -> bool {
 }
 
 /// The first place `hai-live` is found: the environment variable alone if it is set,
-/// otherwise next to the app, then (developer builds) the repo's musl build folder.
+/// otherwise the app's bundled resources, next to the app, then (developer builds) the
+/// repo's musl build folder.
 fn find_hai_live() -> Option<PathBuf> {
-    if let Some(path) = std::env::var_os(HAI_LIVE_ENV) {
+    locate_hai_live(
+        std::env::var_os(HAI_LIVE_ENV),
+        RESOURCE_DIR.get().map(PathBuf::as_path),
+    )
+}
+
+fn locate_hai_live(env: Option<OsString>, resource_dir: Option<&Path>) -> Option<PathBuf> {
+    if let Some(path) = env {
         let path = PathBuf::from(path);
         return path.is_file().then_some(path);
     }
+    let bundled = resource_dir.map(|dir| dir.join(HAI_LIVE_NAME));
     let next_to_app = std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(|dir| dir.join(HAI_LIVE_NAME)));
@@ -395,10 +406,18 @@ fn find_hai_live() -> Option<PathBuf> {
             .join("../../target/x86_64-unknown-linux-musl/release")
             .join(HAI_LIVE_NAME)
     });
-    [next_to_app, repo_build]
+    [bundled, next_to_app, repo_build]
         .into_iter()
         .flatten()
         .find(|path| path.is_file())
+}
+
+/// Where Tauri put the files bundled with the app (release builds include `hai-live`).
+static RESOURCE_DIR: OnceLock<PathBuf> = OnceLock::new();
+
+/// Called once at startup.
+pub(crate) fn set_resource_dir(dir: PathBuf) {
+    let _ = RESOURCE_DIR.set(dir);
 }
 
 #[cfg_attr(feature = "mock", allow(dead_code))]
@@ -634,5 +653,20 @@ mod tests {
         std::fs::write(&path, b"\x7fELF").unwrap();
         assert_eq!(find_hai_live(), Some(path));
         std::env::remove_var(HAI_LIVE_ENV);
+    }
+
+    #[test]
+    fn bundled_hai_live_is_found_unless_the_env_var_points_elsewhere() {
+        let resources = tempfile::tempdir().unwrap();
+        let bundled = resources.path().join(HAI_LIVE_NAME);
+        std::fs::write(&bundled, b"\x7fELF").unwrap();
+        assert_eq!(locate_hai_live(None, Some(resources.path())), Some(bundled));
+        assert_eq!(
+            locate_hai_live(
+                Some(resources.path().join("missing").into()),
+                Some(resources.path())
+            ),
+            None
+        );
     }
 }

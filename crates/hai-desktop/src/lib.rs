@@ -51,8 +51,11 @@ pub fn run() {
         .manage(commands::PendingUtmImages::default())
         .manage(install_jobs::InstallJobs::default())
         .plugin(diagnostics::plugin())
-        .setup(|_| {
+        .setup(|app| {
             diagnostics::init();
+            if let Ok(dir) = app.path().resource_dir() {
+                live_usb::set_resource_dir(dir);
+            }
             if let Ok(cache) = hai_core::ReleaseSource::cache_dir(&backend::Backend) {
                 if hai_core::download::prune_cached_images(&cache).is_err() {
                     diagnostics::warning("cache_prune_failed");

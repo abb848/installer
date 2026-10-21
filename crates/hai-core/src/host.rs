@@ -6,8 +6,28 @@
 use crate::error::Result;
 use crate::types::SystemInfo;
 use crate::{Backend, HostBackend};
+use std::net::Ipv4Addr;
 use std::sync::LazyLock;
 use std::time::Duration;
+
+/// Whether a VM's guest reported `ip` for a network the host can reach.
+///
+/// Home Assistant OS also gives its own Docker networks an address: the
+/// Supervisor's `hassio` bridge (172.30.32.0/23) and `docker0`
+/// (172.30.232.0/23). Only the VM itself can reach them, and the guest lists
+/// them while its LAN interface is still waiting for a DHCP lease.
+pub(crate) fn is_reachable_vm_address(ip: Ipv4Addr) -> bool {
+    let [a, b, c, _] = ip.octets();
+    let haos_internal = a == 172 && b == 30 && matches!(c, 32 | 33 | 232 | 233);
+    !haos_internal
+        && !ip.is_unspecified()
+        && !ip.is_loopback()
+        && !ip.is_link_local()
+        && !ip.is_multicast()
+        && !ip.is_broadcast()
+        && a != 0
+        && a < 240
+}
 
 /// Query the host for CPU core count and total memory.
 fn system_info() -> Result<SystemInfo> {
@@ -47,21 +67,15 @@ fn system_info() -> Result<SystemInfo> {
 
 /// Whether the Home Assistant webserver at `ip` answers HTTP on port 80.
 async fn check_ha_ready(ip: &str) -> bool {
-    // Never probe an empty host: Windows resolves it to the local machine, so
-    // any local web server would pass for Home Assistant.
-    if ip.trim().is_empty() {
-        return false;
-    }
-
     // Any non-5xx reply means the webserver is up, even if `/` itself is not served.
-    get_status(&format!("http://{}", ip))
+    get_status(ip, "/")
         .await
         .is_some_and(|status| !status.is_server_error())
 }
 
 /// Whether Home Assistant at `ip` has finished starting up (serves its manifest).
 async fn check_ha_updated(ip: &str) -> bool {
-    get_status(&format!("http://{}/manifest.json", ip))
+    get_status(ip, "/manifest.json")
         .await
         .is_some_and(|status| status.is_success())
 }
@@ -76,9 +90,13 @@ static HA_CLIENT: LazyLock<Option<reqwest::Client>> = LazyLock::new(|| {
         .ok()
 });
 
-async fn get_status(url: &str) -> Option<reqwest::StatusCode> {
+async fn get_status(ip: &str, path: &str) -> Option<reqwest::StatusCode> {
+    // Never probe an empty host: in `http:///manifest.json` the path would be read as the host.
+    if ip.trim().is_empty() {
+        return None;
+    }
     let client = HA_CLIENT.as_ref()?;
-    let response = client.get(url).send().await.ok()?;
+    let response = client.get(format!("http://{ip}{path}")).send().await.ok()?;
     Some(response.status())
 }
 
@@ -100,6 +118,27 @@ impl HostBackend for Backend {
 mod tests {
     use super::*;
     use mockito::Server;
+
+    #[test]
+    fn test_haos_docker_networks_are_not_reachable_vm_addresses() {
+        for ip in [
+            "172.30.32.1",
+            "172.30.33.254",
+            "172.30.232.1",
+            "172.30.233.254",
+        ] {
+            assert!(!is_reachable_vm_address(ip.parse().unwrap()), "{ip}");
+        }
+        // The neighbouring /23s are ordinary private networks
+        for ip in [
+            "172.30.31.254",
+            "172.30.34.1",
+            "172.30.231.254",
+            "172.30.234.1",
+        ] {
+            assert!(is_reachable_vm_address(ip.parse().unwrap()), "{ip}");
+        }
+    }
 
     #[tokio::test]
     async fn test_check_ha_ready_success() {
@@ -164,6 +203,17 @@ mod tests {
             .await;
 
         assert!(!check_ha_updated(&server.host_with_port()).await);
+        mock.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn test_get_status_never_probes_an_empty_host() {
+        let mut server = Server::new_async().await;
+        let mock = server.mock("GET", "/").expect(0).create_async().await;
+
+        // Without a host, this path would be taken for the server's address
+        let path = format!("/{}", server.host_with_port());
+        assert_eq!(get_status("", &path).await, None);
         mock.assert_async().await;
     }
 }

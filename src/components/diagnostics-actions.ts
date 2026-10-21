@@ -1,5 +1,5 @@
 import { LitElement, css, html } from "lit";
-import { customElement, property, state } from "lit/decorators.js";
+import { customElement, property, query, state } from "lit/decorators.js";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import { localize } from "../localization/localize.js";
@@ -16,9 +16,12 @@ import "@home-assistant/webawesome/dist/components/dialog/dialog.js";
 @customElement("diagnostics-actions")
 export class DiagnosticsActions extends LitElement {
   static styles = css`
+    /* Under an error it continues the "Installation help · " line */
     :host {
-      display: block;
-      margin-top: 1rem;
+      display: inline-block;
+    }
+    :host(:not([about])) .launcher::part(base) {
+      padding-inline: 0;
     }
     wa-dialog {
       --width: 36rem;
@@ -53,6 +56,7 @@ export class DiagnosticsActions extends LitElement {
   @state() private _version = "";
   @state() private _data?: Diagnostics;
   @state() private _status = "";
+  @query("textarea") private _textarea?: HTMLTextAreaElement;
 
   // Load only when opened: this button sits under every error message, and
   // showing an error should not start native calls of its own
@@ -89,7 +93,7 @@ export class DiagnosticsActions extends LitElement {
       this._status = localize(
         "components.diagnostics_actions.could_not_copy_diagnostics"
       );
-      this.renderRoot.querySelector("textarea")?.select();
+      this._textarea?.select();
     }
   }
 
@@ -106,10 +110,18 @@ export class DiagnosticsActions extends LitElement {
     }
   }
 
+  private async _report() {
+    if (this._data) await openExternalUrl(reportUrl(this._data).url);
+  }
+
+  private _onAfterHide() {
+    this._open = false;
+  }
+
   render() {
     const report = this._data ? reportUrl(this._data) : undefined;
     return html`
-      <wa-button appearance="plain" @click=${this._show}
+      <wa-button class="launcher" appearance="plain" @click=${this._show}
         >${this.about
           ? localize("components.diagnostics_actions.about")
           : localize(
@@ -123,9 +135,7 @@ export class DiagnosticsActions extends LitElement {
             )
           : localize("components.diagnostics_actions.report_a_problem")}
         .open=${this._open}
-        @wa-after-hide=${() => {
-          this._open = false;
-        }}
+        @wa-after-hide=${this._onAfterHide}
       >
         <p class="version">
           ${this._version
@@ -155,10 +165,7 @@ export class DiagnosticsActions extends LitElement {
           : ""}
         <p role="status">${this._status}</p>
         <div class="actions">
-          <wa-button
-            variant="brand"
-            ?disabled=${!report}
-            @click=${() => report && openExternalUrl(report.url)}
+          <wa-button variant="brand" ?disabled=${!report} @click=${this._report}
             >${localize(
               "components.diagnostics_actions.report_a_problem"
             )}</wa-button

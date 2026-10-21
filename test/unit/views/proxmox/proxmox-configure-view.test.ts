@@ -69,15 +69,13 @@ describe("proxmox-configure-view", () => {
               name: "pve",
               status: "online",
               cpu_usage: 12.5,
-              memory_used: null,
-              memory_total: null,
+              cpu_count: null,
             },
             {
               name: "pve2",
               status: "online",
               cpu_usage: null,
-              memory_used: null,
-              memory_total: null,
+              cpu_count: null,
             },
           ];
         case "proxmox_get_next_vm_id":
@@ -129,6 +127,54 @@ describe("proxmox-configure-view", () => {
     expect(
       findByRole(snapshot, "spinbutton").map((node) => node.name)
     ).to.include("VM ID");
+  });
+
+  // Proxmox only rejects a name when it creates the VM, after the download
+  it("only accepts display names Proxmox accepts", async () => {
+    const el = await mount();
+    const name = el.shadowRoot!.querySelector<WaInput>(
+      'wa-input[label="Display name"]'
+    )!;
+    const type = async (value: string) => {
+      name.value = value;
+      name.dispatchEvent(new Event("input"));
+      await el.updateComplete;
+      await name.updateComplete;
+    };
+
+    // "home-" is typed on the way to "home-assistant", so it stays, as does
+    // what Proxmox rejects: the field always shows the name that is used
+    name.focus();
+    for (const rejected of ["home_assistant", "home assistant", "home-", ""]) {
+      await type(rejected);
+      expect(name.value).to.equal(rejected);
+      expect(wizardState.getState().selections.vmName).to.equal(rejected);
+      expect(name.checkValidity(), rejected).to.be.false;
+      expect(wizardState.getState().selections.proxmoxConfigureReady).to.be
+        .false;
+      expect(
+        el.shadowRoot!.querySelector(".name-hint")!.textContent
+      ).to.contain("Start and end with a letter or number");
+      // The error must not take focus from someone still typing
+      expect(el.shadowRoot!.activeElement).to.equal(name);
+    }
+
+    await type("home-assistant.lan");
+    expect(name.checkValidity()).to.be.true;
+    expect(wizardState.getState().selections.proxmoxConfigureReady).to.be.true;
+  });
+
+  it("offers no more cores than the selected node has", async () => {
+    // The mocked pve2 has 8 CPUs
+    wizardState.setSelection("proxmoxNode", "pve2");
+    wizardState.setSelection("cpuCores", 16);
+
+    const el = await mount();
+
+    expect(wizardState.getState().selections.cpuCores).to.equal(8);
+    const cores = el.shadowRoot!.querySelector("wa-slider")!;
+    expect(cores.max).to.equal(3); // 2, 4, 6 and 8 cores
+    expect(cores.value).to.equal(3);
   });
 
   it("shows storage labels without template indentation", async () => {
@@ -233,7 +279,6 @@ describe("proxmox-configure-view", () => {
         storage_type: "dir",
         content: ["images"],
         available: 100,
-        total: 100,
         active: true,
       },
     ]);
@@ -252,7 +297,6 @@ describe("proxmox-configure-view", () => {
         storage_type: "dir",
         content: ["images"],
         available: 100,
-        total: 100,
         active: true,
       },
     ];
@@ -311,7 +355,6 @@ describe("proxmox-configure-view", () => {
         storage_type: "dir",
         content: ["images"],
         available: 100,
-        total: 100,
         active: true,
       },
     ];
@@ -387,7 +430,6 @@ describe("proxmox-configure-view", () => {
           storage_type: "dir",
           content: ["images"],
           available: 100,
-          total: 100,
           active: true,
         },
       ];
@@ -482,7 +524,9 @@ describe("proxmox-configure-view", () => {
       } else {
         expect(selections.proxmoxSession).to.be.undefined;
         expect(selections.proxmoxConnected).to.be.false;
-        expect(el.shadowRoot!.textContent).to.contain("Session expired");
+        expect(el.shadowRoot!.textContent).to.contain(
+          "Your Proxmox session expired"
+        );
         expect(el.shadowRoot!.textContent).to.not.contain("Temporary failure");
         expect(
           el.shadowRoot!.querySelector("wa-button")!.textContent
@@ -744,7 +788,9 @@ describe("proxmox-configure-view", () => {
             "proxmox_list_nodes",
             "proxmox_get_next_vm_id",
           ]);
-          expect(el.shadowRoot!.textContent).to.contain("Session expired");
+          expect(el.shadowRoot!.textContent).to.contain(
+            "Your Proxmox session expired"
+          );
           expect(el.shadowRoot!.textContent).to.not.contain(
             "Temporary failure"
           );
@@ -807,7 +853,6 @@ describe("proxmox-configure-view", () => {
       storage: "local",
       bridge: "vmbr0",
       vm_id: 100,
-      auto_start: true,
     });
     expect(
       el.shadowRoot!.querySelector("[role=alert]")!.textContent
@@ -841,6 +886,13 @@ describe("proxmox-configure-view", () => {
     expect(el.shadowRoot!.querySelector("wa-button")!.textContent).to.contain(
       "Reconnect"
     );
+    // Reconnecting starts from the same server
+    expect(
+      wizardState.getState().selections.proxmoxPreviousServer
+    ).to.deep.equal({
+      server_url: "https://192.168.1.100:8006",
+      certificate_sha256: undefined,
+    });
   });
 
   it("offers reconnect when the session is missing", async () => {

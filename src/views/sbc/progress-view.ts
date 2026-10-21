@@ -12,6 +12,7 @@ import {
   type FlashProgress,
 } from "../../api/index.js";
 import { readDriveSelection } from "../../utils/drive-selection.js";
+import { selectedWifi } from "../../utils/wifi.js";
 import { findInstaller } from "../ha-hardware/hardware.js";
 import "../../components/install-progress.js";
 import "../../components/progress-bar.js";
@@ -20,15 +21,29 @@ import {
   logFrontendError,
 } from "../../utils/diagnostics.js";
 
+/**
+ * Failures the user fixes on this computer: a cancelled password prompt or
+ * blocked access, or a stopped disk service. Nothing was written, and the
+ * same drive can be tried again once fixed, as the message says. The
+ * backend marks them not retryable because trying again right away fails
+ * the same way.
+ */
+const FIXED_ON_THIS_COMPUTER = [
+  "permission_denied",
+  "disk_service_unavailable",
+];
+
 @customElement("progress-view")
 export class ProgressView extends LitElement {
   static styles = css`
     :host {
-      display: block;
-      height: 100%;
+      display: flex;
+      flex-direction: column;
+      min-height: 100%;
     }
     install-progress {
       width: 100%;
+      flex: 1;
     }
   `;
 
@@ -145,6 +160,7 @@ export class ProgressView extends LitElement {
             vendor: drive.vendor,
             serial: drive.serial,
           },
+          wifi: selectedWifi(selections) ?? null,
         },
         (progress) => {
           this._diagnostics?.advance(progress.stage);
@@ -190,7 +206,13 @@ export class ProgressView extends LitElement {
   private _setError(error: unknown, message?: string) {
     this._diagnostics?.fail(error);
     const installer = installerError(error);
-    this._error = message ? { ...installer, message } : installer;
+    const retryable =
+      installer.retryable || FIXED_ON_THIS_COMPUTER.includes(installer.code);
+    this._error = {
+      ...installer,
+      retryable,
+      message: message ?? installer.message,
+    };
     this.dispatchEvent(
       new CustomEvent("flash-error", {
         detail: { retryable: this._error.retryable },

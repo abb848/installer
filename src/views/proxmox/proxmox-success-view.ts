@@ -15,11 +15,12 @@ export class ProxmoxSuccessView extends LitElement {
   static styles = css`
     :host {
       display: block;
-      height: 100%;
+      min-height: 100%;
     }
 
     .import-reminder {
       width: 100%;
+      box-sizing: border-box;
       max-width: 500px;
       margin: 0 auto 2rem;
       padding: 0.75rem 0 0.75rem 1rem;
@@ -87,7 +88,7 @@ export class ProxmoxSuccessView extends LitElement {
                 href=${haUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                @click=${(event: Event) => openExternalLink(event, haUrl)}
+                @click=${openExternalLink}
               >
                 ${displayUrl}
               </a>`,
@@ -150,8 +151,7 @@ export class ProxmoxSuccessView extends LitElement {
           href=${DIRECTORY_STORAGE_DOCS}
           target="_blank"
           rel="noopener noreferrer"
-          @click=${(event: Event) =>
-            openExternalLink(event, DIRECTORY_STORAGE_DOCS)}
+          @click=${openExternalLink}
           >${localize("proxmox.directory_storage_documentation")}</a
         >
       </p>

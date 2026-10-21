@@ -18,6 +18,8 @@ separate release workflow. It runs on every pull request, on every push to
 `main`, and by hand to make a release. The workflow file is the reference for
 the jobs and their steps; in short:
 
+- **Audit** jobs check `package-lock.json` (`npm audit`) and `Cargo.lock`
+  (`cargo audit`) for known vulnerabilities.
 - **zizmor** lints the workflow itself.
 - **Lint** jobs run ESLint, Prettier, the TypeScript type check, the
   localization catalog check, `cargo fmt`, `cargo shear` and Clippy (on all

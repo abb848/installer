@@ -366,6 +366,61 @@ describe("app-shell", () => {
     }
   });
 
+  it("returns to path selection when Back leaves the first step", async () => {
+    await enterSbcFlow(el);
+    wizardState.setSelection("device", "rpi5");
+
+    fire(shellOf(el), "wizard-exit");
+    await el.updateComplete;
+
+    expect(el.shadowRoot!.querySelector("path-selection-view")).to.exist;
+    expect(shellOf(el)).to.equal(null);
+    expect(wizardState.getState().currentFlow).to.equal(null);
+    expect(wizardState.getState().selections).to.deep.equal({});
+  });
+
+  it("does not hold up a new flow with a Proxmox connect left behind", async () => {
+    const fingerprint = deferred<string | null>();
+    mockTauriIpc((cmd) => {
+      if (cmd === "check_connection") return undefined;
+      if (cmd === "proxmox_certificate_fingerprint") return fingerprint.promise;
+      throw new Error(cmd);
+    });
+    const enterProxmox = async () => {
+      fire(
+        el.shadowRoot!.querySelector("path-selection-view")!,
+        "select-path",
+        {
+          path: "proxmox",
+        }
+      );
+      await waitUntil(
+        () => !!shellOf(el)?.querySelector("proxmox-connect-view")
+      );
+    };
+    fire(el.shadowRoot!.querySelector("welcome-view")!, "navigate", {
+      view: "path-selection",
+    });
+    await el.updateComplete;
+    await enterProxmox();
+    Object.assign(shellOf(el).querySelector("proxmox-connect-view")!, {
+      _serverUrl: "https://pve:8006",
+      _password: "test",
+    });
+
+    fire(shellOf(el), "wizard-next");
+    await waitUntil(() => shellOf(el).nextDisabled);
+    fire(shellOf(el), "wizard-exit");
+    await el.updateComplete;
+    await enterProxmox();
+
+    expect(shellOf(el).nextDisabled).to.be.false;
+    expect(shellOf(el).nextLabel).to.equal("Next");
+    fingerprint.resolve(null);
+    await settle();
+    expect(wizardState.currentStep?.id).to.equal("connection");
+  });
+
   it("asks before erasing the drive for a Home Assistant hardware installer", async () => {
     await enterSbcFlow(el);
     wizardState.startFlow("ha-hardware");
@@ -456,7 +511,8 @@ describe("app-shell", () => {
         await flush();
 
         expect(dialogOf(el).hasAttribute("open")).to.be.false;
-        expect(wizardState.currentStep!.id).to.equal("drive");
+        // The step before Confirm, Wi-Fi for this board
+        expect(wizardState.currentStep!.id).to.equal("wifi");
       } finally {
         scan.restore();
       }
@@ -494,6 +550,52 @@ describe("app-shell", () => {
         () => wizardState.getState().selections.drive === undefined
       );
       expect(dialogOf(el).hasAttribute("open")).to.be.false;
+    });
+  });
+
+  describe("Wi-Fi", () => {
+    beforeEach(async () => {
+      await enterSbcFlow(el);
+      selectTargets();
+    });
+
+    it("keeps Next disabled until the network is complete", async () => {
+      await goToStep(el, "wifi");
+      expect(shellOf(el).querySelector("wifi-view")).to.exist;
+      expect(shellOf(el).nextDisabled).to.be.false;
+      wizardState.setSelection("wifi", { ssid: "Home", password: "" });
+      await el.updateComplete;
+      expect(shellOf(el).nextDisabled).to.be.true;
+      wizardState.setSelection("wifi", { ssid: "Home", password: "12345678" });
+      await el.updateComplete;
+      expect(shellOf(el).nextDisabled).to.be.false;
+    });
+
+    it("ignores a network left over from a board with Wi-Fi", async () => {
+      wizardState.setSelection("wifi", { ssid: "", password: "" });
+      wizardState.setSelection(
+        "deviceConfig",
+        MOCK_MANIFEST.devices.find(
+          (device) => device.haos.board === "odroid-n2"
+        )!.haos
+      );
+      expect(
+        wizardState.getState().steps.map((step) => step.id)
+      ).not.to.include("wifi");
+      await goToStep(el, "confirm");
+      expect(shellOf(el).nextDisabled).to.be.false;
+    });
+
+    it("drops the password once it is on the drive", async () => {
+      wizardState.setSelection("wifi", { ssid: "Home", password: "12345678" });
+      await goToStep(el, "flash");
+      fire(shellOf(el), "flash-complete");
+      await el.updateComplete;
+      expect(wizardState.currentStep?.id).to.equal("success");
+      expect(wizardState.getState().selections.wifi).to.deep.equal({
+        ssid: "Home",
+        password: "",
+      });
     });
   });
 
@@ -605,6 +707,49 @@ describe("app-shell", () => {
       expect(wizardState.currentStep?.id).to.equal("install");
       expect(el.shadowRoot!.querySelector("proxmox-progress-view")!.hasError).to
         .be.true;
+    });
+
+    it("offers to leave once the VM runs, and leaves it running", async () => {
+      const ready = deferred<boolean>();
+      const calls: string[] = [];
+      await enterProxmoxInstall(() =>
+        mockTauriIpc((cmd) => {
+          calls.push(cmd);
+          if (cmd === "proxmox_create_vm") return { vm_id: 100, node: "pve" };
+          if (cmd === "proxmox_get_vm_status")
+            return { status: "running", ip_address: "192.0.2.50" };
+          // Home Assistant is still starting
+          if (cmd === "check_ha_ready") return ready.promise;
+          throw new Error(`Unexpected IPC command: ${cmd}`);
+        })
+      );
+      await waitUntil(
+        () => calls.includes("check_ha_ready") && !shellOf(el).hideFooter,
+        "Cancel never came back once the VM existed"
+      );
+      expect(shellOf(el).hideNext).to.be.true;
+      const leaveDialog = el.shadowRoot!.querySelector(
+        "info-dialog.leave-dialog"
+      ) as InfoDialog;
+
+      fire(shellOf(el), "wizard-cancel");
+      await el.updateComplete;
+      expect(leaveDialog.open).to.be.true;
+      expect(stopDialogOf(el).open).to.be.false;
+      expect(leaveDialog.heading).to.equal("Leave the installation?");
+      expect(leaveDialog.message).to.contain("http://192.0.2.50");
+
+      fire(leaveDialog, "dialog-secondary");
+      await el.updateComplete;
+      expect(leaveDialog.open).to.be.false;
+      expect(wizardState.currentStep?.id).to.equal("install");
+
+      fire(shellOf(el), "wizard-cancel");
+      await el.updateComplete;
+      fire(leaveDialog, "dialog-primary");
+      await el.updateComplete;
+      expect(el.shadowRoot!.querySelector("welcome-view")).to.exist;
+      expect(wizardState.getState().selections.proxmoxVmResult).to.be.undefined;
     });
 
     it("hides Cancel once the VM is being created", async () => {

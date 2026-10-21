@@ -10,7 +10,7 @@ description = "Core library for Home Assistant Installer"
 default = ["proxmox", "utm", "live-usb"]
 proxmox = []
 utm = []
-live-usb = ["dep:fatfs", "dep:fscommon", "dep:flate2", "dep:gpt", "dep:hadris-iso", "dep:tar"]
+live-usb = ["dep:fscommon", "dep:flate2", "dep:gpt", "dep:hadris-iso", "dep:tar"]
 mock = []
 
 [dependencies]
@@ -28,11 +28,11 @@ rustls-platform-verifier = { workspace = true }
 liblzma = { workspace = true }
 directories = { workspace = true }
 fs2 = { workspace = true }
+fatfs = { workspace = true }
 urlencoding = { workspace = true }
 tempfile = { workspace = true }
 
 # Live USB image building
-fatfs = { workspace = true, optional = true }
 fscommon = { workspace = true, optional = true }
 flate2 = { workspace = true, optional = true }
 gpt = { workspace = true, optional = true }

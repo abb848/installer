@@ -23,7 +23,9 @@ export class LiveUsbSuccessView extends LitElement {
   @state()
   private _revealFailed = false;
 
-  private async _reveal(path: string) {
+  private async _reveal() {
+    const path = wizardState.getState().selections.liveIsoPath;
+    if (!path) return;
     this._revealFailed = false;
     try {
       await revealInFolder(path);
@@ -54,8 +56,8 @@ export class LiveUsbSuccessView extends LitElement {
             href=${HOME_ASSISTANT}
             target="_blank"
             rel="noopener noreferrer"
-            @click=${(event: Event) => openExternalLink(event, HOME_ASSISTANT)}
-            >${"homeassistant.local"}</a
+            @click=${openExternalLink}
+            >homeassistant.local</a
           >`,
         }
       )}`,
@@ -80,7 +82,7 @@ export class LiveUsbSuccessView extends LitElement {
                 ? html`<wa-button
                     size="small"
                     appearance="outlined"
-                    @click=${() => this._reveal(path)}
+                    @click=${this._reveal}
                     >${localize(
                       "views.live_usb.success_view.show_in_folder"
                     )}</wa-button
@@ -108,7 +110,7 @@ export class LiveUsbSuccessView extends LitElement {
           href=${GUIDE}
           target="_blank"
           rel="noopener noreferrer"
-          @click=${(event: Event) => openExternalLink(event, GUIDE)}
+          @click=${openExternalLink}
           >${localize("views.sbc.success_view.installation_guide")}</a
         >`}
       ></install-success>

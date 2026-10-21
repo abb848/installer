@@ -62,26 +62,34 @@ export class MiniPCMediaView extends LitElement {
       <div class="options">
         <option-card
           horizontal
-          title=${localize("views.minipc.media_view.write_to_a_usb_stick")}
+          heading=${localize("views.minipc.media_view.write_to_a_usb_stick")}
           description=${localize(
             "views.minipc.media_view.write_to_a_usb_stick_description"
           )}
           image="/assets/icons/usb-boot.svg"
-          @click=${() => this._choose("usb")}
+          @click=${this._chooseUsb}
           ><span slot="end" aria-hidden="true">→</span></option-card
         >
         <option-card
           horizontal
-          title=${localize("views.minipc.media_view.save_an_iso_file")}
+          heading=${localize("views.minipc.media_view.save_an_iso_file")}
           description=${localize(
             "views.minipc.media_view.save_an_iso_file_description"
           )}
           icon="disc"
-          @click=${() => this._choose("iso")}
+          @click=${this._chooseIso}
           ><span slot="end" aria-hidden="true">→</span></option-card
         >
       </div>
     `;
+  }
+
+  private _chooseUsb() {
+    this._choose("usb");
+  }
+
+  private _chooseIso() {
+    this._choose("iso");
   }
 
   private _choose(media: "usb" | "iso") {

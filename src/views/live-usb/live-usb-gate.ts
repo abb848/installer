@@ -1,6 +1,6 @@
 import { localize } from "../../localization/localize.js";
 import { LitElement, html, css } from "lit";
-import { customElement, property, state } from "lit/decorators.js";
+import { customElement, property, query, state } from "lit/decorators.js";
 import {
   ViewAccessibility,
   activeElement,
@@ -56,6 +56,9 @@ export class LiveUsbGate extends LitElement {
   @state()
   private _relaunchError = "";
 
+  @query("slot")
+  private _slot?: HTMLSlotElement;
+
   private _initialFocus: Element | null = null;
   private _contentFocused = false;
 
@@ -80,7 +83,7 @@ export class LiveUsbGate extends LitElement {
     // The content's own heading focus ran while it was still hidden
     const active = activeElement();
     if (active !== this._initialFocus && active !== document.body) return;
-    const slot = this.renderRoot.querySelector("slot");
+    const slot = this._slot;
     for (const element of slot?.assignedElements() ?? []) {
       const heading = element.matches("h1, h2")
         ? element

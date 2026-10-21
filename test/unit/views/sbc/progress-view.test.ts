@@ -20,9 +20,9 @@ import {
   settle,
 } from "../../tauri-ipc.js";
 
-function mockFlash() {
+function mockFlash(haos = MOCK_MANIFEST.devices[0].haos) {
   storeDriveSelection(MOCK_BLOCK_DEVICES[0]);
-  wizardState.setSelection("deviceConfig", MOCK_MANIFEST.devices[0].haos);
+  wizardState.setSelection("deviceConfig", haos);
   const attempts: Array<{
     request: FlashRequest;
     attempt: string;
@@ -76,6 +76,8 @@ const cancelled = {
 };
 
 describe("progress-view", () => {
+  const wifi = { ssid: "Home", password: "12345678" };
+
   beforeEach(() => {
     wizardState.startFlow("sbc");
     // Nothing may reach the backend when the selections are incomplete
@@ -87,6 +89,21 @@ describe("progress-view", () => {
   afterEach(() => {
     wizardState.reset();
     restoreTauriIpc();
+  });
+
+  it("sends the Wi-Fi network for a board with Wi-Fi", () => {
+    wizardState.setSelection("wifi", wifi);
+    const { attempts } = mockFlash();
+    expect(attempts[0].request.wifi).to.deep.equal(wifi);
+  });
+
+  it("never sends a Wi-Fi network for a board without Wi-Fi", () => {
+    wizardState.setSelection("wifi", wifi);
+    const odroid = MOCK_MANIFEST.devices.find(
+      (device) => device.haos.board === "odroid-n2"
+    )!;
+    const { attempts } = mockFlash(odroid.haos);
+    expect(attempts[0].request.wifi).to.equal(null);
   });
 
   it("renders write progress and reports completion with the selected drive identity", async () => {
@@ -106,6 +123,7 @@ describe("progress-view", () => {
         // The backend re-checks the hardware serial right before writing
         serial: MOCK_BLOCK_DEVICES[0].serial,
       },
+      wifi: null,
     });
     const progress: FlashProgress = {
       stage: "writing",
@@ -312,6 +330,31 @@ describe("progress-view", () => {
     expect(attempts).to.have.length(1);
     expect(el.hasError).to.be.true;
   });
+
+  // The drive is fine: offer to write it again, not to pick another one
+  for (const code of ["permission_denied", "disk_service_unavailable"]) {
+    it(`retries the same drive once ${code} is fixed`, async () => {
+      const { el, attempts } = mockFlash();
+      let retryable: boolean | undefined;
+      el.addEventListener("flash-error", (event) => {
+        retryable = (event as CustomEvent<{ retryable: boolean }>).detail
+          .retryable;
+      });
+      attempts[0].result.reject({
+        code,
+        message: "Allow access, then try again.",
+        retryable: false,
+        details: {},
+      });
+      await settle();
+      expect(retryable).to.be.true;
+
+      el.retry();
+      await settle();
+      expect(attempts).to.have.length(2);
+      expect(attempts[1].request).to.deep.equal(attempts[0].request);
+    });
+  }
 
   it("reports a failed verification without advancing", async () => {
     const { el, attempts } = mockFlash();

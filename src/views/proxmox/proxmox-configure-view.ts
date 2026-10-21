@@ -57,6 +57,16 @@ const CERTIFICATE_CHANGED = "proxmox_certificate_changed";
 const DIRECTORY_STORAGE_DOCS =
   "https://pve.proxmox.com/pve-docs/pve-admin-guide.html#storage_directory";
 
+/**
+ * Proxmox's `dns-name` format: dot-separated labels of letters, digits and
+ * dashes, each starting and ending with a letter or digit. Proxmox only
+ * checks it when it creates the VM, after the download and the upload.
+ */
+const VM_NAME_LABEL = "[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?";
+const VM_NAME_PATTERN = new RegExp(`^${VM_NAME_LABEL}(\\.${VM_NAME_LABEL})*$`);
+
+const CORE_OPTIONS = [2, 4, 6, 8, 10, 12, 16];
+
 function isSessionExpired(error: unknown): boolean {
   return (
     typeof error === "object" &&
@@ -69,144 +79,152 @@ function isSessionExpired(error: unknown): boolean {
 @customElement("proxmox-configure-view")
 export class ProxmoxConfigureView extends LitElement {
   protected readonly _accessibility = new ViewAccessibility(this);
-  static styles = css`
-    ${reducedMotionStyles}
-    :host {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      height: 100%;
-    }
-
-    h2 {
-      font-size: 1.5rem;
-      font-weight: 400;
-      color: var(--ha-text-color, #212121);
-      margin: 0 0 0.5rem 0;
-      text-align: center;
-    }
-
-    .subtitle {
-      font-size: 1rem;
-      color: var(--ha-secondary-text-color, #727272);
-      margin: 0 0 0.75rem 0;
-      text-align: center;
-    }
-
-    .config-card {
-      display: flex;
-      flex-direction: column;
-      gap: 1.75rem;
-      padding: 1rem 1.25rem;
-      background-color: var(--ha-card-background, #ffffff);
-      border: 1px solid var(--ha-border-color, #e0e0e0);
-      border-radius: 12px;
-      width: 100%;
-      max-width: 500px;
-    }
-
-    wa-details {
-      width: 100%;
-      max-width: 542px;
-      margin-top: 1rem;
-      flex-shrink: 0;
-    }
-
-    @media (prefers-color-scheme: dark) {
-      .config-card {
-        background-color: var(--ha-card-background, #1e1e1e);
-        border-color: var(--ha-border-color, #333333);
+  static styles = [
+    reducedMotionStyles,
+    css`
+      :host {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        min-height: 100%;
       }
-    }
 
-    .setting-row {
-      display: flex;
-      align-items: flex-start;
-      gap: 0.75rem;
-    }
+      h2 {
+        font-size: 1.5rem;
+        font-weight: 400;
+        color: var(--ha-text-color, #212121);
+        margin: 0 0 0.5rem 0;
+        text-align: center;
+      }
 
-    .setting-icon {
-      width: 32px;
-      height: 32px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
-      margin-top: 2px;
-    }
+      .subtitle {
+        font-size: 1rem;
+        color: var(--ha-secondary-text-color, #727272);
+        margin: 0 0 1.5rem 0;
+        text-align: center;
+      }
 
-    .setting-icon svg {
-      width: 22px;
-      height: 22px;
-      fill: var(--ha-secondary-text-color, #727272);
-    }
+      .config-card {
+        display: flex;
+        flex-direction: column;
+        gap: 1.75rem;
+        padding: 1rem 1.25rem;
+        background-color: var(--ha-card-background, #ffffff);
+        border: 1px solid var(--ha-border-color, #e0e0e0);
+        border-radius: 12px;
+        width: 100%;
+        box-sizing: border-box;
+        max-width: 500px;
+      }
 
-    .setting-content {
-      flex: 1;
-      display: flex;
-      flex-direction: column;
-      gap: 0.3125rem;
-      min-width: 0;
-    }
+      wa-details {
+        width: 100%;
+        max-width: 500px;
+        margin-top: 1rem;
+        flex-shrink: 0;
+      }
 
-    wa-slider::part(label) {
-      display: block;
-    }
+      @media (prefers-color-scheme: dark) {
+        .config-card {
+          background-color: var(--ha-card-background, #1e1e1e);
+          border-color: var(--ha-border-color, #333333);
+        }
+      }
 
-    .setting-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: baseline;
-    }
+      .setting-row {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.75rem;
+      }
 
-    .setting-label {
-      font-size: 0.9375rem;
-      font-weight: 500;
-      color: var(--ha-text-color, #212121);
-    }
+      .setting-icon {
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        margin-top: 2px;
+      }
 
-    .setting-value {
-      font-size: 0.9375rem;
-      font-weight: 600;
-      color: var(--ha-primary-color, #03a9f4);
-      min-width: 70px;
-      text-align: right;
-    }
+      .setting-icon svg {
+        width: 22px;
+        height: 22px;
+        fill: var(--ha-secondary-text-color, #727272);
+      }
 
-    .setting-description {
-      font-size: 0.75rem;
-      color: var(--ha-secondary-text-color, #9e9e9e);
-      margin: 0;
-      line-height: 1.3;
-    }
+      .setting-content {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 0.5rem;
+        min-width: 0;
+      }
 
-    .loading-text {
-      font-size: 0.875rem;
-      color: var(--ha-secondary-text-color, #9e9e9e);
-      font-style: italic;
-    }
+      wa-slider::part(label) {
+        display: block;
+      }
 
-    .error-text {
-      font-size: 0.875rem;
-      color: var(--ha-error-color, #db4437);
-    }
+      .setting-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+      }
 
-    .import-setting {
-      gap: 0.75rem;
-      overflow-wrap: anywhere;
-    }
+      .setting-label {
+        font-size: 0.9375rem;
+        font-weight: 500;
+        color: var(--ha-text-color, #212121);
+      }
 
-    .import-actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.5rem;
-    }
+      .setting-value {
+        font-size: 0.9375rem;
+        font-weight: 600;
+        color: var(--ha-primary-color, #03a9f4);
+        min-width: 70px;
+        text-align: right;
+      }
 
-    .import-setting a {
-      font-size: 0.875rem;
-      color: var(--ha-primary-color, #03a9f4);
-    }
-  `;
+      .setting-description {
+        font-size: 0.75rem;
+        color: var(--ha-secondary-text-color, #9e9e9e);
+        margin: 0;
+        line-height: 1.3;
+      }
+
+      /* The slider's handle reaches below its track */
+      wa-slider + .setting-description {
+        margin-top: 0.5rem;
+      }
+
+      .loading-text {
+        font-size: 0.875rem;
+        color: var(--ha-secondary-text-color, #9e9e9e);
+        font-style: italic;
+      }
+
+      .error-text {
+        font-size: 0.875rem;
+        color: var(--ha-error-color, #db4437);
+      }
+
+      .import-setting {
+        gap: 0.75rem;
+        overflow-wrap: anywhere;
+      }
+
+      .import-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+
+      .import-setting a {
+        font-size: 0.875rem;
+        color: var(--ha-primary-color, #03a9f4);
+      }
+    `,
+  ];
 
   @state()
   private _wizardState: WizardState = wizardState.getState();
@@ -330,12 +348,12 @@ export class ProxmoxConfigureView extends LitElement {
     const isCurrentSession = () =>
       this._wizardState.selections.proxmoxSession === session;
 
+    // The connect step only moves on with a session, so this follows an
+    // expiry that cleared it, and the expiry text says what to do
     if (!session) {
       this._setError({
         code: SESSION_EXPIRED,
-        message: localize(
-          "views.proxmox.proxmox_configure_view.connect_to_proxmox_to_continue"
-        ),
+        message: localize("utils.installer_error.proxmox_session_expired"),
         retryable: false,
         details: {},
       });
@@ -384,6 +402,7 @@ export class ProxmoxConfigureView extends LitElement {
         this._selectedBridge = "";
         this._bridges = [];
       }
+      this._fitCoresToNode();
 
       if (this._selectedNode) {
         await this._loadStorage();
@@ -573,6 +592,13 @@ export class ProxmoxConfigureView extends LitElement {
       )
     );
     if (this._sessionExpired) {
+      const session = wizardState.getState().selections.proxmoxSession;
+      if (session) {
+        wizardState.setSelection("proxmoxPreviousServer", {
+          server_url: session.server_url,
+          certificate_sha256: session.certificate_sha256,
+        });
+      }
       wizardState.setSelection("proxmoxSession", undefined);
       wizardState.setSelection("proxmoxConnected", false);
     }
@@ -749,7 +775,8 @@ export class ProxmoxConfigureView extends LitElement {
       !this._loadingNodes &&
         !this._loadingStorage &&
         !this._error &&
-        !this._vlanError
+        !this._vlanError &&
+        !this._nameError
     );
     wizardState.setSelection(
       "proxmoxImportReady",
@@ -776,6 +803,7 @@ export class ProxmoxConfigureView extends LitElement {
     this._selectedBridge = "";
     this._bridges = [];
     this._bridgesNode = "";
+    this._fitCoresToNode();
     this._saveSelections();
     await this._loadStorage();
   }
@@ -799,18 +827,17 @@ export class ProxmoxConfigureView extends LitElement {
     this._saveSelections();
   }
 
+  private get _nameError(): string | undefined {
+    return VM_NAME_PATTERN.test(this._vmName)
+      ? undefined
+      : localize("views.proxmox.proxmox_configure_view.vm_name_invalid");
+  }
+
   private _onNameChange(e: Event) {
-    const input = e.target as WaInput;
-    // Proxmox VM names: alphanumeric, dash, underscore, period only
-    // Replace spaces with dashes and remove invalid characters
-    let name = (input.value ?? "")
-      .replace(/\s+/g, "-")
-      .replace(/[^a-zA-Z0-9._-]/g, "");
-    // Max 63 characters
-    name = name.slice(0, 63);
-    this._vmName = name || DEFAULT_PROXMOX_VM_NAME;
-    // Update input to show sanitized value
-    input.value = this._vmName;
+    // Kept as typed: rewriting the field while typing didn't always reach
+    // it, so it could show another name than the one used. _nameError says
+    // what Proxmox would reject, and "home-" stays typeable on the way.
+    this._vmName = (e.target as WaInput).value ?? "";
     this._saveSelections();
   }
 
@@ -838,8 +865,22 @@ export class ProxmoxConfigureView extends LitElement {
     this._saveSelections();
   }
 
+  /** Proxmox creates a VM with more cores than its node has, then won't start it. */
   private _getCoreOptions(): number[] {
-    return [2, 4, 6, 8, 10, 12, 16];
+    const cpus = this._nodes.find(
+      (node) => node.name === this._selectedNode
+    )?.cpu_count;
+    if (!cpus) return CORE_OPTIONS;
+    const fitting = CORE_OPTIONS.filter((cores) => cores <= cpus);
+    return fitting.length ? fitting : [cpus];
+  }
+
+  /** Lower a chosen or restored core count to what the selected node has. */
+  private _fitCoresToNode() {
+    const options = this._getCoreOptions();
+    if (options.includes(this._cpuCores)) return;
+    this._cpuCores =
+      options.filter((cores) => cores <= this._cpuCores).pop() ?? options[0];
   }
 
   private _getMemoryOptions(): number[] {
@@ -858,14 +899,22 @@ export class ProxmoxConfigureView extends LitElement {
   }
 
   private _formatDiskSize(gb: number): string {
-    return gb >= 1024
-      ? localize("components.drive_card.value_tb", {
-          value0: formatNumber(gb / 1024, { maximumFractionDigits: 20 }),
-        })
-      : localize("components.drive_card.value_gb", {
-          value0: formatNumber(gb, { maximumFractionDigits: 20 }),
-        });
+    return localize("components.drive_card.value_gb", {
+      value0: formatNumber(gb, { maximumFractionDigits: 20 }),
+    });
   }
+
+  // The sliders step through option indexes, so they show the option there
+  private _formatCoresAt = (index: number) =>
+    localize("views.proxmox.proxmox_configure_view.value_cores", {
+      value0: this._getCoreOptions()[index],
+    });
+
+  private _formatMemoryAt = (index: number) =>
+    this._formatMemory(this._getMemoryOptions()[index]);
+
+  private _formatDiskSizeAt = (index: number) =>
+    this._formatDiskSize(this._getDiskSizeOptions()[index]);
 
   private _getCpuDescription(): string {
     if (this._cpuCores <= 2) {
@@ -1097,27 +1146,24 @@ export class ProxmoxConfigureView extends LitElement {
               )}
             </wa-button>
           </div>
-          <a
-            href=${DIRECTORY_STORAGE_DOCS}
-            @click=${(event: Event) =>
-              openExternalLink(event, DIRECTORY_STORAGE_DOCS)}
+          <a href=${DIRECTORY_STORAGE_DOCS} @click=${openExternalLink}
             >${localize("proxmox.directory_storage_documentation")}</a
           >
         </div>
       </div>
       <info-dialog
         .open=${this._importDialog}
-        title=${localize(
+        heading=${localize(
           "views.proxmox.proxmox_configure_view.enable_import_on_storage_title"
         )}
         .message=${localize(
           "views.proxmox.proxmox_configure_view.enable_import_on_storage_message",
           { storage: this._importStorage }
         )}
-        primaryLabel=${localize(
+        primary-label=${localize(
           "views.proxmox.proxmox_configure_view.enable_import"
         )}
-        secondaryLabel=${localize(
+        secondary-label=${localize(
           "views.proxmox.proxmox_configure_view.not_now"
         )}
         @dialog-primary=${this._enableImport}
@@ -1194,15 +1240,13 @@ export class ProxmoxConfigureView extends LitElement {
               @input=${this._onNameChange}
               placeholder="home-assistant"
               maxlength="63"
-              pattern="[a-zA-Z0-9._-]+"
-              title=${localize(
-                "views.proxmox.proxmox_configure_view.only_letters_numbers_dash_underscore_and_period_allowed"
-              )}
+              .customError=${this._nameError ?? null}
             ></wa-input>
-            <p class="setting-description">
-              ${localize(
-                "views.proxmox.proxmox_configure_view.name_shown_in_proxmox_letters_numbers_dash_underscore_only"
-              )}
+            <!-- Not role="alert": ViewAccessibility focuses a new alert, which
+              would pull focus out of the field halfway through typing -->
+            <p class="setting-description name-hint" aria-live="polite">
+              ${this._nameError ??
+              localize("views.proxmox.proxmox_configure_view.vm_name_hint")}
             </p>
           </div>
         </div>
@@ -1395,10 +1439,7 @@ export class ProxmoxConfigureView extends LitElement {
               step="1"
               .value=${coreIndex >= 0 ? coreIndex : 1}
               @input=${this._onCoresChange}
-              .valueFormatter=${(index: number) =>
-                localize("views.proxmox.proxmox_configure_view.value_cores", {
-                  value0: coreOptions[index],
-                })}
+              .valueFormatter=${this._formatCoresAt}
               ><div slot="label" class="setting-header">
                 <span class="setting-label"
                   >${localize(
@@ -1428,8 +1469,7 @@ export class ProxmoxConfigureView extends LitElement {
               step="1"
               .value=${memoryIndex >= 0 ? memoryIndex : 1}
               @input=${this._onMemoryChange}
-              .valueFormatter=${(index: number) =>
-                this._formatMemory(memoryOptions[index])}
+              .valueFormatter=${this._formatMemoryAt}
               ><div slot="label" class="setting-header">
                 <span class="setting-label"
                   >${localize(
@@ -1456,8 +1496,7 @@ export class ProxmoxConfigureView extends LitElement {
               step="1"
               .value=${diskIndex >= 0 ? diskIndex : 0}
               @input=${this._onDiskSizeChange}
-              .valueFormatter=${(index: number) =>
-                this._formatDiskSize(diskSizeOptions[index])}
+              .valueFormatter=${this._formatDiskSizeAt}
               ><div slot="label" class="setting-header">
                 <span class="setting-label"
                   >${localize(
@@ -1487,10 +1526,9 @@ export class ProxmoxConfigureView extends LitElement {
           @input=${this._onVlanInput}
           .customError=${this._vlanError ?? null}
         >
-          <span
-            slot="hint"
-            aria-live="polite"
-            role=${this._vlanError ? "alert" : "note"}
+          <!-- Not role="alert": ViewAccessibility focuses a new alert, which
+            took focus out of the field as soon as a digit made it invalid -->
+          <span slot="hint" class="vlan-hint" aria-live="polite"
             >${this._vlanError ??
             (this._vlanTag
               ? ""

@@ -48,6 +48,26 @@ fn validate_disk_size(disk_size_gb: u32) -> Result<()> {
     Ok(())
 }
 
+/// Proxmox's `dns-name` format for VM names: dot-separated labels of ASCII
+/// letters, digits and dashes, each starting and ending with a letter or digit.
+/// Proxmox only checks it when the VM is created, after the download.
+fn validate_vm_name(name: &str) -> Result<()> {
+    let valid = name.split('.').all(|label| {
+        !label.is_empty()
+            && !label.starts_with('-')
+            && !label.ends_with('-')
+            && label
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    });
+    if !valid {
+        return Err(Error::ProxmoxActionRequired(crate::message!(
+            "backend.proxmox.invalid_vm_name"
+        )));
+    }
+    Ok(())
+}
+
 /// How often to send progress updates (every N bytes)
 const PROGRESS_UPDATE_INTERVAL: u64 = 10 * 1024 * 1024; // 10 MB
 
@@ -395,8 +415,10 @@ async fn list_nodes(session: &ProxmoxSession) -> Result<Vec<ProxmoxNode>> {
                     .unwrap_or("unknown")
                     .to_string(),
                 cpu_usage: node.get("cpu").and_then(|v| v.as_f64()),
-                memory_used: node.get("mem").and_then(|v| v.as_u64()),
-                memory_total: node.get("maxmem").and_then(|v| v.as_u64()),
+                cpu_count: node
+                    .get("maxcpu")
+                    .and_then(|v| v.as_u64())
+                    .and_then(|v| u32::try_from(v).ok()),
             })
         })
         .collect();
@@ -565,7 +587,6 @@ async fn list_storage(session: &ProxmoxSession, node: &str) -> Result<Vec<Proxmo
                     .to_string(),
                 content,
                 available: s.get("avail").and_then(|v| v.as_u64()).unwrap_or(0),
-                total: s.get("total").and_then(|v| v.as_u64()).unwrap_or(0),
                 active: s.get("active").and_then(|v| v.as_u64()).unwrap_or(0) == 1,
             })
         })
@@ -874,7 +895,24 @@ fn check_node_online(nodes: &[ProxmoxNode], node: &str) -> Result<()> {
     Ok(())
 }
 
-/// Privileges Proxmox checks on `/vms/{id}` for the options `create_vm_with_disk` sends.
+/// Proxmox creates a VM with more cores than its node has, but then refuses
+/// to start it, after the download and the import.
+fn check_node_cores(nodes: &[ProxmoxNode], node: &str, cores: u32) -> Result<()> {
+    let cpus = nodes
+        .iter()
+        .find(|n| n.name == node)
+        .and_then(|n| n.cpu_count);
+    match cpus {
+        Some(cpus) if cores > cpus => Err(Error::ProxmoxActionRequired(crate::message!(
+            "backend.proxmox.too_many_cores",
+            node = node,
+            cpus = cpus,
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// Privileges Proxmox checks on `/vms/{id}` to create the VM as `create_vm_with_disk` does and start it.
 const VM_CREATE_PRIVILEGES: &[&str] = &[
     "VM.Allocate",
     "VM.Config.CPU",
@@ -883,6 +921,7 @@ const VM_CREATE_PRIVILEGES: &[&str] = &[
     "VM.Config.HWType",
     "VM.Config.Network",
     "VM.Config.Disk",
+    "VM.PowerMgmt",
 ];
 
 /// Privileges the logged-in user has on `path`, including inherited ones.
@@ -947,14 +986,10 @@ async fn ensure_user_can_create_vm(
     config: &ProxmoxVmConfig,
 ) -> Result<()> {
     let vm_path = format!("/vms/{}", config.vm_id);
-    let mut required = VM_CREATE_PRIVILEGES.to_vec();
-    if config.auto_start {
-        required.push("VM.PowerMgmt");
-    }
     ensure_privileges(
         &fetch_privileges(session, &vm_path).await?,
         &vm_path,
-        &required,
+        VM_CREATE_PRIVILEGES,
     )?;
 
     ensure_bridge_access(session, config).await
@@ -1032,6 +1067,7 @@ async fn pre_install_checks(
 ) -> Result<()> {
     let nodes = list_nodes(session).await?;
     check_node_online(&nodes, &config.node)?;
+    check_node_cores(&nodes, &config.node, config.cpu_cores)?;
 
     ensure_user_can_create_vm(session, config).await?;
 
@@ -1061,6 +1097,7 @@ async fn check_install<B: ReleaseSource>(
     config: &ProxmoxVmConfig,
 ) -> Result<HaosImage> {
     validate_disk_size(config.disk_size_gb)?;
+    validate_vm_name(&config.name)?;
 
     let release: HaosRelease = backend.get_latest_haos_release_for_board("ova").await?;
     let image = release
@@ -1748,8 +1785,8 @@ async fn get_vm_ip(
     find_vm_ip(&json)
 }
 
-/// The first IPv4 address on a non-loopback interface in a guest agent
-/// `network-get-interfaces` reply.
+/// The first reachable IPv4 address on a non-loopback interface in a guest
+/// agent `network-get-interfaces` reply.
 fn find_vm_ip(json: &serde_json::Value) -> Option<String> {
     let interfaces = json.get("data")?.get("result")?.as_array()?;
 
@@ -1766,10 +1803,13 @@ fn find_vm_ip(json: &serde_json::Value) -> Option<String> {
             if addr.get("ip-address-type").and_then(|t| t.as_str()) != Some("ipv4") {
                 continue;
             }
-            if let Some(ip) = addr.get("ip-address").and_then(|i| i.as_str()) {
-                if !ip.starts_with("127.") {
-                    return Some(ip.to_string());
-                }
+            // Parsed, so only an address ever reaches the http:// links
+            let ip = addr
+                .get("ip-address")
+                .and_then(|i| i.as_str())
+                .and_then(|i| i.parse::<std::net::Ipv4Addr>().ok());
+            if let Some(ip) = ip.filter(|ip| crate::host::is_reachable_vm_address(*ip)) {
+                return Some(ip.to_string());
             }
         }
     }
@@ -1902,18 +1942,15 @@ async fn create_vm<B: ReleaseSource, P: ProgressCallback>(
 
     import_and_cleanup_image(session, config, &image_filename, &storage_name).await?;
 
-    // Step 6: Start the VM if requested
-    if config.auto_start {
-        progress_callback.on_progress(FlashProgress {
-            stage: FlashStage::StartingVm,
-            progress: 0,
-            bytes_processed: 0,
-            total_bytes: 0,
-            message: "Starting virtual machine...".to_string(),
-        });
-
-        start_vm(session, &config.node, config.vm_id).await?;
-    }
+    // Step 6: Start the VM
+    progress_callback.on_progress(FlashProgress {
+        stage: FlashStage::StartingVm,
+        progress: 0,
+        bytes_processed: 0,
+        total_bytes: 0,
+        message: "Starting virtual machine...".to_string(),
+    });
+    start_vm(session, &config.node, config.vm_id).await?;
 
     Ok(ProxmoxVmResult {
         vm_id: config.vm_id,
@@ -2098,8 +2135,7 @@ mod tests {
             name: "pve".to_string(),
             status: "online".to_string(),
             cpu_usage: Some(0.5),
-            memory_used: Some(4_000_000_000),
-            memory_total: Some(8_000_000_000),
+            cpu_count: Some(4),
         };
         assert_eq!(node.name, "pve");
         assert_eq!(node.status, "online");
@@ -2112,7 +2148,6 @@ mod tests {
             storage_type: "dir".to_string(),
             content: vec!["images".to_string()],
             available: 100_000_000_000,
-            total: 500_000_000_000,
             active: true,
         };
         assert_eq!(storage.name, "local");
@@ -2125,7 +2160,6 @@ mod tests {
             storage_type: "dir".to_string(),
             content: content.iter().map(|c| c.to_string()).collect(),
             available: 100_000_000_000,
-            total: 500_000_000_000,
             active,
         }
     }
@@ -2297,8 +2331,51 @@ mod tests {
             name: name.to_string(),
             status: status.to_string(),
             cpu_usage: None,
-            memory_used: None,
-            memory_total: None,
+            cpu_count: None,
+        }
+    }
+
+    #[test]
+    fn test_check_node_cores_against_the_node_cpus() {
+        let nodes = vec![
+            ProxmoxNode {
+                cpu_count: Some(4),
+                ..node("pve", "online")
+            },
+            node("unknown", "online"),
+        ];
+        assert!(check_node_cores(&nodes, "pve", 4).is_ok());
+        match check_node_cores(&nodes, "pve", 6) {
+            Err(Error::ProxmoxActionRequired(msg)) => {
+                assert_eq!(msg.key, "backend.proxmox.too_many_cores");
+                assert!(msg.to_string().contains("CPU count (4)"), "{}", msg);
+            }
+            other => panic!("Expected too-many-cores error, got {:?}", other),
+        }
+        // Without a CPU count only Proxmox can tell
+        assert!(check_node_cores(&nodes, "unknown", 16).is_ok());
+    }
+
+    #[test]
+    fn test_vm_names_follow_the_proxmox_dns_name_format() {
+        for name in ["homeassistant", "home-assistant", "ha.lan", "HA-2", "a"] {
+            assert!(validate_vm_name(name).is_ok(), "{name}");
+        }
+        for name in [
+            "",
+            "home_assistant",
+            "home assistant",
+            "-ha",
+            "ha-",
+            "ha.",
+            ".ha",
+            "ha..lan",
+            "ha.-lan",
+        ] {
+            assert!(
+                matches!(validate_vm_name(name), Err(Error::ProxmoxActionRequired(_))),
+                "{name}"
+            );
         }
     }
 
@@ -2729,6 +2806,7 @@ mod tests {
                                 "node": "pve",
                                 "status": "online",
                                 "cpu": 0.15,
+                                "maxcpu": 4,
                                 "mem": 4000000000,
                                 "maxmem": 16000000000
                             },
@@ -2759,7 +2837,10 @@ mod tests {
             assert_eq!(nodes.len(), 2);
             assert_eq!(nodes[0].name, "pve");
             assert_eq!(nodes[0].status, "online");
+            assert_eq!(nodes[0].cpu_count, Some(4));
             assert_eq!(nodes[1].name, "pve2");
+            // Proxmox leaves out the stats for users without Sys.Audit
+            assert_eq!(nodes[1].cpu_count, None);
 
             nodes_mock.assert_async().await;
         }
@@ -3008,7 +3089,7 @@ mod tests {
             }
         }
 
-        fn vm_config(auto_start: bool) -> ProxmoxVmConfig {
+        fn vm_config() -> ProxmoxVmConfig {
             ProxmoxVmConfig {
                 vm_id: 100,
                 name: "homeassistant".to_string(),
@@ -3019,7 +3100,6 @@ mod tests {
                 cpu_cores: 2,
                 memory_mb: 4096,
                 disk_size_gb: 32,
-                auto_start,
             }
         }
 
@@ -3077,7 +3157,7 @@ mod tests {
                 .unwrap()
                 .is_empty());
             assert!(
-                ensure_bridge_available(&test_session(&server), &vm_config(false))
+                ensure_bridge_available(&test_session(&server), &vm_config())
                     .await
                     .unwrap_err()
                     .to_string()
@@ -3132,7 +3212,7 @@ mod tests {
                 "vmbr0&firewall=0",
                 "vmbr0/100",
             ] {
-                let mut config = vm_config(false);
+                let mut config = vm_config();
                 config.bridge = name.to_string();
                 let error = create_vm_with_disk(
                     &test_session(&server),
@@ -3160,7 +3240,7 @@ mod tests {
             .await;
             let permissions =
                 mock_privileges(&mut server, "/sdn/zones/localnetwork/vmbr1", &["SDN.Use"]).await;
-            let mut config = vm_config(false);
+            let mut config = vm_config();
             config.bridge = "vmbr1".to_string();
             ensure_bridge_access(&test_session(&server), &config)
                 .await
@@ -3242,7 +3322,7 @@ mod tests {
                     &["SDN.Use"],
                 )
                 .await;
-                let mut config = vm_config(false);
+                let mut config = vm_config();
                 config.vlan_tag = Some(42);
                 let result = ensure_bridge_access(&test_session(&server), &config).await;
                 assert_eq!(result.is_ok(), supported, "{result:?}");
@@ -3272,7 +3352,7 @@ mod tests {
                     .expect(0)
                     .create_async()
                     .await;
-                let mut config = vm_config(false);
+                let mut config = vm_config();
                 config.vlan_tag = Some(tag);
                 let mut source_unused = false;
                 let error = create_vm_with_disk(
@@ -3300,7 +3380,7 @@ mod tests {
                 .expect(0)
                 .create_async()
                 .await;
-            let mut config = vm_config(false);
+            let mut config = vm_config();
             config.vlan_tag = Some(42);
             let mut source_unused = false;
             let error = create_vm_with_disk(
@@ -3361,7 +3441,7 @@ mod tests {
                         .expect(usize::from(allowed))
                         .create_async()
                         .await;
-                    let mut config = vm_config(false);
+                    let mut config = vm_config();
                     config.vlan_tag = Some(tag);
                     let result = create_vm_with_disk(
                         &test_session(&server),
@@ -3387,7 +3467,7 @@ mod tests {
 
         #[test]
         fn test_vlan_deserialization_rejects_non_integer_tags() {
-            let mut config = serde_json::to_value(vm_config(false)).unwrap();
+            let mut config = serde_json::to_value(vm_config()).unwrap();
             config.as_object_mut().unwrap().remove("vlan_tag");
             assert!(serde_json::from_value::<ProxmoxVmConfig>(config.clone())
                 .unwrap()
@@ -3429,7 +3509,7 @@ mod tests {
                     .await;
                 let permissions =
                     mock_privileges(&mut server, "/sdn/zones/home/lan", &privileges).await;
-                let mut config = vm_config(false);
+                let mut config = vm_config();
                 config.bridge = "lan".to_string();
                 let result = ensure_bridge_access(&test_session(&server), &config).await;
                 assert_eq!(result.is_ok(), privileges.contains(&"SDN.Use"));
@@ -3455,7 +3535,7 @@ mod tests {
                     .with_status(status)
                     .create_async()
                     .await;
-                let mut config = vm_config(false);
+                let mut config = vm_config();
                 config.bridge = "lan".to_string();
                 let error = ensure_bridge_access(&test_session(&server), &config)
                     .await
@@ -3488,7 +3568,7 @@ mod tests {
                     .with_body(serde_json::json!({"data":{"zone":zone}}).to_string())
                     .create_async()
                     .await;
-                let mut config = vm_config(false);
+                let mut config = vm_config();
                 config.bridge = "lan".to_string();
                 let error = create_vm_with_disk(
                     &test_session(&server),
@@ -3804,13 +3884,11 @@ mod tests {
             let mut server = Server::new_async().await;
             let _network = mock_default_bridge(&mut server).await;
 
-            let mut vm_privileges = VM_CREATE_PRIVILEGES.to_vec();
-            vm_privileges.push("VM.PowerMgmt");
-            let vm_mock = mock_privileges(&mut server, "/vms/100", &vm_privileges).await;
+            let vm_mock = mock_privileges(&mut server, "/vms/100", VM_CREATE_PRIVILEGES).await;
             let bridge_mock =
                 mock_privileges(&mut server, "/sdn/zones/localnetwork/vmbr0", &["SDN.Use"]).await;
 
-            let result = ensure_user_can_create_vm(&test_session(&server), &vm_config(true)).await;
+            let result = ensure_user_can_create_vm(&test_session(&server), &vm_config()).await;
             assert!(result.is_ok(), "unexpected error: {:?}", result.err());
 
             vm_mock.assert_async().await;
@@ -3825,7 +3903,7 @@ mod tests {
             // A read-only user can log in fine but only has audit rights.
             let vm_mock = mock_privileges(&mut server, "/vms/100", &["VM.Audit"]).await;
 
-            match ensure_user_can_create_vm(&test_session(&server), &vm_config(true)).await {
+            match ensure_user_can_create_vm(&test_session(&server), &vm_config()).await {
                 Err(Error::ProxmoxActionRequired(msg)) => {
                     assert!(msg.to_string().contains("VM.Allocate"), "{}", msg);
                     assert!(msg.to_string().contains("VM.PowerMgmt"), "{}", msg);
@@ -3839,23 +3917,6 @@ mod tests {
 
         #[tokio::test]
         #[serial]
-        async fn test_ensure_user_can_create_vm_needs_power_only_for_auto_start() {
-            let mut server = Server::new_async().await;
-            let _network = mock_default_bridge(&mut server).await;
-
-            let vm_mock = mock_privileges(&mut server, "/vms/100", VM_CREATE_PRIVILEGES).await;
-            let bridge_mock =
-                mock_privileges(&mut server, "/sdn/zones/localnetwork/vmbr0", &["SDN.Use"]).await;
-
-            let result = ensure_user_can_create_vm(&test_session(&server), &vm_config(false)).await;
-            assert!(result.is_ok(), "unexpected error: {:?}", result.err());
-
-            vm_mock.assert_async().await;
-            bridge_mock.assert_async().await;
-        }
-
-        #[tokio::test]
-        #[serial]
         async fn test_ensure_user_can_create_vm_needs_bridge_access() {
             let mut server = Server::new_async().await;
             let _network = mock_default_bridge(&mut server).await;
@@ -3864,7 +3925,7 @@ mod tests {
             let bridge_mock =
                 mock_privileges(&mut server, "/sdn/zones/localnetwork/vmbr0", &[]).await;
 
-            match ensure_user_can_create_vm(&test_session(&server), &vm_config(false)).await {
+            match ensure_user_can_create_vm(&test_session(&server), &vm_config()).await {
                 Err(Error::ProxmoxActionRequired(msg)) => {
                     assert!(msg.to_string().contains("SDN.Use"), "{}", msg);
                     assert!(msg.to_string().contains("vmbr0"), "{}", msg);
@@ -4022,10 +4083,8 @@ mod tests {
                 .create_async()
                 .await;
 
-            let mut vm_privileges = VM_CREATE_PRIVILEGES.to_vec();
-            vm_privileges.push("VM.PowerMgmt");
             let permission_mocks = vec![
-                mock_privileges(&mut server, "/vms/100", &vm_privileges).await,
+                mock_privileges(&mut server, "/vms/100", VM_CREATE_PRIVILEGES).await,
                 mock_privileges(&mut server, "/sdn/zones/localnetwork/vmbr0", &["SDN.Use"]).await,
                 mock_privileges(
                     &mut server,
@@ -4077,7 +4136,6 @@ mod tests {
                 cpu_cores: 2,
                 memory_mb: 4096,
                 disk_size_gb: 32,
-                auto_start: true,
             };
 
             let result = create_vm(
@@ -4134,7 +4192,6 @@ mod tests {
                 cpu_cores: 2,
                 memory_mb: 4096,
                 disk_size_gb: 32,
-                auto_start: true,
             };
 
             match pre_install_checks(&test_session(&server), &config, 400_000_000).await {
@@ -4206,7 +4263,7 @@ mod tests {
                 }],
             });
 
-            let result = check_install(&release, &test_session(&server), &vm_config(true)).await;
+            let result = check_install(&release, &test_session(&server), &vm_config()).await;
             assert!(
                 matches!(&result, Err(Error::ProxmoxActionRequired(msg)) if msg.to_string().contains("offline")),
                 "unexpected result: {result:?}"
@@ -4857,7 +4914,6 @@ mod tests {
                 cpu_cores: 2,
                 memory_mb: 2048,
                 disk_size_gb,
-                auto_start: false,
             };
 
             let result = create_vm_with_disk(
@@ -4894,7 +4950,6 @@ mod tests {
                 cpu_cores: 2,
                 memory_mb: 2048,
                 disk_size_gb,
-                auto_start: true,
                 bridge: "vmbr0".into(),
                 vlan_tag: None,
             }
@@ -5117,7 +5172,6 @@ mod tests {
                 cpu_cores: 2,
                 memory_mb: 2048,
                 disk_size_gb: 32,
-                auto_start: false,
             };
 
             let result =
@@ -5366,7 +5420,7 @@ mod tests {
             for bridge_removed in [true, false] {
                 let mut server = Server::new_async().await;
                 let session = test_session(&server);
-                let config = vm_config(false);
+                let config = vm_config();
                 let initial_network = mock_default_bridge(&mut server).await;
                 let initial_permissions =
                     mock_privileges(&mut server, "/sdn/zones/localnetwork/vmbr0", &["SDN.Use"])
@@ -5496,7 +5550,6 @@ mod tests {
                     cpu_cores: 2,
                     memory_mb: 2048,
                     disk_size_gb: 32,
-                    auto_start: false,
                 };
                 import_and_cleanup_image(
                     &session,
@@ -5573,7 +5626,6 @@ mod tests {
                     cpu_cores: 2,
                     memory_mb: 2048,
                     disk_size_gb: 32,
-                    auto_start: false,
                 };
                 assert!(import_and_cleanup_image(
                     &session,
@@ -5890,6 +5942,43 @@ mod tests {
             ]}});
 
             assert_eq!(find_vm_ip(&json), None);
+        }
+
+        #[test]
+        fn test_find_vm_ip_skips_haos_docker_networks() {
+            // Before the LAN lease only HAOS's own bridges have an IPv4
+            let mut json = serde_json::json!({"data": {"result": [
+                {"name": "enp0s18", "ip-addresses": [
+                    {"ip-address-type": "ipv6", "ip-address": "fe80::1"}
+                ]},
+                {"name": "hassio", "ip-addresses": [
+                    {"ip-address-type": "ipv4", "ip-address": "172.30.32.1"}
+                ]},
+                {"name": "docker0", "ip-addresses": [
+                    {"ip-address-type": "ipv4", "ip-address": "172.30.232.1"}
+                ]}
+            ]}});
+            assert_eq!(find_vm_ip(&json), None);
+
+            json["data"]["result"][0]["ip-addresses"]
+                .as_array_mut()
+                .unwrap()
+                .push(
+                    serde_json::json!({"ip-address-type": "ipv4", "ip-address": "192.168.1.100"}),
+                );
+            assert_eq!(find_vm_ip(&json).as_deref(), Some("192.168.1.100"));
+        }
+
+        #[test]
+        fn test_find_vm_ip_ignores_values_that_are_not_addresses() {
+            let json = serde_json::json!({"data": {"result": [
+                {"name": "eth0", "ip-addresses": [
+                    {"ip-address-type": "ipv4", "ip-address": "10.0.0.5@example.org"},
+                    {"ip-address-type": "ipv4", "ip-address": "10.0.0.6"}
+                ]}
+            ]}});
+
+            assert_eq!(find_vm_ip(&json).as_deref(), Some("10.0.0.6"));
         }
 
         #[tokio::test]

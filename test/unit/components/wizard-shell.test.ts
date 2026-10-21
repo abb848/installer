@@ -57,15 +57,33 @@ describe("wizard-shell", () => {
 
   it("uses custom next label", async () => {
     const el = await fixture<WizardShell>(html`
-      <wizard-shell nextLabel="Continue"></wizard-shell>
+      <wizard-shell next-label="Continue"></wizard-shell>
     `);
 
     const nextButton = el.shadowRoot!.querySelector(".footer-right wa-button");
     expect(nextButton!.textContent).to.include("Continue");
   });
 
-  it("disables back button on first step", async () => {
+  it("leaves the flow when Back is clicked on the first step", async () => {
     const el = await fixture<WizardShell>(html`<wizard-shell></wizard-shell>`);
+
+    const backButton = el.shadowRoot!.querySelector(
+      ".header wa-button"
+    ) as HTMLButtonElement;
+    expect(backButton.disabled).to.be.false;
+
+    let wentBack = false;
+    el.addEventListener("wizard-back", () => (wentBack = true));
+    setTimeout(() => backButton.click());
+    await oneEvent(el, "wizard-exit");
+    expect(wentBack).to.be.false;
+    expect(wizardState.getState().currentFlow).to.equal("sbc");
+  });
+
+  it("keeps Back disabled while hidden", async () => {
+    const el = await fixture<WizardShell>(
+      html`<wizard-shell hide-back></wizard-shell>`
+    );
 
     const backButton = el.shadowRoot!.querySelector(
       ".header wa-button"
@@ -108,6 +126,24 @@ describe("wizard-shell", () => {
     expect(event).to.exist;
   });
 
+  it("ignores the second click of a double-click", async () => {
+    wizardState.nextStep(); // Go to step 2, so Back steps back instead of leaving
+
+    const el = await fixture<WizardShell>(html`<wizard-shell></wizard-shell>`);
+    const events: string[] = [];
+    el.addEventListener("wizard-next", () => events.push("next"));
+    el.addEventListener("wizard-back", () => events.push("back"));
+
+    for (const selector of [".footer-right wa-button", ".header wa-button"]) {
+      el.shadowRoot!.querySelector(selector)!.dispatchEvent(
+        new MouseEvent("click", { bubbles: true, composed: true, detail: 2 })
+      );
+    }
+
+    expect(events).to.deep.equal([]);
+    expect(wizardState.getState().currentStepIndex).to.equal(1);
+  });
+
   it("dispatches wizard-back event and goes to previous step", async () => {
     wizardState.nextStep(); // Go to step 2
 
@@ -125,7 +161,7 @@ describe("wizard-shell", () => {
 
   it("hides footer when hideFooter is true", async () => {
     const el = await fixture<WizardShell>(html`
-      <wizard-shell hideFooter></wizard-shell>
+      <wizard-shell hide-footer></wizard-shell>
     `);
 
     const footer = el.shadowRoot!.querySelector(".footer");
@@ -134,7 +170,7 @@ describe("wizard-shell", () => {
 
   it("hides next button when hideNext is true", async () => {
     const el = await fixture<WizardShell>(html`
-      <wizard-shell hideNext></wizard-shell>
+      <wizard-shell hide-next></wizard-shell>
     `);
 
     const nextButton = el.shadowRoot!.querySelector(".footer-right wa-button");
@@ -143,7 +179,7 @@ describe("wizard-shell", () => {
 
   it("disables next button when nextDisabled is true", async () => {
     const el = await fixture<WizardShell>(html`
-      <wizard-shell nextDisabled></wizard-shell>
+      <wizard-shell next-disabled></wizard-shell>
     `);
 
     const nextButton = el.shadowRoot!.querySelector(

@@ -145,6 +145,22 @@ export class LiveIsoLocationView extends LitElement {
     }
   }
 
+  private _onFolderInput(event: Event) {
+    this._setFolder((event.target as HTMLInputElement).value);
+  }
+
+  private _onNameInput(event: Event) {
+    this._setName((event.target as HTMLInputElement).value);
+  }
+
+  private _onReplace() {
+    this._answer(true);
+  }
+
+  private _onKeep() {
+    this._answer(false);
+  }
+
   render() {
     return html`
       <live-usb-gate>
@@ -157,8 +173,7 @@ export class LiveIsoLocationView extends LitElement {
             <wa-input
               label=${localize("views.live_usb.location_view.folder")}
               .value=${this._folder}
-              @input=${(event: Event) =>
-                this._setFolder((event.target as HTMLInputElement).value)}
+              @input=${this._onFolderInput}
             ></wa-input>
             <wa-button appearance="outlined" @click=${this._browse}>
               ${localize("views.live_usb.location_view.browse")}
@@ -172,8 +187,7 @@ export class LiveIsoLocationView extends LitElement {
           <wa-input
             label=${localize("views.live_usb.location_view.file_name")}
             .value=${this._name}
-            @input=${(event: Event) =>
-              this._setName((event.target as HTMLInputElement).value)}
+            @input=${this._onNameInput}
           ></wa-input>
           ${this._problem
             ? html`<p class="notice error" role="alert">${this._problem}</p>`
@@ -181,14 +195,14 @@ export class LiveIsoLocationView extends LitElement {
         </div>
         <info-dialog
           ?open=${this._askReplace}
-          title=${localize("views.live_usb.location_view.replace_title")}
+          heading=${localize("views.live_usb.location_view.replace_title")}
           message=${localize("views.live_usb.location_view.replace_message", {
             name: this._name.trim(),
           })}
-          primaryLabel=${localize("views.live_usb.location_view.replace")}
-          secondaryLabel=${localize("common.cancel")}
-          @dialog-primary=${() => this._answer(true)}
-          @dialog-secondary=${() => this._answer(false)}
+          primary-label=${localize("views.live_usb.location_view.replace")}
+          secondary-label=${localize("common.cancel")}
+          @dialog-primary=${this._onReplace}
+          @dialog-secondary=${this._onKeep}
         ></info-dialog>
       </live-usb-gate>
     `;

@@ -4,9 +4,11 @@ import type {
   ProxmoxSession,
   ProxmoxVmResult,
   UtmVmConfig,
+  WifiConfig,
 } from "../api/types.js";
 import type { InstallationPath } from "../views/path-selection-view.js";
 import type { HaHardwareId } from "../views/ha-hardware/hardware.js";
+import { supportsWifi } from "../utils/wifi.js";
 
 export type WizardFlow = InstallationPath;
 
@@ -40,6 +42,8 @@ export interface WizardSelections {
   driveModel?: string;
   driveVendor?: string;
   driveSerial?: string;
+  /** Network to add to the drive. Its password is cleared once written. */
+  wifi?: WifiConfig;
 
   /** VM configuration, shared by the UTM and Proxmox "Configure VM" steps. */
   vmName?: string;
@@ -77,6 +81,14 @@ export interface WizardSelections {
   proxmoxUsername?: string;
   /** Cleared when a connect field changes, so the session no longer applies. */
   proxmoxConnected?: boolean;
+  /**
+   * The server of a session that expired or whose certificate changed, so
+   * reconnecting starts from it and notices a different certificate.
+   */
+  proxmoxPreviousServer?: {
+    server_url: string;
+    certificate_sha256?: string | null;
+  };
 
   /** Proxmox target picked in the "Configure VM" step. */
   proxmoxNode?: string;
@@ -109,6 +121,7 @@ const FLOW_STEPS: Record<WizardFlow, WizardStep[]> = {
   sbc: [
     { id: "device", title: localize("state.wizard_state.select_device") },
     { id: "drive", title: localize("state.wizard_state.select_drive") },
+    { id: "wifi", title: localize("state.wizard_state.wifi") },
     { id: "confirm", title: localize("common.confirm") },
     { id: "flash", title: localize("common.install") },
     { id: "success", title: localize("common.done") },
@@ -120,6 +133,7 @@ const FLOW_STEPS: Record<WizardFlow, WizardStep[]> = {
       title: localize("state.wizard_state.select_architecture"),
     },
     { id: "drive", title: localize("state.wizard_state.select_drive") },
+    { id: "wifi", title: localize("state.wizard_state.wifi") },
     { id: "confirm", title: localize("common.confirm") },
     { id: "flash", title: localize("common.install") },
     { id: "success", title: localize("common.done") },
@@ -127,6 +141,7 @@ const FLOW_STEPS: Record<WizardFlow, WizardStep[]> = {
   "ha-hardware": [
     { id: "device", title: localize("state.wizard_state.select_device") },
     { id: "drive", title: localize("state.wizard_state.select_drive") },
+    { id: "wifi", title: localize("state.wizard_state.wifi") },
     { id: "confirm", title: localize("common.confirm") },
     { id: "flash", title: localize("common.install") },
     { id: "success", title: localize("common.done") },
@@ -150,6 +165,16 @@ const FLOW_STEPS: Record<WizardFlow, WizardStep[]> = {
   ],
 };
 
+/** The steps of `flow`. Wi-Fi is offered only for boards that have it. */
+function stepsFor(
+  flow: WizardFlow,
+  selections: WizardSelections
+): WizardStep[] {
+  return FLOW_STEPS[flow].filter(
+    (step) => step.id !== "wifi" || supportsWifi(selections.deviceConfig?.board)
+  );
+}
+
 /** The USB path keeps the drive/confirm/flash/success ids, so the shell's drive
  * re-checks, erase confirmation and retry handling apply to it unchanged. */
 function liveUsbSteps(target: WizardStep): WizardStep[] {
@@ -165,7 +190,8 @@ function liveUsbSteps(target: WizardStep): WizardStep[] {
 
 /** Mini PC paths share the method step, then each shows its own steps. */
 export const MINIPC_STEPS = {
-  direct: FLOW_STEPS.minipc,
+  // No board is picked yet; choosing one adds the Wi-Fi step back.
+  direct: stepsFor("minipc", {}),
   usb: liveUsbSteps({
     id: "drive",
     title: localize("state.wizard_state.select_usb_stick"),
@@ -213,7 +239,7 @@ class WizardStateStore {
     this.state = {
       currentFlow: flow,
       currentStepIndex: 0,
-      steps: FLOW_STEPS[flow] || [],
+      steps: stepsFor(flow, {}),
       selections: {},
     };
     this.notify();
@@ -259,13 +285,22 @@ class WizardStateStore {
     key: K,
     value: WizardSelections[K]
   ) {
-    this.state = {
-      ...this.state,
-      selections: {
-        ...this.state.selections,
-        [key]: value,
-      },
-    };
+    const selections = { ...this.state.selections, [key]: value };
+    const { currentFlow, currentStepIndex } = this.state;
+    if (key === "deviceConfig" && currentFlow) {
+      // The board decides whether there is a Wi-Fi step; stay on the same step
+      const current = this.state.steps[currentStepIndex]?.id;
+      const steps = stepsFor(currentFlow, selections);
+      const index = steps.findIndex((step) => step.id === current);
+      this.state = {
+        ...this.state,
+        steps,
+        currentStepIndex: index >= 0 ? index : currentStepIndex,
+        selections,
+      };
+    } else {
+      this.state = { ...this.state, selections };
+    }
     this.notify();
   }
 

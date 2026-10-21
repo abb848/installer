@@ -62,11 +62,11 @@ describe("other-options-view", () => {
       html`<other-options-view></other-options-view>`
     );
     const shown = cards(el);
-    expect(shown.map((card) => card.title)).to.deep.equal(
+    expect(shown.map((card) => card.heading)).to.deep.equal(
       OPTIONS.map(([title]) => title)
     );
-    expect(shown.map((card) => card.image)).to.deep.equal(
-      OPTIONS.map(([, icon]) => `/assets/icons/${icon}.svg`)
+    expect(shown.map((card) => card.icon)).to.deep.equal(
+      OPTIONS.map(([, icon]) => icon)
     );
     for (const card of shown) {
       expect(card.description).to.not.be.empty;
@@ -80,7 +80,7 @@ describe("other-options-view", () => {
         html`<other-options-view></other-options-view>`
       );
       cards(el)
-        .find((card) => card.title === title)!
+        .find((card) => card.heading === title)!
         .click();
       await settle();
       expect(opened).to.deep.equal([url]);

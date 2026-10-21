@@ -25,6 +25,63 @@ env:
 # cache there that another run could have written.
 
 jobs:
+  audit-frontend:
+    name: Audit npm dependencies
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      # npm audit can't skip an advisory, so this reads its report and fails
+      # on every advisory that isn't accepted below. Only accept one that has
+      # no fixed release yet, and say why it can't hurt us:
+      # - GHSA-vfj7-8cjw-p6xm: braces, through @web/test-runner, which only
+      #   expands the glob patterns in our own test config.
+      - name: Audit npm dependencies
+        env:
+          ACCEPTED_ADVISORIES: GHSA-vfj7-8cjw-p6xm
+        run: |
+          npm audit --package-lock-only --json > "$RUNNER_TEMP/audit.json" || true
+          jq -nr --arg accepted "$ACCEPTED_ADVISORIES" '
+            ($accepted | split(" ")) as $accepted
+            | (try input catch error("npm audit wrote no readable report"))
+            | (.vulnerabilities // error("npm audit gave no report: \(.message // .error.summary // .)"))
+            | [.[].via[] | objects | .id = (.url | ltrimstr("https://github.com/advisories/"))]
+            | unique_by(.id)
+            | (.[] | select(.id | IN($accepted[]) | not) | "::error::\(.title) (\(.url))"),
+              (($accepted - map(.id))[] | "::warning::\(.) is no longer reported, so it can come off ACCEPTED_ADVISORIES")
+          ' "$RUNNER_TEMP/audit.json" > "$RUNNER_TEMP/audit.txt"
+          cat "$RUNNER_TEMP/audit.txt"
+          if grep -q '^::error::' "$RUNNER_TEMP/audit.txt"; then
+            exit 1
+          fi
+
+  audit-backend:
+    name: Audit Rust dependencies
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-audit@0.22.2
+
+      - name: Audit Rust dependencies
+        run: cargo audit
+
   # Picks the version of a release run from the existing version tags, once,
   # so all build jobs use the same one even if the month changes meanwhile.
   version:
@@ -622,6 +679,8 @@ jobs:
       cancel-in-progress: false
     needs:
       - version
+      - audit-frontend
+      - audit-backend
       - zizmor
       - lint-frontend
       - lint-backend

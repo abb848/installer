@@ -195,7 +195,13 @@ async fn write_to_usb<P: ProgressCallback>(
     let devices = Backend.list_devices().await?;
     find_live_usb_target(&devices, device_id, expected, image_size)?;
     Backend
-        .write_image(image, device_id, expected, true, progress)
+        .write_image(
+            &hai_core::disk::Image::new(image),
+            device_id,
+            expected,
+            true,
+            progress,
+        )
         .await?;
     Ok(())
 }

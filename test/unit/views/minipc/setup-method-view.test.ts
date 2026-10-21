@@ -31,9 +31,9 @@ describe("minipc-setup-method-view", () => {
     expect(el.shadowRoot!.querySelector("h2")!.textContent).to.contain(
       "How will you install?"
     );
-    expect(connectDrive.title).to.equal("I can connect the drive");
+    expect(connectDrive.heading).to.equal("I can connect the drive");
     expect(connectDrive.description).to.contain("SSD or NVMe");
-    expect(usbBoot.title).to.equal("I need to boot from USB");
+    expect(usbBoot.heading).to.equal("I need to boot from USB");
     expect(usbBoot.description).to.contain("bootable USB drive");
   });
 

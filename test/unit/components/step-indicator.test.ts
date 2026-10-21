@@ -57,6 +57,37 @@ describe("step-indicator", () => {
     ]);
   });
 
+  it("names only the current step when the names don't fit on one line", async () => {
+    const el = await fixture<StepIndicator>(html`
+      <step-indicator
+        style="width: 240px"
+        .steps=${mockSteps}
+        .currentIndex=${1}
+      ></step-indicator>
+    `);
+    const shown = () =>
+      [...el.shadowRoot!.querySelectorAll<HTMLElement>(".step-label")].map(
+        (label) => label.offsetWidth > 1
+      );
+    // Steps on one line share a vertical center, whatever their height
+    const rows = () =>
+      new Set(
+        [...el.shadowRoot!.querySelectorAll<HTMLElement>(".step")].map((step) =>
+          Math.round(step.offsetTop + step.offsetHeight / 2)
+        )
+      ).size;
+
+    expect(el.hasAttribute("compact")).to.be.true;
+    expect(shown()).to.deep.equal([false, true, false]);
+    expect(rows()).to.equal(1);
+
+    el.style.width = "800px";
+    el.currentIndex = 2;
+    await el.updateComplete;
+    expect(el.hasAttribute("compact")).to.be.false;
+    expect(shown()).to.deep.equal([true, true, true]);
+  });
+
   it("marks current step as active", async () => {
     const el = await fixture<StepIndicator>(html`
       <step-indicator .steps=${mockSteps} .currentIndex=${1}></step-indicator>

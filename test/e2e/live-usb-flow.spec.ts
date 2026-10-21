@@ -3,7 +3,7 @@ import { test, expect, type Page } from "@playwright/test";
 async function openMediaChoice(page: Page) {
   await page.goto("/");
   await page.locator("welcome-view").locator("wa-button").click();
-  await page.locator('option-card[title="Generic (mini) PC"]').click();
+  await page.locator('option-card[heading="Generic (mini) PC"]').click();
   await page
     .locator("minipc-setup-method-view")
     .locator("option-card")

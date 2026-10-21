@@ -146,6 +146,11 @@ fn unpack_alpine(cache: &Path, alpine: &downloads::Download) -> Result<PathBuf> 
     Ok(dir.join("files"))
 }
 
+/// Whether the file at `path` is the static Linux build of `hai-live` that the stick can run.
+pub fn is_usable_hai_live(path: &Path) -> bool {
+    std::fs::read(path).is_ok_and(|bin| is_static_x86_64_elf(&bin))
+}
+
 /// Whether `bin` is a 64-bit little-endian x86-64 ELF program with an entry point, at least one
 /// loadable segment and no dynamic loader (`PT_INTERP`), i.e. something the live stick can run as is.
 fn is_static_x86_64_elf(bin: &[u8]) -> bool {
@@ -216,6 +221,17 @@ mod tests {
         bin[0x38..0x3a].copy_from_slice(&1u16.to_le_bytes());
         bin[64..68].copy_from_slice(&p_type.to_le_bytes());
         bin
+    }
+
+    #[test]
+    fn usable_hai_live_checks_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hai-live");
+        assert!(!is_usable_hai_live(&path), "missing");
+        std::fs::write(&path, elf(2, 0x3e, 3)).unwrap();
+        assert!(!is_usable_hai_live(&path), "dynamic");
+        std::fs::write(&path, elf(2, 0x3e, 1)).unwrap();
+        assert!(is_usable_hai_live(&path));
     }
 
     #[test]

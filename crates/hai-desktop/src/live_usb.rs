@@ -390,15 +390,21 @@ fn is_portable_file_name(name: &str) -> bool {
 
 /// The first place `hai-live` is found: the environment variable alone if it is set,
 /// otherwise the app's bundled resources, next to the app, then (developer builds) the
-/// repo's musl build folder.
+/// repo's musl build folder. A file that isn't the Linux build is only used if no
+/// other place has one, so the error can say so.
 fn find_hai_live() -> Option<PathBuf> {
     locate_hai_live(
         std::env::var_os(HAI_LIVE_ENV),
         RESOURCE_DIR.get().map(PathBuf::as_path),
+        hai_core::live_usb::is_usable_hai_live,
     )
 }
 
-fn locate_hai_live(env: Option<OsString>, resource_dir: Option<&Path>) -> Option<PathBuf> {
+fn locate_hai_live(
+    env: Option<OsString>,
+    resource_dir: Option<&Path>,
+    is_usable: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
     if let Some(path) = env {
         let path = PathBuf::from(path);
         return path.is_file().then_some(path);
@@ -412,10 +418,27 @@ fn locate_hai_live(env: Option<OsString>, resource_dir: Option<&Path>) -> Option
             .join("../../target/x86_64-unknown-linux-musl/release")
             .join(HAI_LIVE_NAME)
     });
-    [bundled, next_to_app, repo_build]
+    pick_hai_live(
+        [bundled, next_to_app, repo_build].into_iter().flatten(),
+        is_usable,
+    )
+}
+
+/// The first usable file among `candidates`, else the first one that exists.
+fn pick_hai_live(
+    candidates: impl IntoIterator<Item = PathBuf>,
+    is_usable: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    let found: Vec<PathBuf> = candidates
         .into_iter()
-        .flatten()
-        .find(|path| path.is_file())
+        .filter(|path| path.is_file())
+        .collect();
+    // On macOS and Linux, target/debug also holds a host build of hai-live
+    found
+        .iter()
+        .find(|path| is_usable(path))
+        .or(found.first())
+        .cloned()
 }
 
 /// Where Tauri put the files bundled with the app (release builds include `hai-live`).
@@ -666,13 +689,39 @@ mod tests {
         let resources = tempfile::tempdir().unwrap();
         let bundled = resources.path().join(HAI_LIVE_NAME);
         std::fs::write(&bundled, b"\x7fELF").unwrap();
-        assert_eq!(locate_hai_live(None, Some(resources.path())), Some(bundled));
+        assert_eq!(
+            locate_hai_live(None, Some(resources.path()), |_| true),
+            Some(bundled)
+        );
         assert_eq!(
             locate_hai_live(
                 Some(resources.path().join("missing").into()),
-                Some(resources.path())
+                Some(resources.path()),
+                |_| true
             ),
             None
         );
+    }
+
+    #[test]
+    fn a_wrong_hai_live_build_does_not_hide_the_linux_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let host = dir.path().join("host");
+        let linux = dir.path().join("linux");
+        let missing = dir.path().join("missing");
+        std::fs::write(&host, b"host build").unwrap();
+        std::fs::write(&linux, b"linux build").unwrap();
+        let is_linux = |path: &Path| path.ends_with("linux");
+
+        assert_eq!(
+            pick_hai_live([missing.clone(), host.clone(), linux.clone()], is_linux),
+            Some(linux)
+        );
+        // Nothing usable: the wrong one is still returned, so the error can say so
+        assert_eq!(
+            pick_hai_live([missing.clone(), host.clone()], is_linux),
+            Some(host)
+        );
+        assert_eq!(pick_hai_live([missing], is_linux), None);
     }
 }

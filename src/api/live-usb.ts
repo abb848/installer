@@ -6,7 +6,7 @@ import type { ExpectedDevice, FlashProgress } from "./types.js";
 const MOCK_ALLOWED = import.meta.env.DEV;
 
 function isBrowserOnly(): boolean {
-  return typeof window !== "undefined" && !("__TAURI__" in window);
+  return typeof window !== "undefined" && !("isTauri" in window);
 }
 
 /** What the live USB flow needs before it can start. */

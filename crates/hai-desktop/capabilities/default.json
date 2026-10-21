@@ -4,8 +4,13 @@
   "description": "Capability for the main window",
   "windows": ["main"],
   "permissions": [
-    "core:default",
-    "opener:default",
+    "core:app:allow-version",
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:path:allow-resolve-directory",
+    "core:webview:allow-internal-toggle-devtools",
+    "opener:allow-open-url",
+    "opener:allow-default-urls",
     "dialog:allow-open",
     "os:allow-locale"
   ]

@@ -20,7 +20,7 @@ const INSTALLATION_GUIDES: Record<string, string> = {
   "generic-x86-64":
     "https://www.home-assistant.io/installation/generic-x86-64/",
   "generic-aarch64":
-    "https://developers.home-assistant.io/docs/operating-system/boards/generic-aarch64/",
+    "https://contributors.home-assistant.io/os/operating-system/generic/",
 };
 
 /** The last step after any write: where to find Home Assistant. */
@@ -29,17 +29,15 @@ export function renderOpenHomeAssistantStep() {
     "views.sbc.success_view.open_value_in_your_browser_or_find_the_ip_address",
     {
       value0: html`<a
-        href="http://homeassistant.local:8123"
+        href="http://homeassistant.local"
         target="_blank"
         rel="noopener noreferrer"
         @click=${(event: Event) =>
-          openExternalLink(event, "http://homeassistant.local:8123")}
-        >${"homeassistant.local:8123"}</a
+          openExternalLink(event, "http://homeassistant.local")}
+        >${"homeassistant.local"}</a
       >`,
       value1: html`<code
-        >http://&lt;${localize(
-          "views.sbc.success_view.ip_address"
-        )}&gt;:8123</code
+        >http://&lt;${localize("views.sbc.success_view.ip_address")}&gt;</code
       >`,
     }
   )}`;
@@ -72,9 +70,7 @@ export class SuccessView extends LitElement {
   }
 
   render() {
-    const deviceName = this._wizardState.selections.deviceName as
-      | string
-      | undefined;
+    const deviceName = this._wizardState.selections.deviceName;
     const board = this._wizardState.selections.deviceConfig?.board ?? "";
     const isMiniPc = this._wizardState.currentFlow === "minipc";
     const supportsDirectUsb = board === "odroid-n2" || board === "odroid-m1s";

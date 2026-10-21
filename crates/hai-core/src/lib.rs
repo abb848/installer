@@ -20,6 +20,7 @@ pub mod hardware_installer;
 pub mod host;
 pub mod keep_awake;
 pub mod manifest;
+pub mod message;
 pub mod types;
 
 #[cfg(feature = "live-usb")]
@@ -34,10 +35,15 @@ pub mod proxmox;
 #[cfg(feature = "utm")]
 pub mod utm;
 
-pub use error::{Error, Result};
+pub use error::{BusyReason, Error, Result};
+pub use message::Message;
 #[cfg(feature = "mock")]
 pub use mock::BackendMock;
 pub use types::*;
+
+// For the `message!` macro, so its users don't need serde_json themselves
+#[doc(hidden)]
+pub use serde_json;
 
 /// The app's bundle identifier, as in `tauri.conf.json`. Tauri files logs and
 /// app data under it, and so does the download cache.
@@ -190,6 +196,16 @@ pub trait ProxmoxBackend {
         Err(Error::ProxmoxApi(
             "VM status is not supported by this backend".to_string(),
         ))
+    }
+
+    /// Run the checks `create_vm` starts with, without changing anything.
+    /// Backends without them leave every check to `create_vm`.
+    async fn check_vm_config(
+        &self,
+        _session: &ProxmoxSession,
+        _config: &ProxmoxVmConfig,
+    ) -> Result<()> {
+        Ok(())
     }
 
     /// Create and start a Home Assistant VM.

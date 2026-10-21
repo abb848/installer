@@ -26,6 +26,9 @@ required before declaring the beta supported.
 | Windows | x64 | NSIS `.exe` | Windows 10 or 11 with current Evergreen WebView2 |
 | Linux | x86_64 | `.deb`, `.rpm`, `.AppImage` | Ubuntu 22.04 / Debian 12 or newer, or a maintained Fedora release; see below |
 
+Installing into a UTM virtual machine needs a Mac with Apple silicon. Intel Macs can
+still flash a drive or install on Proxmox.
+
 Keep OS and web-view security updates installed. macOS 14.5 is a conservative beta
 support-policy floor with [Safari 17.5-era WebKit](https://webkit.org/blog/15383/webkit-features-in-safari-17-5/),
 not a proven technical minimum. Tauri's 10.13 default does not establish that the
@@ -41,8 +44,8 @@ packages also require GTK 3, WebKitGTK 4.1 with current distribution updates, an
 `udisks2`; the latter is added to both package dependency lists. All Linux formats
 need a desktop session with a polkit authentication agent. AppImage is the larger
 portable alternative, but still needs the host's glibc and `udisks2` system
-service. Its bundled WebKitGTK receives updates only when the AppImage is rebuilt,
-not through the host's WebKitGTK package updates. Install host prerequisites with
+service. Its bundled WebKitGTK and FreeType receive updates only when the AppImage
+is rebuilt, not through the host's package updates. Install host prerequisites with
 your distribution's package manager and keep the installer updated. Flatpak is not
 shipped: sandboxed access to raw disks and the host udisks2 service is not supported.
 

@@ -20,14 +20,18 @@ use commands::{
     cancel_flash, cancel_vm_install, check_connection, check_ha_ready, check_ha_updated,
     check_utm_status, create_utm_vm, discard_utm_image, download_utm_image, flash_image,
     get_haos_release, get_manifest, get_system_info, get_utm_haos_release, get_utm_vm_status,
-    list_block_devices, proxmox_certificate_fingerprint, proxmox_connect, proxmox_create_vm,
-    proxmox_enable_storage_import, proxmox_get_next_vm_id, proxmox_get_vm_status,
-    proxmox_list_bridges, proxmox_list_nodes, proxmox_list_storage, start_utm_vm,
+    list_block_devices, proxmox_certificate_fingerprint, proxmox_check_vm_config, proxmox_connect,
+    proxmox_create_vm, proxmox_enable_storage_import, proxmox_get_next_vm_id,
+    proxmox_get_vm_status, proxmox_list_bridges, proxmox_list_nodes, proxmox_list_storage,
+    start_utm_vm, utm_supported,
 };
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     elevation::wait_for_previous_instance();
+    #[cfg(target_os = "linux")]
+    ignore_host_gio_modules();
+
     let builder = tauri::Builder::default();
 
     // Register first so a second launch exits before initializing other plugins.
@@ -81,6 +85,7 @@ pub fn run() {
             diagnostics::open_logs_folder,
             // UTM commands (hai-core reports UTM as unsupported off macOS)
             check_utm_status,
+            utm_supported,
             get_utm_haos_release,
             download_utm_image,
             cancel_vm_install,
@@ -99,6 +104,7 @@ pub fn run() {
             proxmox_enable_storage_import,
             proxmox_get_next_vm_id,
             proxmox_get_vm_status,
+            proxmox_check_vm_config,
             proxmox_create_vm,
             // Live USB commands (bootable stick or ISO for a mini PC)
             live_usb::live_usb_status,
@@ -110,6 +116,17 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Modules in the host's GIO_EXTRA_MODULES (gvfs and dconf on NixOS) are built against
+/// the host's GLib and fail to load into the bundled one, in the app and its WebKit processes.
+#[cfg(target_os = "linux")]
+fn ignore_host_gio_modules() {
+    // Runs before any thread starts, so the environment is safe to change.
+    // APPDIR is set whenever the bundled GLib runs, also from an extracted AppImage.
+    if std::env::var_os("APPDIR").is_some() {
+        std::env::remove_var("GIO_EXTRA_MODULES");
+    }
 }
 
 #[cfg(test)]

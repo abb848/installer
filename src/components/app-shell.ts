@@ -110,6 +110,12 @@ export class AppShell extends LitElement {
   @state()
   private _proxmoxConnecting = false;
 
+  // The selections the running Proxmox check started from. Navigating,
+  // cancelling or changing a choice replaces them, so a check left behind
+  // holds up nothing.
+  @state()
+  private _checkingProxmox?: WizardState["selections"];
+
   @state()
   private _verifyingDrive = false;
 
@@ -251,6 +257,9 @@ export class AppShell extends LitElement {
     const nextDisabled = this._isNextDisabled(flow, currentStep?.id);
     const nextLabel = this._getNextLabel(currentStep?.id);
 
+    const checkingSettings =
+      this._checkingProxmox === this._wizardState.selections;
+
     // A running flash keeps only Cancel, until it is stopping
     const flashRunning = currentStep?.id === "flash" && !this._flashError;
 
@@ -285,15 +294,18 @@ export class AppShell extends LitElement {
       <wizard-shell
         .nextDisabled=${nextDisabled ||
         this._proxmoxConnecting ||
+        checkingSettings ||
         this._verifyingDrive ||
         this._checkingLocation}
         .nextLabel=${this._proxmoxConnecting
           ? localize("components.app_shell.connecting")
-          : this._verifyingDrive
-            ? localize("components.app_shell.checking_drive")
-            : this._checkingLocation
-              ? localize("components.app_shell.checking_location")
-              : nextLabel}
+          : checkingSettings
+            ? localize("components.app_shell.checking_settings")
+            : this._verifyingDrive
+              ? localize("components.app_shell.checking_drive")
+              : this._checkingLocation
+                ? localize("components.app_shell.checking_location")
+                : nextLabel}
         .hideFooter=${hideFooter}
         .hideBack=${hideBack}
         .hideNext=${hideNext}
@@ -634,14 +646,28 @@ export class AppShell extends LitElement {
       }
     }
 
-    // Next is only clickable while enabled, but the step must never proceed
-    // without import storage, whatever triggered the event
-    if (
-      flow === "proxmox" &&
-      currentStep?.id === "configure" &&
-      this._isNextDisabled(flow, currentStep.id)
-    ) {
-      return;
+    if (flow === "proxmox" && currentStep?.id === "configure") {
+      // Next is only clickable while enabled, but the step must never proceed
+      // without import storage, whatever triggered the event
+      const selections = wizardState.getState().selections;
+      if (
+        this._checkingProxmox === selections ||
+        this._isNextDisabled(flow, currentStep.id)
+      ) {
+        return;
+      }
+      // A problem found now can still be fixed on this step
+      this._checkingProxmox = selections;
+      try {
+        const view = this.shadowRoot
+          ?.querySelector("wizard-shell")
+          ?.querySelector("proxmox-configure-view");
+        if (!(await view?.check())) return;
+      } finally {
+        if (this._checkingProxmox === selections) {
+          this._checkingProxmox = undefined;
+        }
+      }
     }
 
     // Check the ISO save location now, so problems can be fixed before downloading

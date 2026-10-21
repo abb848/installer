@@ -51,11 +51,12 @@ describe("success-view next steps", () => {
   it("offers hostname and IP access without requiring discovery", async () => {
     const el = await renderSuccess();
     const link = content(el).querySelector<HTMLAnchorElement>(".step-text a")!;
-    expect(link.href).to.equal("http://homeassistant.local:8123/");
+    expect(link.href).to.equal("http://homeassistant.local/");
     expect(text(el)).to.contain(
       "IP address in your router or on an attached display"
     );
-    expect(text(el)).to.contain("http://<IP address>:8123");
+    expect(text(el)).to.contain("http://<IP address>");
+    expect(text(el)).not.to.contain(":8123");
     expect(text(el)).to.contain(
       "If it still does not open after a few minutes"
     );
@@ -127,7 +128,7 @@ describe("success-view next steps", () => {
     ],
     [
       "generic-aarch64",
-      "https://developers.home-assistant.io/docs/operating-system/boards/generic-aarch64/",
+      "https://contributors.home-assistant.io/os/operating-system/generic/",
     ],
     ["khadas-vim3", "https://www.home-assistant.io/installation/"],
     ["unknown", "https://www.home-assistant.io/installation/"],

@@ -196,7 +196,16 @@ describe("wizard-steps", () => {
       const ready = (stepId: string, selections: WizardSelections) =>
         liveStep(stepId)!.ready!({ ...usbBoot, ...selections });
       expect(ready("drive", { drive: "/dev/sdb" })).to.be.false;
-      expect(ready("drive", { drive: "/dev/sdb", liveReady: true })).to.be.true;
+      // The stick is still being rescanned, as when coming back from the summary
+      expect(ready("drive", { drive: "/dev/sdb", liveReady: true })).to.be
+        .false;
+      expect(
+        ready("drive", {
+          drive: "/dev/sdb",
+          driveScanReady: true,
+          liveReady: true,
+        })
+      ).to.be.true;
       const location = {
         liveReady: true,
         liveIsoFolder: "/tmp",

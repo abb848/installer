@@ -1,6 +1,7 @@
 import { expect, fixture, html, waitUntil } from "@open-wc/testing";
 import "../../../../src/views/sbc/drive-selection-view.js";
 import type { DriveSelectionView } from "../../../../src/views/sbc/drive-selection-view.js";
+import type { InlineNotice } from "../../../../src/components/inline-notice.js";
 import {
   MOCK_BLOCK_DEVICES,
   MOCK_MANIFEST,
@@ -78,7 +79,8 @@ describe("drive-selection-view", () => {
 
     expect(wizardState.getState().selections.drive).to.equal(CONNECTED.id);
     expect(selectedIds(el)).to.deep.equal([CONNECTED.id]);
-    expect(el.shadowRoot!.querySelector(".notice")).to.not.exist;
+    expect(el.shadowRoot!.querySelector('inline-notice[variant="error"]')).to
+      .not.exist;
   });
 
   it("clears a selection whose path now names a different disk", async () => {
@@ -88,7 +90,8 @@ describe("drive-selection-view", () => {
 
     expect(wizardState.getState().selections.drive).to.be.undefined;
     expect(selectedIds(el)).to.be.empty;
-    expect(el.shadowRoot!.querySelector(".notice")).to.exist;
+    expect(el.shadowRoot!.querySelector('inline-notice[variant="error"]')).to
+      .exist;
   });
 
   it("clears a selection when an identical model has a different serial", async () => {
@@ -132,13 +135,71 @@ describe("drive-selection-view", () => {
     (
       el.shadowRoot!.querySelector(".drives-header wa-button") as HTMLElement
     ).click();
-    await waitUntil(() => el.shadowRoot!.querySelector(".notice"));
+    await waitUntil(() =>
+      el.shadowRoot!.querySelector('inline-notice[variant="error"]')
+    );
 
     expect(wizardState.getState().selections.drive).to.be.undefined;
-    expect(region!.querySelector(".notice")).to.exist;
-    expect(
-      region!.querySelector(".notice-icon")!.getAttribute("aria-hidden")
-    ).to.equal("true");
+    const notice = region!.querySelector<InlineNotice>(
+      'inline-notice[variant="error"]'
+    );
+    expect(notice).to.exist;
+    expect(notice!.icon).to.equal("🔌");
+  });
+
+  it("keeps the check on the selected drive when a refresh reorders the list", async () => {
+    const GB = 1000 * 1000 * 1000;
+    const kept: BlockDevice = {
+      ...CONNECTED,
+      id: "kept",
+      size: 128 * GB,
+      serial: "KEPT",
+    };
+    const unplugged: BlockDevice = {
+      ...CONNECTED,
+      id: "unplugged",
+      size: 64 * GB,
+      serial: "UNPLUGGED",
+    };
+    const plugged: BlockDevice = {
+      ...CONNECTED,
+      id: "plugged",
+      size: 256 * GB,
+      serial: "PLUGGED",
+    };
+    const cardIds = (el: DriveSelectionView) =>
+      [...el.shadowRoot!.querySelectorAll("drive-card")].map(
+        (card) => (card as HTMLElement & { value: string }).value
+      );
+
+    storeDriveSelection(kept);
+    let scan = holdDeviceScan();
+    try {
+      const el = await fixture<DriveSelectionView>(
+        html`<drive-selection-view></drive-selection-view>`
+      );
+      scan.resolve([unplugged, kept]);
+      await waitUntil(() => cardIds(el).length === 2);
+      expect(cardIds(el)).to.deep.equal(["kept", "unplugged"]);
+      await waitUntil(() => selectedIds(el).length > 0);
+      expect(selectedIds(el)).to.deep.equal(["kept"]);
+
+      // Same number of drives, but the kept one moves down a place
+      scan.restore();
+      scan = holdDeviceScan();
+      (
+        el.shadowRoot!.querySelector(".drives-header wa-button") as HTMLElement
+      ).click();
+      scan.resolve([kept, plugged]);
+      await waitUntil(() => cardIds(el)[0] === "plugged");
+      await el.updateComplete;
+
+      expect(cardIds(el)).to.deep.equal(["plugged", "kept"]);
+      expect(wizardState.getState().selections.drive).to.equal("kept");
+      expect(selectedIds(el)).to.deep.equal(["kept"]);
+    } finally {
+      scan.restore();
+    }
   });
 
   it("keeps undersized drives visible and disables them with the board minimum", async () => {

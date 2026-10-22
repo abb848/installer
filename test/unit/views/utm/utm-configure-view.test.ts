@@ -18,6 +18,13 @@ import {
   settle,
 } from "../../tauri-ipc.js";
 
+/** The cores, memory and disk sliders, in the shared resources component */
+async function resourcesOf(el: HTMLElement): Promise<ShadowRoot> {
+  const resources = el.shadowRoot!.querySelector("vm-resources")!;
+  await resources.updateComplete;
+  return resources.shadowRoot!;
+}
+
 /** Mount the view and wait for the system-info lookup to settle */
 async function mount(): Promise<UtmConfigureView> {
   const el = await fixture<UtmConfigureView>(html`
@@ -43,7 +50,7 @@ describe("utm-configure-view", () => {
 
   it("exposes named controls and announces actual slider sizes", async () => {
     const el = await mount();
-    const sliders = [...el.shadowRoot!.querySelectorAll("wa-slider")];
+    const sliders = [...(await resourcesOf(el)).querySelectorAll("wa-slider")];
     await Promise.all(sliders.map((slider) => slider.updateComplete));
     const snapshot = await fullA11ySnapshot();
     expect(findByRole(snapshot, "textbox").map((node) => node.name)).to.include(
@@ -67,7 +74,7 @@ describe("utm-configure-view", () => {
       throw new Error(`Unexpected IPC command: ${cmd}`);
     });
     const el = await mount();
-    const slider = el.shadowRoot!.querySelectorAll("wa-slider")[1];
+    const slider = (await resourcesOf(el)).querySelectorAll("wa-slider")[1];
     await slider.updateComplete;
     expect(slider.disabled).to.equal(true);
     expect(slider.min).to.equal(0);
@@ -105,7 +112,7 @@ describe("utm-configure-view", () => {
     expect(selections.diskSizeGb).to.equal(128);
 
     // And they are what the form shows, not just what is in the state
-    const text = el.shadowRoot!.textContent!;
+    const text = (await resourcesOf(el)).textContent!;
     expect(text).to.contain("8 cores");
     expect(text).to.contain("16 GB");
     expect(text).to.contain("128 GB");
@@ -118,6 +125,54 @@ describe("utm-configure-view", () => {
 
     const input = el.shadowRoot!.querySelector<WaInput>("wa-input");
     expect(input!.value).to.equal("My Home");
+  });
+
+  it("keeps the name as typed and asks for one when it is cleared", async () => {
+    const el = await mount();
+    const name = el.shadowRoot!.querySelector<WaInput>("wa-input")!;
+    const type = async (value: string) => {
+      name.value = value;
+      name.dispatchEvent(new Event("input"));
+      await el.updateComplete;
+      await name.updateComplete;
+    };
+
+    name.focus();
+    for (const cleared of ["", "  "]) {
+      await type(cleared);
+      expect(name.value).to.equal(cleared);
+      expect(wizardState.getState().selections.vmName).to.equal(cleared);
+      expect(name.checkValidity(), cleared).to.be.false;
+      expect(
+        el.shadowRoot!.querySelector(".name-hint")!.textContent
+      ).to.contain("Enter a name for the virtual machine.");
+      // In the input's hint slot, so it is the field's accessible description
+      expect(el.shadowRoot!.querySelector(".name-hint")!.slot).to.equal("hint");
+      // The error must not take focus from someone still typing
+      expect(el.shadowRoot!.activeElement).to.equal(name);
+    }
+
+    // What is typed after clearing is the whole name, without the default
+    await type("");
+    await type("X");
+    expect(name.value).to.equal("X");
+    expect(wizardState.getState().selections.vmName).to.equal("X");
+    expect(name.checkValidity()).to.be.true;
+    expect(el.shadowRoot!.querySelector(".name-hint")!.textContent).to.contain(
+      "Shown in UTM's virtual machine list"
+    );
+  });
+
+  it("restores a cleared name as cleared", async () => {
+    wizardState.setSelection("vmName", "");
+
+    const el = await mount();
+
+    const name = el.shadowRoot!.querySelector<WaInput>("wa-input")!;
+    await name.updateComplete;
+    expect(name.value).to.equal("");
+    expect(name.checkValidity()).to.be.false;
+    expect(wizardState.getState().selections.vmName).to.equal("");
   });
 
   it("still caps a restored value the system cannot offer", async () => {
@@ -179,9 +234,17 @@ describe("utm-configure-view", () => {
     await settle();
     await el.updateComplete;
 
-    const slider = el.shadowRoot!.querySelector("wa-slider") as WaSlider;
+    const resources = await resourcesOf(el);
+    const slider = resources.querySelector("wa-slider") as WaSlider;
+    await slider.updateComplete;
     expect(wizardState.getState().selections.cpuCores).to.equal(10);
-    expect(el.shadowRoot!.textContent).to.contain("10 cores");
-    expect(slider.value).to.equal(10);
+    expect(resources.textContent).to.contain("10 cores");
+    // The slider steps through 2, 4, 6, 8, 10 and 12 cores
+    expect(slider.value).to.equal(4);
+    expect(
+      slider
+        .shadowRoot!.querySelector('[role="slider"]')!
+        .getAttribute("aria-valuetext")
+    ).to.equal("10 cores");
   });
 });

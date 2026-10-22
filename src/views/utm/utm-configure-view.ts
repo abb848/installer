@@ -1,4 +1,4 @@
-import { formatNumber, localize } from "../../localization/localize.js";
+import { localize } from "../../localization/localize.js";
 import { LitElement, html, css } from "lit";
 import {
   ViewAccessibility,
@@ -8,9 +8,6 @@ import { logFrontendError } from "../../utils/diagnostics.js";
 import { customElement, state } from "lit/decorators.js";
 import type WaInput from "@home-assistant/webawesome/dist/components/input/input.js";
 import "@home-assistant/webawesome/dist/components/input/input.js";
-import type WaSlider from "@home-assistant/webawesome/dist/components/slider/slider.js";
-import "@home-assistant/webawesome/dist/components/slider/slider.js";
-import { live } from "lit/directives/live.js";
 import { wizardState } from "../../state/wizard-state.js";
 import { getSystemInfo } from "../../api/commands.js";
 import type { SystemInfo } from "../../api/types.js";
@@ -19,13 +16,18 @@ import {
   DEFAULT_DISK_SIZE_GB,
   DEFAULT_MEMORY_MB,
   DEFAULT_UTM_VM_NAME,
+  isValidUtmVmName,
 } from "../../state/vm-defaults.js";
+import { settingStyles } from "../../utils/setting-styles.js";
+import "../../components/vm-resources.js";
+import type { VmResourceValues } from "../../components/vm-resources.js";
 
 @customElement("utm-configure-view")
 export class UtmConfigureView extends LitElement {
   protected readonly _accessibility = new ViewAccessibility(this);
   static styles = [
     reducedMotionStyles,
+    settingStyles,
     css`
       :host {
         display: flex;
@@ -60,79 +62,6 @@ export class UtmConfigureView extends LitElement {
         width: 100%;
         box-sizing: border-box;
         max-width: 500px;
-      }
-
-      @media (prefers-color-scheme: dark) {
-        .config-card {
-          background-color: var(--ha-card-background, #1e1e1e);
-          border-color: var(--ha-border-color, #333333);
-        }
-      }
-
-      .setting-row {
-        display: flex;
-        align-items: flex-start;
-        gap: 0.75rem;
-      }
-
-      .setting-icon {
-        width: 32px;
-        height: 32px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-        margin-top: 2px;
-      }
-
-      .setting-icon svg {
-        width: 22px;
-        height: 22px;
-        fill: var(--ha-secondary-text-color, #727272);
-      }
-
-      .setting-content {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-        min-width: 0;
-      }
-
-      wa-slider::part(label) {
-        display: block;
-      }
-
-      .setting-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-      }
-
-      .setting-label {
-        font-size: 0.9375rem;
-        font-weight: 500;
-        color: var(--ha-text-color, #212121);
-      }
-
-      .setting-value {
-        font-size: 0.9375rem;
-        font-weight: 600;
-        color: var(--ha-primary-color, #03a9f4);
-        min-width: 70px;
-        text-align: right;
-      }
-
-      .setting-description {
-        font-size: 0.75rem;
-        color: var(--ha-secondary-text-color, #9e9e9e);
-        margin: 0;
-        line-height: 1.3;
-      }
-
-      /* The slider's handle reaches below its track */
-      wa-slider + .setting-description {
-        margin-top: 0.5rem;
       }
     `,
   ];
@@ -210,31 +139,24 @@ export class UtmConfigureView extends LitElement {
     wizardState.setSelection("diskSizeGb", this._diskSizeGb);
   }
 
+  private get _nameError(): string | undefined {
+    return isValidUtmVmName(this._vmName)
+      ? undefined
+      : localize("views.utm.utm_configure_view.vm_name_required");
+  }
+
   private _onNameChange(e: Event) {
-    const input = e.target as WaInput;
-    this._vmName = input.value || DEFAULT_UTM_VM_NAME;
+    // Kept as typed: falling back to the default here wrote it back into a
+    // cleared field, in front of whatever was typed next. _nameError holds
+    // Next back instead.
+    this._vmName = (e.target as WaInput).value ?? "";
     this._saveSelections();
   }
 
-  private _onCoresChange(e: Event) {
-    const input = e.target as WaSlider;
-    this._cpuCores = input.value;
-    this._saveSelections();
-  }
-
-  private _onMemoryChange(e: Event) {
-    const input = e.target as WaSlider;
-    const index = input.value;
-    const memoryOptions = this._getMemoryOptions();
-    this._memoryMb = memoryOptions[index] || DEFAULT_MEMORY_MB;
-    this._saveSelections();
-  }
-
-  private _onDiskSizeChange(e: Event) {
-    const input = e.target as WaSlider;
-    const index = input.value;
-    const diskOptions = this._getDiskSizeOptions();
-    this._diskSizeGb = diskOptions[index] || DEFAULT_DISK_SIZE_GB;
+  private _onResourcesChange(e: CustomEvent<VmResourceValues>) {
+    this._cpuCores = e.detail.cpuCores;
+    this._memoryMb = e.detail.memoryMb;
+    this._diskSizeGb = e.detail.diskSizeGb;
     this._saveSelections();
   }
 
@@ -263,100 +185,9 @@ export class UtmConfigureView extends LitElement {
     return standardOptions.filter((mb) => mb <= availableMemoryMb);
   }
 
-  private _formatMemory(mb: number): string {
-    const gb = mb / 1024;
-    return localize("components.drive_card.value_gb", {
-      value0: formatNumber(gb, { maximumFractionDigits: 20 }),
-    });
-  }
-
   private _getDiskSizeOptions(): number[] {
     // Standard disk size options in GB
     return [32, 64, 128, 256, 512];
-  }
-
-  private _formatDiskSize(gb: number): string {
-    return gb >= 1024
-      ? localize("components.drive_card.value_tb", {
-          value0: formatNumber(gb / 1024, { maximumFractionDigits: 20 }),
-        })
-      : localize("components.drive_card.value_gb", {
-          value0: formatNumber(gb, { maximumFractionDigits: 20 }),
-        });
-  }
-
-  private _formatCores = (cores: number) =>
-    localize("views.proxmox.proxmox_configure_view.value_cores", {
-      value0: cores,
-    });
-
-  // The memory and disk sliders step through option indexes, so they show
-  // the option there
-  private _formatMemoryAt = (index: number) =>
-    this._formatMemory(this._getMemoryOptions()[index] ?? this._memoryMb);
-
-  private _formatDiskSizeAt = (index: number) =>
-    this._formatDiskSize(this._getDiskSizeOptions()[index]);
-
-  private _getCpuDescription(): string {
-    if (this._cpuCores <= 2) {
-      return localize(
-        "views.proxmox.proxmox_configure_view.minimum_for_basic_operation"
-      );
-    } else if (this._cpuCores <= 4) {
-      return localize(
-        "views.proxmox.proxmox_configure_view.recommended_for_most_users"
-      );
-    } else if (this._cpuCores <= 6) {
-      return localize(
-        "views.proxmox.proxmox_configure_view.better_performance_with_many_integrations"
-      );
-    } else {
-      return localize(
-        "views.proxmox.proxmox_configure_view.maximum_performance_for_power_users"
-      );
-    }
-  }
-
-  private _getMemoryDescription(): string {
-    const gb = this._memoryMb / 1024;
-    if (gb <= 2) {
-      return localize(
-        "views.proxmox.proxmox_configure_view.minimum_for_basic_operation"
-      );
-    } else if (gb <= 4) {
-      return localize(
-        "views.proxmox.proxmox_configure_view.recommended_for_most_users"
-      );
-    } else if (gb <= 8) {
-      return localize(
-        "views.proxmox.proxmox_configure_view.better_for_add_ons_and_many_integrations"
-      );
-    } else {
-      return localize(
-        "views.proxmox.proxmox_configure_view.maximum_performance_for_power_users"
-      );
-    }
-  }
-
-  private _getDiskDescription(): string {
-    if (this._diskSizeGb <= 32) {
-      return localize(
-        "views.proxmox.proxmox_configure_view.good_for_getting_started"
-      );
-    } else if (this._diskSizeGb <= 64) {
-      return localize(
-        "views.proxmox.proxmox_configure_view.room_for_add_ons_and_history"
-      );
-    } else if (this._diskSizeGb <= 128) {
-      return localize(
-        "views.proxmox.proxmox_configure_view.plenty_of_space_for_long_term_use"
-      );
-    } else {
-      return localize(
-        "views.proxmox.proxmox_configure_view.extended_storage_for_recordings_and_backups"
-      );
-    }
   }
 
   // MDI Icons (from https://materialdesignicons.com/)
@@ -369,41 +200,7 @@ export class UtmConfigureView extends LitElement {
     </svg>`;
   }
 
-  private _renderCpuIcon() {
-    // mdi:chip
-    return html`<svg viewBox="0 0 24 24">
-      <path
-        d="M6,4H18V5H21V7H18V9H21V11H18V13H21V15H18V17H21V19H18V20H6V19H3V17H6V15H3V13H6V11H3V9H6V7H3V5H6V4M11,15V18H12V15H11M13,15V18H14V15H13M15,15V18H16V15H15Z"
-      />
-    </svg>`;
-  }
-
-  private _renderMemoryIcon() {
-    // mdi:memory
-    return html`<svg viewBox="0 0 24 24">
-      <path
-        d="M17,17H7V7H17M21,11V9H19V7C19,5.89 18.1,5 17,5H15V3H13V5H11V3H9V5H7C5.89,5 5,5.89 5,7V9H3V11H5V13H3V15H5V17A2,2 0 0,0 7,19H9V21H11V19H13V21H15V19H17A2,2 0 0,0 19,17V15H21V13H19V11M13,13H11V11H13M15,9H9V15H15V9Z"
-      />
-    </svg>`;
-  }
-
-  private _renderDiskIcon() {
-    // mdi:database
-    return html`<svg viewBox="0 0 24 24">
-      <path
-        d="M12,3C7.58,3 4,4.79 4,7C4,9.21 7.58,11 12,11C16.42,11 20,9.21 20,7C20,4.79 16.42,3 12,3M4,9V12C4,14.21 7.58,16 12,16C16.42,16 20,14.21 20,12V9C20,11.21 16.42,13 12,13C7.58,13 4,11.21 4,9M4,14V17C4,19.21 7.58,21 12,21C16.42,21 20,19.21 20,17V14C20,16.21 16.42,18 12,18C7.58,18 4,16.21 4,14Z"
-      />
-    </svg>`;
-  }
-
   render() {
-    const coreOptions = this._getCoreOptions();
-    const memoryOptions = this._getMemoryOptions();
-    const diskSizeOptions = this._getDiskSizeOptions();
-
-    const memoryIndex = memoryOptions.indexOf(this._memoryMb);
-    const diskIndex = diskSizeOptions.indexOf(this._diskSizeGb);
-
     return html`
       <h2>
         ${localize(
@@ -430,106 +227,30 @@ export class UtmConfigureView extends LitElement {
               .value=${this._vmName}
               @input=${this._onNameChange}
               placeholder=${DEFAULT_UTM_VM_NAME}
-            ></wa-input>
-            <p class="setting-description">
-              ${localize(
-                "views.utm.utm_configure_view.shown_in_utm_s_virtual_machine_list"
-              )}
-            </p>
+              .customError=${this._nameError ?? null}
+            >
+              <!-- In the hint slot, so the field describes itself with it.
+                Not role="alert": ViewAccessibility focuses a new alert, which
+                would pull focus out of the field halfway through typing -->
+              <span slot="hint" class="name-hint" aria-live="polite"
+                >${this._nameError ??
+                localize(
+                  "views.utm.utm_configure_view.shown_in_utm_s_virtual_machine_list"
+                )}</span
+              >
+            </wa-input>
           </div>
         </div>
 
-        <!-- CPU Cores -->
-        <div class="setting-row">
-          <div class="setting-icon">${this._renderCpuIcon()}</div>
-          <div class="setting-content">
-            <wa-slider
-              with-markers
-              with-tooltip
-              min=${coreOptions[0]}
-              max=${coreOptions[coreOptions.length - 1]}
-              step="2"
-              .value=${
-                // live(): the browser clamps the value while the system
-                // lookup is pending and the max is still 8, so a restored
-                // count above that must be re-applied once the max grows
-                live(this._cpuCores)
-              }
-              @input=${this._onCoresChange}
-              .valueFormatter=${this._formatCores}
-              ><div slot="label" class="setting-header">
-                <span class="setting-label"
-                  >${localize(
-                    "views.proxmox.proxmox_configure_view.cpu_cores"
-                  )}</span
-                ><span class="setting-value" aria-hidden="true"
-                  >${localize(
-                    "views.proxmox.proxmox_configure_view.value_cores",
-                    {
-                      value0: this._cpuCores,
-                    }
-                  )}</span
-                >
-              </div></wa-slider
-            >
-            <p class="setting-description">${this._getCpuDescription()}</p>
-          </div>
-        </div>
-
-        <!-- Memory -->
-        <div class="setting-row">
-          <div class="setting-icon">${this._renderMemoryIcon()}</div>
-          <div class="setting-content">
-            <wa-slider
-              with-markers
-              with-tooltip
-              min="0"
-              max=${Math.max(0, memoryOptions.length - 1)}
-              ?disabled=${memoryOptions.length < 2}
-              step="1"
-              .value=${memoryIndex >= 0 ? memoryIndex : 0}
-              @input=${this._onMemoryChange}
-              .valueFormatter=${this._formatMemoryAt}
-              ><div slot="label" class="setting-header">
-                <span class="setting-label"
-                  >${localize(
-                    "views.proxmox.proxmox_configure_view.memory"
-                  )}</span
-                ><span class="setting-value" aria-hidden="true"
-                  >${this._formatMemory(this._memoryMb)}</span
-                >
-              </div></wa-slider
-            >
-            <p class="setting-description">${this._getMemoryDescription()}</p>
-          </div>
-        </div>
-
-        <!-- Disk Size -->
-        <div class="setting-row">
-          <div class="setting-icon">${this._renderDiskIcon()}</div>
-          <div class="setting-content">
-            <wa-slider
-              with-markers
-              with-tooltip
-              min="0"
-              max=${diskSizeOptions.length - 1}
-              step="1"
-              .value=${diskIndex >= 0 ? diskIndex : 0}
-              @input=${this._onDiskSizeChange}
-              .valueFormatter=${this._formatDiskSizeAt}
-              ><div slot="label" class="setting-header">
-                <span class="setting-label"
-                  >${localize(
-                    "views.proxmox.proxmox_configure_view.disk_size"
-                  )}</span
-                ><span class="setting-value" aria-hidden="true"
-                  >${this._formatDiskSize(this._diskSizeGb)}</span
-                >
-              </div></wa-slider
-            >
-            <p class="setting-description">${this._getDiskDescription()}</p>
-          </div>
-        </div>
+        <vm-resources
+          .coreOptions=${this._getCoreOptions()}
+          .memoryOptions=${this._getMemoryOptions()}
+          .diskOptions=${this._getDiskSizeOptions()}
+          .cpuCores=${this._cpuCores}
+          .memoryMb=${this._memoryMb}
+          .diskSizeGb=${this._diskSizeGb}
+          @resources-change=${this._onResourcesChange}
+        ></vm-resources>
       </div>
     `;
   }

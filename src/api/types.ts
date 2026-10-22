@@ -225,7 +225,7 @@ name: string,
  */
 status: string,
 /**
- * CPU usage percentage
+ * CPU usage as Proxmox reports it, a fraction from 0 to 1 (0.15 is 15%)
  */
 cpu_usage: number | null,
 /**
@@ -382,3 +382,20 @@ status: string,
  * The VM's IP address, if known.
  */
 ip_address: string | null, };
+
+export type HaSetupStatus = {
+/**
+ * Progress (0-100) of the Core download, while Supervisor runs it.
+ */
+core_install_progress: number | null,
+/**
+ * Progress (0-100) of Supervisor updating itself, which on a first boot
+ * usually comes before the Core download.
+ */
+supervisor_update_progress: number | null,
+/**
+ * Problems that can hold up the install, most fundamental first.
+ */
+problems: Array<HaSetupProblem>, };
+
+export type HaSetupProblem = "no_internet" | "free_space" | "docker_ratelimit" | "update_failed";

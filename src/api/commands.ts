@@ -8,6 +8,7 @@ import type {
   FlashProgress,
   FlashRequest,
   FlashResult,
+  HaSetupStatus,
   HaosRelease,
   ProxmoxCredentials,
   ProxmoxNode,
@@ -531,6 +532,22 @@ export async function checkHaUpdated(ipAddress: string): Promise<boolean> {
   return invoke<boolean>("check_ha_updated", { ipAddress });
 }
 
+/**
+ * What Supervisor reports while it installs Home Assistant, read from the
+ * landing page at the given IP address.
+ * @returns The Core download's progress and the problems holding it up, or
+ * null without a full answer from the landing page, as once Home Assistant
+ * runs
+ */
+export async function getHaSetupStatus(
+  ipAddress: string
+): Promise<HaSetupStatus | null> {
+  if (MOCK_ALLOWED && isBrowserOnly()) {
+    return null;
+  }
+  return invoke<HaSetupStatus | null>("get_ha_setup_status", { ipAddress });
+}
+
 // ============================================================================
 // Proxmox VE Commands
 // ============================================================================
@@ -583,13 +600,13 @@ export async function proxmoxListNodes(
       {
         name: "pve",
         status: "online",
-        cpu_usage: 12.5,
+        cpu_usage: 0.125,
         cpu_count: 16,
       },
       {
         name: "pve2",
         status: "online",
-        cpu_usage: 8.2,
+        cpu_usage: 0.082,
         cpu_count: 8,
       },
     ];

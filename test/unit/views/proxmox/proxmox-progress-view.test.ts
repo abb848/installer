@@ -1,4 +1,10 @@
-import { expect, fixtureSync, html, oneEvent } from "@open-wc/testing";
+import {
+  expect,
+  fixtureSync,
+  html,
+  oneEvent,
+  waitUntil,
+} from "@open-wc/testing";
 import type {
   FlashProgress,
   ProxmoxVmResult,
@@ -335,6 +341,8 @@ describe("proxmox-progress-view", () => {
             // Past the 60-minute deadline from inside the first check
             if (!updated) clockOffset += 61 * 60 * 1000;
             return updated;
+          case "get_ha_setup_status":
+            return null;
         }
         throw new Error(`Unexpected IPC command: ${cmd}`);
       });
@@ -360,6 +368,47 @@ describe("proxmox-progress-view", () => {
     } finally {
       Date.now = realNow;
     }
+  });
+
+  it("shows the Core download and what holds it up while Home Assistant installs", async () => {
+    wizardState.setSelection("proxmoxVmResult", { vm_id: 100, node: "pve" });
+    mockTauriIpc((cmd) => {
+      switch (cmd) {
+        case "proxmox_get_vm_status":
+          return { status: "running", ip_address: "192.168.1.100" };
+        case "check_ha_ready":
+          return true;
+        case "check_ha_updated":
+          return false;
+        case "get_ha_setup_status":
+          return {
+            core_install_progress: 87.6,
+            supervisor_update_progress: null,
+            problems: ["free_space"],
+          };
+      }
+      throw new Error(`Unexpected IPC command: ${cmd}`);
+    });
+    const el = mount();
+    await el.updateComplete;
+    const layout = el.shadowRoot!.querySelector("install-progress")!;
+
+    await waitUntil(
+      () => layout.stage === "updating" && layout.progress === 88,
+      "never showed the Core download"
+    );
+    expect(layout.measurable).to.be.true;
+    expect(layout.indeterminate).to.be.false;
+    await waitUntil(
+      () =>
+        progressOf(el)
+          .querySelector(".warning")!
+          .textContent!.includes("running out of disk space"),
+      "never showed the problem",
+      { timeout: 3000 }
+    );
+    expect(el.hasError).to.be.false;
+    el.remove();
   });
 
   // Asking again with the same session or the same missing permission fails
@@ -405,6 +454,12 @@ describe("proxmox-progress-view", () => {
       expect(calls).to.not.include("check_ha_ready");
       // The VM stays known, for when the user comes back to it
       expect(wizardState.getState().selections.proxmoxVmResult).to.exist;
+      // Only a new login gets past an expired session
+      const reconnect = error.code === "proxmox_session_expired";
+      expect(failed.detail.reconnect).to.equal(reconnect);
+      const selections = wizardState.getState().selections;
+      expect(!!selections.proxmoxSession).to.equal(!reconnect);
+      expect(!!selections.proxmoxPreviousServer).to.equal(reconnect);
     });
   }
 
@@ -434,6 +489,51 @@ describe("proxmox-progress-view", () => {
     expect(statusCalls).to.equal(2);
     expect(el.hasError).to.be.false;
   });
+
+  // Before the VM is created, logging in again can start over safely. Once
+  // it is being created, it may exist half way, unknown to the installer.
+  for (const [stage, reconnect] of [
+    ["uploading", true],
+    ["creating_vm", false],
+    ["starting_vm", false],
+  ] as const) {
+    it(`${reconnect ? "offers" : "does not offer"} Reconnect when the session expires while ${stage}`, async () => {
+      const createVm = deferred<ProxmoxVmResult>();
+      let report!: (progress: FlashProgress) => void;
+      mockTauriIpc((cmd, args) => {
+        if (cmd === "proxmox_create_vm") {
+          const { progressChannel } = args as {
+            progressChannel: { onmessage: (progress: FlashProgress) => void };
+          };
+          report = (progress) => progressChannel.onmessage(progress);
+          return createVm.promise;
+        }
+        throw new Error(`Unexpected IPC command: ${cmd}`);
+      });
+
+      const el = mount();
+      await settle();
+      report({
+        stage,
+        progress: 0,
+        bytes_processed: 0,
+        total_bytes: 0,
+        message: "",
+      });
+      const failed = oneEvent(el, "install-error");
+      createVm.reject(
+        ipcError("proxmox_session_expired", "Proxmox session expired.")
+      );
+      expect((await failed).detail.reconnect).to.equal(reconnect);
+      await el.updateComplete;
+
+      const selections = wizardState.getState().selections;
+      expect(!!selections.proxmoxSession).to.equal(!reconnect);
+      expect(errorText(el)).to.contain(
+        reconnect ? "Reconnect to Proxmox" : "Check it in Proxmox"
+      );
+    });
+  }
 
   it("shows the step the backend reports", async () => {
     const createVm = deferred<ProxmoxVmResult>();
@@ -551,7 +651,12 @@ describe("proxmox-progress-view", () => {
 
       expect(install.stops).to.deep.equal([install.attempt()]);
       expect(el.stoppable, "a second stop has nothing to add").to.be.false;
-      expect(stageTitle(el)).to.equal("Stopping...");
+      expect(stageTitle(el)).to.equal("Stopping");
+      // The thinking cloud adds the ellipsis to the stage title
+      await el.shadowRoot!.querySelector("install-progress")!.updateComplete;
+      expect(
+        progressOf(el).querySelector(".cloud-text")!.textContent!.trim()
+      ).to.equal("Stopping...");
 
       const failed = oneEvent(el, "install-error");
       install.createVm.reject(CANCELLED);
@@ -587,7 +692,7 @@ describe("proxmox-progress-view", () => {
       await completed;
 
       expect(el.hasError).to.be.false;
-      expect(stageTitle(el)).to.not.equal("Stopping...");
+      expect(stageTitle(el)).to.not.equal("Stopping");
     });
 
     it("offers the stop again when the request fails", async () => {
@@ -600,7 +705,7 @@ describe("proxmox-progress-view", () => {
 
       expect(install.stops).to.have.length(1);
       expect(el.stoppable).to.be.true;
-      expect(stageTitle(el)).to.not.equal("Stopping...");
+      expect(stageTitle(el)).to.not.equal("Stopping");
     });
   });
 

@@ -251,6 +251,10 @@ pub trait HostBackend {
 
     /// Whether Home Assistant has finished starting up at `ip`.
     async fn check_ha_updated(&self, ip: &str) -> bool;
+
+    /// What Supervisor reports while it installs Core at `ip`, or `None`
+    /// without a full answer from a landing page there.
+    async fn ha_setup_status(&self, ip: &str) -> Option<HaSetupStatus>;
 }
 
 /// hai-core's production backend.

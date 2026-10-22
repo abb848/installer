@@ -3,6 +3,7 @@ import { customElement, property } from "lit/decorators.js";
 import { localize } from "../localization/localize.js";
 import { openExternalLink } from "../utils/external-url.js";
 import { renderCasitaHappy } from "./install-mascot.js";
+import "./inline-notice.js";
 import {
   ReducedSvgMotion,
   ViewAccessibility,
@@ -123,13 +124,6 @@ export class InstallSuccess extends LitElement {
         border-radius: 12px;
       }
 
-      @media (prefers-color-scheme: dark) {
-        .companion-section {
-          background-color: var(--ha-card-background, #1e1e1e);
-          border-color: var(--ha-border-color, #333333);
-        }
-      }
-
       .companion-title {
         font-size: 1rem;
         font-weight: 500;
@@ -150,7 +144,7 @@ export class InstallSuccess extends LitElement {
         gap: 0.5rem;
         padding: 0.625rem 1rem;
         background-color: var(--ha-background-color, #f5f5f5);
-        border: 1px solid var(--ha-border-color, #e0e0e0);
+        border: 1px solid var(--ha-control-border-color, #e0e0e0);
         border-radius: 8px;
         color: var(--ha-text-color, #212121);
         text-decoration: none;
@@ -169,24 +163,11 @@ export class InstallSuccess extends LitElement {
         fill: white;
       }
 
-      @media (prefers-color-scheme: dark) {
-        .app-link {
-          background-color: var(--ha-background-color, #2d2d2d);
-          border-color: #444444;
-        }
-      }
-
       .app-link svg {
         width: 20px;
         height: 20px;
         fill: var(--ha-text-color, #212121);
         transition: fill 0.2s ease;
-      }
-
-      @media (prefers-color-scheme: dark) {
-        .app-link svg {
-          fill: var(--ha-text-color, #e0e0e0);
-        }
       }
 
       .tip-section {
@@ -202,10 +183,7 @@ export class InstallSuccess extends LitElement {
         text-align: left;
       }
 
-      .notice {
-        padding: 0.75rem 0 0.75rem 1rem;
-        border-left: 3px solid var(--ha-warning-color, #f5a623);
-        line-height: 1.5;
+      inline-notice {
         margin: 1.25rem 0;
         overflow-wrap: anywhere;
       }
@@ -242,7 +220,9 @@ export class InstallSuccess extends LitElement {
         <p class="next-steps-title">
           ${localize("views.proxmox.proxmox_success_view.next_steps")}
         </p>
-        ${this.notice ? html`<p class="notice">${this.notice}</p>` : ""}
+        ${this.notice
+          ? html`<inline-notice><p>${this.notice}</p></inline-notice>`
+          : ""}
         <ol
           class="steps-list"
           role="list"

@@ -24,12 +24,6 @@ export class ProgressBar extends LitElement {
       --track-color: var(--ha-border-color, #e0e0e0);
     }
 
-    @media (prefers-color-scheme: dark) {
-      wa-progress-bar {
-        --track-color: var(--ha-border-color, #333333);
-      }
-    }
-
     wa-progress-bar.error {
       --indicator-color: var(--ha-error-color, #db4437);
     }

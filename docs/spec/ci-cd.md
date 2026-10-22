@@ -15,22 +15,28 @@
 Everything runs in one workflow,
 [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml); there is no
 separate release workflow. It runs on every pull request, on every push to
-`main`, and by hand to make a release. The workflow file is the reference for
+`main`, daily on `main` for the audits alone, and by hand to make a release. The workflow file is the reference for
 the jobs and their steps; in short:
 
 - **Audit** jobs check `package-lock.json` (`npm audit`) and `Cargo.lock`
-  (`cargo audit`) for known vulnerabilities.
+  (`cargo audit`) for known vulnerabilities. On a pull request, `cargo audit`
+  only runs when the pull request changes `Cargo.lock`.
 - **zizmor** lints the workflow itself.
 - **Lint** jobs run ESLint, Prettier, the TypeScript type check, the
   localization catalog check, `cargo fmt`, `cargo shear` and Clippy (on all
   three platforms, since the disk code is split per OS).
 - **Test** jobs run the frontend unit tests, the Playwright E2E tests in
-  Chromium and WebKit, and the Rust tests on all three platforms. Frontend and
-  Linux backend coverage go to Codecov.
+  Chromium and WebKit (each split across three jobs), and the Rust tests on
+  all three platforms. Frontend and Linux backend coverage go to Codecov.
 - **Build** produces the installers for each platform and uploads each one as
   an unarchived workflow artifact. On pushes to `main` and in release runs,
   the macOS build is signed and notarized (see
   [Required Secrets](#required-secrets)).
+
+A new push to a pull request cancels the run for the push before it. Only
+runs on `main` save the cargo caches; pull requests restore them but don't
+write their own, so they don't push `main`'s caches out of the 10 GB GitHub
+keeps per repository.
 
 ---
 

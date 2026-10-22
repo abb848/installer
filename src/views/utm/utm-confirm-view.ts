@@ -8,12 +8,7 @@ import { ViewAccessibility } from "../../utils/view-accessibility.js";
 import { logFrontendError } from "../../utils/diagnostics.js";
 import { customElement, state } from "lit/decorators.js";
 import { wizardState, type WizardState } from "../../state/wizard-state.js";
-import {
-  DEFAULT_CPU_CORES,
-  DEFAULT_DISK_SIZE_GB,
-  DEFAULT_MEMORY_MB,
-  DEFAULT_UTM_VM_NAME,
-} from "../../state/vm-defaults.js";
+import { utmVmConfig } from "../../state/vm-defaults.js";
 import { getUtmHaosRelease } from "../../api/commands.js";
 
 @customElement("utm-confirm-view")
@@ -53,13 +48,6 @@ export class UtmConfirmView extends LitElement {
       width: 100%;
       box-sizing: border-box;
       max-width: 500px;
-    }
-
-    @media (prefers-color-scheme: dark) {
-      .summary-card {
-        background-color: var(--ha-card-background, #1e1e1e);
-        border-color: var(--ha-border-color, #333333);
-      }
     }
 
     .summary-row {
@@ -128,12 +116,6 @@ export class UtmConfirmView extends LitElement {
       background-color: var(--ha-border-color, #e0e0e0);
       margin: 0;
     }
-
-    @media (prefers-color-scheme: dark) {
-      .divider {
-        background-color: var(--ha-border-color, #333333);
-      }
-    }
   `;
 
   @state()
@@ -168,11 +150,8 @@ export class UtmConfirmView extends LitElement {
   }
 
   render() {
-    const selections = this._wizardState.selections;
-    const vmName = selections.vmName || DEFAULT_UTM_VM_NAME;
-    const cpuCores = selections.cpuCores || DEFAULT_CPU_CORES;
-    const memoryMb = selections.memoryMb || DEFAULT_MEMORY_MB;
-    const diskSizeGb = selections.diskSizeGb || DEFAULT_DISK_SIZE_GB;
+    // What the install creates, not the raw selections
+    const config = utmVmConfig(this._wizardState.selections);
 
     return html`
       <h2>
@@ -192,11 +171,14 @@ export class UtmConfirmView extends LitElement {
             <p class="summary-label">
               ${localize("components.app_shell.virtual_machine")}
             </p>
-            <p class="summary-value">${vmName}</p>
+            <p class="summary-value">${config.name}</p>
             <p class="summary-detail">
               ${localizeContent(
                 "views.proxmox.proxmox_confirm_view.value_cpu_cores_value",
-                { value0: cpuCores, value1: this._formatMemory(memoryMb) }
+                {
+                  value0: config.cpu_cores,
+                  value1: this._formatMemory(config.memory_mb),
+                }
               )}
             </p>
           </div>
@@ -209,7 +191,9 @@ export class UtmConfirmView extends LitElement {
           <div class="icon-container">${this._renderDiskIcon()}</div>
           <div class="summary-info">
             <p class="summary-label">${localize("vm.disk_storage")}</p>
-            <p class="summary-value">${this._formatDiskSize(diskSizeGb)}</p>
+            <p class="summary-value">
+              ${this._formatDiskSize(config.disk_size_gb)}
+            </p>
             <p class="summary-detail">
               ${localize(
                 "views.proxmox.proxmox_confirm_view.virtual_disk_for_home_assistant_data"

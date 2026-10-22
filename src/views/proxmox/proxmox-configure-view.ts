@@ -4,7 +4,7 @@ import {
   type InstallerError,
 } from "../../utils/installer-error.js";
 import { formatNumber, localize } from "../../localization/localize.js";
-import { LitElement, html, css } from "lit";
+import { LitElement, html, css, noChange } from "lit";
 import {
   ViewAccessibility,
   reducedMotionStyles,
@@ -13,8 +13,6 @@ import { InstallDiagnostics } from "../../utils/diagnostics.js";
 import { customElement, state } from "lit/decorators.js";
 import type WaInput from "@home-assistant/webawesome/dist/components/input/input.js";
 import "@home-assistant/webawesome/dist/components/input/input.js";
-import type WaSlider from "@home-assistant/webawesome/dist/components/slider/slider.js";
-import "@home-assistant/webawesome/dist/components/slider/slider.js";
 import type WaSelect from "@home-assistant/webawesome/dist/components/select/select.js";
 import "@home-assistant/webawesome/dist/components/select/select.js";
 import { wizardState, type WizardState } from "../../state/wizard-state.js";
@@ -44,15 +42,14 @@ import {
   DEFAULT_PROXMOX_VM_NAME,
   proxmoxVmConfig,
 } from "../../state/vm-defaults.js";
-
-/** Lookups report an expired session as its own code, answered with Reconnect */
-const SESSION_EXPIRED = "proxmox_session_expired";
-
-/**
- * A changed certificate needs the same answer: reconnecting shows the new
- * certificate to confirm, while retrying would keep hitting the old pin.
- */
-const CERTIFICATE_CHANGED = "proxmox_certificate_changed";
+import { settingStyles } from "../../utils/setting-styles.js";
+import {
+  SESSION_EXPIRED,
+  forgetProxmoxSession,
+  needsReconnect,
+} from "./proxmox-session.js";
+import "../../components/vm-resources.js";
+import type { VmResourceValues } from "../../components/vm-resources.js";
 
 const DIRECTORY_STORAGE_DOCS =
   "https://pve.proxmox.com/pve-docs/pve-admin-guide.html#storage_directory";
@@ -65,15 +62,21 @@ const DIRECTORY_STORAGE_DOCS =
 const VM_NAME_LABEL = "[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?";
 const VM_NAME_PATTERN = new RegExp(`^${VM_NAME_LABEL}(\\.${VM_NAME_LABEL})*$`);
 
+/** The VM IDs Proxmox accepts */
+const MIN_VM_ID = 100;
+const MAX_VM_ID = 999_999_999;
+
 const CORE_OPTIONS = [2, 4, 6, 8, 10, 12, 16];
 
-function isSessionExpired(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error.code === SESSION_EXPIRED || error.code === CERTIFICATE_CHANGED)
-  );
+/** A whole number from min to max, or undefined */
+function parseWholeNumber(
+  text: string,
+  min: number,
+  max: number
+): number | undefined {
+  if (!/^\d+$/.test(text)) return undefined;
+  const value = Number(text);
+  return value >= min && value <= max ? value : undefined;
 }
 
 @customElement("proxmox-configure-view")
@@ -81,6 +84,7 @@ export class ProxmoxConfigureView extends LitElement {
   protected readonly _accessibility = new ViewAccessibility(this);
   static styles = [
     reducedMotionStyles,
+    settingStyles,
     css`
       :host {
         display: flex;
@@ -122,79 +126,6 @@ export class ProxmoxConfigureView extends LitElement {
         max-width: 500px;
         margin-top: 1rem;
         flex-shrink: 0;
-      }
-
-      @media (prefers-color-scheme: dark) {
-        .config-card {
-          background-color: var(--ha-card-background, #1e1e1e);
-          border-color: var(--ha-border-color, #333333);
-        }
-      }
-
-      .setting-row {
-        display: flex;
-        align-items: flex-start;
-        gap: 0.75rem;
-      }
-
-      .setting-icon {
-        width: 32px;
-        height: 32px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        flex-shrink: 0;
-        margin-top: 2px;
-      }
-
-      .setting-icon svg {
-        width: 22px;
-        height: 22px;
-        fill: var(--ha-secondary-text-color, #727272);
-      }
-
-      .setting-content {
-        flex: 1;
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-        min-width: 0;
-      }
-
-      wa-slider::part(label) {
-        display: block;
-      }
-
-      .setting-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: baseline;
-      }
-
-      .setting-label {
-        font-size: 0.9375rem;
-        font-weight: 500;
-        color: var(--ha-text-color, #212121);
-      }
-
-      .setting-value {
-        font-size: 0.9375rem;
-        font-weight: 600;
-        color: var(--ha-primary-color, #03a9f4);
-        min-width: 70px;
-        text-align: right;
-      }
-
-      .setting-description {
-        font-size: 0.75rem;
-        color: var(--ha-secondary-text-color, #9e9e9e);
-        margin: 0;
-        line-height: 1.3;
-      }
-
-      /* The slider's handle reaches below its track */
-      wa-slider + .setting-description {
-        margin-top: 0.5rem;
       }
 
       .loading-text {
@@ -253,8 +184,9 @@ export class ProxmoxConfigureView extends LitElement {
   @state()
   private _selectedStorage = "";
 
+  /** Raw text of the VM ID field, so it never changes while typing */
   @state()
-  private _vmId = DEFAULT_PROXMOX_VM_ID;
+  private _vmIdText = String(DEFAULT_PROXMOX_VM_ID);
 
   @state()
   private _vmName = DEFAULT_PROXMOX_VM_NAME;
@@ -295,8 +227,6 @@ export class ProxmoxConfigureView extends LitElement {
   @state() private _checkError: InstallerError | null = null;
   /** Raw text of the VLAN field; empty keeps today's untagged network. */
   @state() private _vlanTag = "";
-  /** A restored tag opens Advanced, so it is never hidden from review. */
-  private _advancedOpen = false;
 
   connectedCallback() {
     super.connectedCallback();
@@ -320,14 +250,13 @@ export class ProxmoxConfigureView extends LitElement {
     this._selectedStorage = selections.proxmoxStorage ?? "";
     this._selectedBridge = selections.proxmoxBridge ?? "";
     this._vlanTag = selections.proxmoxVlanTag?.toString() ?? "";
-    this._advancedOpen = !!this._vlanTag;
     this._vmName = selections.vmName ?? DEFAULT_PROXMOX_VM_NAME;
     this._cpuCores = selections.cpuCores ?? DEFAULT_CPU_CORES;
     this._memoryMb = selections.memoryMb ?? DEFAULT_MEMORY_MB;
     this._diskSizeGb = selections.diskSizeGb ?? DEFAULT_DISK_SIZE_GB;
 
     if (selections.proxmoxVmId !== undefined) {
-      this._vmId = selections.proxmoxVmId;
+      this._vmIdText = String(selections.proxmoxVmId);
       this._vmIdChosen = true;
     }
   }
@@ -375,12 +304,9 @@ export class ProxmoxConfigureView extends LitElement {
       // An expired session must take precedence over an ordinary failure
       // from the other lookup, regardless of which one finishes first.
       const failures = results.filter((result) => result.status === "rejected");
-      if (failures.length) {
-        const expired = failures.find((result) =>
-          isSessionExpired(result.reason)
-        );
-        throw (expired ?? failures[0]).reason;
-      }
+      const failure =
+        failures.find((result) => needsReconnect(result.reason)) ?? failures[0];
+      if (failure) throw failure.reason;
       const nodes = (results[0] as PromiseFulfilledResult<ProxmoxNode[]>).value;
       const nextVmId = (results[1] as PromiseFulfilledResult<number>).value;
 
@@ -389,7 +315,7 @@ export class ProxmoxConfigureView extends LitElement {
       // The next free VM ID is only a suggestion - never overwrite an ID the
       // user has already been shown and may have changed
       if (!this._vmIdChosen) {
-        this._vmId = nextVmId;
+        this._vmIdText = String(nextVmId);
         this._vmIdChosen = true;
       }
 
@@ -457,9 +383,7 @@ export class ProxmoxConfigureView extends LitElement {
         (result): result is PromiseRejectedResult =>
           result.status === "rejected"
       );
-      const expired = failures.find((result) =>
-        isSessionExpired(result.reason)
-      );
+      const expired = failures.find((result) => needsReconnect(result.reason));
       if (!isLatest()) {
         // Session expiry applies to every node, even from a superseded
         // lookup; the catch below handles it. Other failures belong to the
@@ -523,7 +447,8 @@ export class ProxmoxConfigureView extends LitElement {
         this._bridges = [];
       }
 
-      if (failures.length) throw (expired ?? failures[0]).reason;
+      const failure = expired ?? failures[0];
+      if (failure) throw failure.reason;
 
       this._saveSelections();
     } catch (error) {
@@ -531,7 +456,7 @@ export class ProxmoxConfigureView extends LitElement {
       if (!isLatest()) {
         // Session expiry applies to every node, even if this lookup was
         // superseded. Ordinary failures still belong to the old selection.
-        if (isSessionExpired(error)) {
+        if (needsReconnect(error)) {
           this._setError(error);
         }
         return;
@@ -570,7 +495,7 @@ export class ProxmoxConfigureView extends LitElement {
       return true;
     } catch (error) {
       if (!isCurrent()) return false;
-      if (isSessionExpired(error)) {
+      if (needsReconnect(error)) {
         this._setError(error);
       } else {
         new InstallDiagnostics("proxmox").fail(error);
@@ -584,24 +509,14 @@ export class ProxmoxConfigureView extends LitElement {
     // Only reached for the current, connected lookup, so detached or
     // superseded lookups never add diagnostics
     new InstallDiagnostics("proxmox").fail(error);
-    this._sessionExpired = isSessionExpired(error);
+    this._sessionExpired = needsReconnect(error);
     this._error = installerError(
       error,
       localize(
         "views.proxmox.proxmox_configure_view.failed_to_load_proxmox_configuration"
       )
     );
-    if (this._sessionExpired) {
-      const session = wizardState.getState().selections.proxmoxSession;
-      if (session) {
-        wizardState.setSelection("proxmoxPreviousServer", {
-          server_url: session.server_url,
-          certificate_sha256: session.certificate_sha256,
-        });
-      }
-      wizardState.setSelection("proxmoxSession", undefined);
-      wizardState.setSelection("proxmoxConnected", false);
-    }
+    if (this._sessionExpired) forgetProxmoxSession();
     wizardState.setSelection("proxmoxConfigureReady", false);
     wizardState.setSelection("proxmoxImportReady", false);
   }
@@ -660,7 +575,7 @@ export class ProxmoxConfigureView extends LitElement {
       await this._loadStorage();
     } catch (error) {
       if (!isCurrent()) return;
-      if (isSessionExpired(error)) {
+      if (needsReconnect(error)) {
         this._setError(error);
         return;
       }
@@ -720,15 +635,13 @@ export class ProxmoxConfigureView extends LitElement {
     wizardState.goToStep(0);
   }
 
+  /** Choices are judged only against a lookup that finished without error. */
+  private get _loaded(): boolean {
+    return !this._loadingNodes && !this._loadingStorage && !this._error;
+  }
+
   private get _parsedVlanTag(): number | undefined {
-    if (
-      !/^\d+$/.test(this._vlanTag) ||
-      Number(this._vlanTag) < 1 ||
-      Number(this._vlanTag) > 4094
-    ) {
-      return undefined;
-    }
-    return Number(this._vlanTag);
+    return parseWholeNumber(this._vlanTag, 1, 4094);
   }
 
   private get _vlanError(): string | undefined {
@@ -739,9 +652,7 @@ export class ProxmoxConfigureView extends LitElement {
       );
     }
     if (
-      !this._loadingNodes &&
-      !this._loadingStorage &&
-      !this._error &&
+      this._loaded &&
       !this._bridges.find((bridge) => bridge.name === this._selectedBridge)
         ?.vlan_aware
     ) {
@@ -750,6 +661,11 @@ export class ProxmoxConfigureView extends LitElement {
       );
     }
     return undefined;
+  }
+
+  /** A set tag changes the VM's network and can block Next: never hide it */
+  private _keepVlanTagShown(e: Event) {
+    if (this._vlanTag && e.target === e.currentTarget) e.preventDefault();
   }
 
   private _onVlanInput(e: Event) {
@@ -765,30 +681,23 @@ export class ProxmoxConfigureView extends LitElement {
     wizardState.setSelection("proxmoxVlanTag", this._parsedVlanTag);
     wizardState.setSelection(
       "proxmoxBridgeReady",
-      !this._loadingNodes &&
-        !this._loadingStorage &&
-        !this._error &&
+      this._loaded &&
         this._bridges.some((bridge) => bridge.name === this._selectedBridge)
     );
     wizardState.setSelection(
       "proxmoxConfigureReady",
-      !this._loadingNodes &&
-        !this._loadingStorage &&
-        !this._error &&
-        !this._vlanError &&
-        !this._nameError
+      this._loaded && !this._vlanError && !this._nameError && !this._vmIdError
     );
     wizardState.setSelection(
       "proxmoxImportReady",
-      !this._loadingNodes &&
-        !this._loadingStorage &&
-        !this._error &&
-        this._importReady
+      this._loaded && this._importReady
     );
     // A failed initial lookup must not turn the fallback ID into a choice
     // that suppresses the next-free-ID suggestion after reconnecting.
+    // An ID that isn't valid yet is left out, so the one typed before it
+    // can't reach the check or the install
     if (this._vmIdChosen) {
-      wizardState.setSelection("proxmoxVmId", this._vmId);
+      wizardState.setSelection("proxmoxVmId", this._parsedVmId);
     }
     wizardState.setSelection("vmName", this._vmName);
     wizardState.setSelection("cpuCores", this._cpuCores);
@@ -820,9 +729,22 @@ export class ProxmoxConfigureView extends LitElement {
     this._saveSelections();
   }
 
+  private get _parsedVmId(): number | undefined {
+    return parseWholeNumber(this._vmIdText, MIN_VM_ID, MAX_VM_ID);
+  }
+
+  private get _vmIdError(): string | undefined {
+    if (this._parsedVmId !== undefined) return undefined;
+    return localize("views.proxmox.proxmox_configure_view.vm_id_invalid", {
+      min: MIN_VM_ID,
+      max: MAX_VM_ID,
+    });
+  }
+
   private _onVmIdChange(e: Event) {
-    const input = e.target as WaInput;
-    this._vmId = parseInt(input.value ?? "", 10) || DEFAULT_PROXMOX_VM_ID;
+    // Kept as typed, like the name: falling back to a default here put it
+    // in front of whatever was typed next. _vmIdError holds Next back.
+    this._vmIdText = (e.target as WaInput).value ?? "";
     this._vmIdChosen = true;
     this._saveSelections();
   }
@@ -841,27 +763,10 @@ export class ProxmoxConfigureView extends LitElement {
     this._saveSelections();
   }
 
-  private _onCoresChange(e: Event) {
-    const input = e.target as WaSlider;
-    const index = input.value;
-    const coreOptions = this._getCoreOptions();
-    this._cpuCores = coreOptions[index] || DEFAULT_CPU_CORES;
-    this._saveSelections();
-  }
-
-  private _onMemoryChange(e: Event) {
-    const input = e.target as WaSlider;
-    const index = input.value;
-    const memoryOptions = this._getMemoryOptions();
-    this._memoryMb = memoryOptions[index] || DEFAULT_MEMORY_MB;
-    this._saveSelections();
-  }
-
-  private _onDiskSizeChange(e: Event) {
-    const input = e.target as WaSlider;
-    const index = input.value;
-    const diskOptions = this._getDiskSizeOptions();
-    this._diskSizeGb = diskOptions[index] || DEFAULT_DISK_SIZE_GB;
+  private _onResourcesChange(e: CustomEvent<VmResourceValues>) {
+    this._cpuCores = e.detail.cpuCores;
+    this._memoryMb = e.detail.memoryMb;
+    this._diskSizeGb = e.detail.diskSizeGb;
     this._saveSelections();
   }
 
@@ -880,101 +785,17 @@ export class ProxmoxConfigureView extends LitElement {
     const options = this._getCoreOptions();
     if (options.includes(this._cpuCores)) return;
     this._cpuCores =
-      options.filter((cores) => cores <= this._cpuCores).pop() ?? options[0];
+      options.filter((cores) => cores <= this._cpuCores).pop() ??
+      options[0] ??
+      this._cpuCores;
   }
 
   private _getMemoryOptions(): number[] {
     return [2048, 4096, 6144, 8192, 12288, 16384, 24576, 32768];
   }
 
-  private _formatMemory(mb: number): string {
-    const gb = mb / 1024;
-    return localize("components.drive_card.value_gb", {
-      value0: formatNumber(gb, { maximumFractionDigits: 20 }),
-    });
-  }
-
   private _getDiskSizeOptions(): number[] {
     return [32, 64, 128, 256, 512];
-  }
-
-  private _formatDiskSize(gb: number): string {
-    return localize("components.drive_card.value_gb", {
-      value0: formatNumber(gb, { maximumFractionDigits: 20 }),
-    });
-  }
-
-  // The sliders step through option indexes, so they show the option there
-  private _formatCoresAt = (index: number) =>
-    localize("views.proxmox.proxmox_configure_view.value_cores", {
-      value0: this._getCoreOptions()[index],
-    });
-
-  private _formatMemoryAt = (index: number) =>
-    this._formatMemory(this._getMemoryOptions()[index]);
-
-  private _formatDiskSizeAt = (index: number) =>
-    this._formatDiskSize(this._getDiskSizeOptions()[index]);
-
-  private _getCpuDescription(): string {
-    if (this._cpuCores <= 2) {
-      return localize(
-        "views.proxmox.proxmox_configure_view.minimum_for_basic_operation"
-      );
-    } else if (this._cpuCores <= 4) {
-      return localize(
-        "views.proxmox.proxmox_configure_view.recommended_for_most_users"
-      );
-    } else if (this._cpuCores <= 8) {
-      return localize(
-        "views.proxmox.proxmox_configure_view.better_performance_with_many_integrations"
-      );
-    } else {
-      return localize(
-        "views.proxmox.proxmox_configure_view.maximum_performance_for_power_users"
-      );
-    }
-  }
-
-  private _getMemoryDescription(): string {
-    const gb = this._memoryMb / 1024;
-    if (gb <= 2) {
-      return localize(
-        "views.proxmox.proxmox_configure_view.minimum_for_basic_operation"
-      );
-    } else if (gb <= 4) {
-      return localize(
-        "views.proxmox.proxmox_configure_view.recommended_for_most_users"
-      );
-    } else if (gb <= 8) {
-      return localize(
-        "views.proxmox.proxmox_configure_view.better_for_add_ons_and_many_integrations"
-      );
-    } else {
-      return localize(
-        "views.proxmox.proxmox_configure_view.maximum_performance_for_power_users"
-      );
-    }
-  }
-
-  private _getDiskDescription(): string {
-    if (this._diskSizeGb <= 32) {
-      return localize(
-        "views.proxmox.proxmox_configure_view.good_for_getting_started"
-      );
-    } else if (this._diskSizeGb <= 64) {
-      return localize(
-        "views.proxmox.proxmox_configure_view.room_for_add_ons_and_history"
-      );
-    } else if (this._diskSizeGb <= 128) {
-      return localize(
-        "views.proxmox.proxmox_configure_view.plenty_of_space_for_long_term_use"
-      );
-    } else {
-      return localize(
-        "views.proxmox.proxmox_configure_view.extended_storage_for_recordings_and_backups"
-      );
-    }
   }
 
   // Icons
@@ -1010,39 +831,8 @@ export class ProxmoxConfigureView extends LitElement {
     </svg>`;
   }
 
-  private _renderCpuIcon() {
-    return html`<svg viewBox="0 0 24 24">
-      <path
-        d="M6,4H18V5H21V7H18V9H21V11H18V13H21V15H18V17H21V19H18V20H6V19H3V17H6V15H3V13H6V11H3V9H6V7H3V5H6V4M11,15V18H12V15H11M13,15V18H14V15H13M15,15V18H16V15H15Z"
-      />
-    </svg>`;
-  }
-
-  private _renderMemoryIcon() {
-    return html`<svg viewBox="0 0 24 24">
-      <path
-        d="M17,17H7V7H17M21,11V9H19V7C19,5.89 18.1,5 17,5H15V3H13V5H11V3H9V5H7C5.89,5 5,5.89 5,7V9H3V11H5V13H3V15H5V17A2,2 0 0,0 7,19H9V21H11V19H13V21H15V19H17A2,2 0 0,0 19,17V15H21V13H19V11M13,13H11V11H13M15,9H9V15H15V9Z"
-      />
-    </svg>`;
-  }
-
-  private _renderDiskIcon() {
-    return html`<svg viewBox="0 0 24 24">
-      <path
-        d="M12,3C7.58,3 4,4.79 4,7C4,9.21 7.58,11 12,11C16.42,11 20,9.21 20,7C20,4.79 16.42,3 12,3M4,9V12C4,14.21 7.58,16 12,16C16.42,16 20,14.21 20,12V9C20,11.21 16.42,13 12,13C7.58,13 4,11.21 4,9M4,14V17C4,19.21 7.58,21 12,21C16.42,21 20,19.21 20,17V14C20,16.21 16.42,18 12,18C7.58,18 4,16.21 4,14Z"
-      />
-    </svg>`;
-  }
-
   private _renderImport() {
-    if (
-      !this._selectedNode ||
-      this._loadingNodes ||
-      this._loadingStorage ||
-      this._importReady ||
-      this._error
-    )
-      return "";
+    if (!this._selectedNode || !this._loaded || this._importReady) return "";
 
     const candidates = this._importCandidates;
     const selected = candidates.find((s) => s.name === this._importStorage);
@@ -1197,21 +987,13 @@ export class ProxmoxConfigureView extends LitElement {
                 ?disabled=${this._loadingNodes || this._loadingStorage}
               >
                 ${this._sessionExpired
-                  ? localize("views.proxmox.proxmox_configure_view.reconnect")
+                  ? localize("proxmox.reconnect")
                   : localize("components.app_shell.try_again")}
               </wa-button>`
             : ""}
         </div>
       `;
     }
-
-    const coreOptions = this._getCoreOptions();
-    const memoryOptions = this._getMemoryOptions();
-    const diskSizeOptions = this._getDiskSizeOptions();
-
-    const coreIndex = coreOptions.indexOf(this._cpuCores);
-    const memoryIndex = memoryOptions.indexOf(this._memoryMb);
-    const diskIndex = diskSizeOptions.indexOf(this._diskSizeGb);
 
     return html`
       <h2>
@@ -1241,13 +1023,17 @@ export class ProxmoxConfigureView extends LitElement {
               placeholder="home-assistant"
               maxlength="63"
               .customError=${this._nameError ?? null}
-            ></wa-input>
-            <!-- Not role="alert": ViewAccessibility focuses a new alert, which
-              would pull focus out of the field halfway through typing -->
-            <p class="setting-description name-hint" aria-live="polite">
-              ${this._nameError ??
-              localize("views.proxmox.proxmox_configure_view.vm_name_hint")}
-            </p>
+            >
+              <!-- In the hint slot, so the field describes itself with it.
+                Not role="alert": ViewAccessibility focuses a new alert, which
+                would pull focus out of the field halfway through typing -->
+              <span slot="hint" class="name-hint" aria-live="polite"
+                >${this._nameError ??
+                localize(
+                  "views.proxmox.proxmox_configure_view.vm_name_hint"
+                )}</span
+              >
+            </wa-input>
           </div>
         </div>
 
@@ -1279,13 +1065,11 @@ export class ProxmoxConfigureView extends LitElement {
                               ? ` ${localize(
                                   "views.proxmox.proxmox_configure_view.cpu_value",
                                   {
-                                    value0: formatNumber(
-                                      Number(node.cpu_usage.toFixed(1)),
-                                      {
-                                        minimumFractionDigits: 1,
-                                        maximumFractionDigits: 1,
-                                      }
-                                    ),
+                                    // Proxmox reports a fraction (0.15 is 15%)
+                                    value0: formatNumber(node.cpu_usage, {
+                                      style: "percent",
+                                      maximumFractionDigits: 1,
+                                    }),
                                   }
                                 )}`
                               : ""
@@ -1414,107 +1198,38 @@ export class ProxmoxConfigureView extends LitElement {
               label=${localize("views.proxmox.proxmox_configure_view.vm_id")}
               type="number"
               size="s"
-              .value=${String(this._vmId)}
+              .value=${this._vmIdText}
               @input=${this._onVmIdChange}
-              min="100"
-              max="999999999"
-            ></wa-input>
-            <p class="setting-description">
-              ${localize(
-                "views.proxmox.proxmox_configure_view.unique_identifier_for_the_virtual_machine"
-              )}
-            </p>
+              min=${MIN_VM_ID}
+              max=${MAX_VM_ID}
+              .customError=${this._vmIdError ?? null}
+            >
+              <!-- In the hint slot and not role="alert", like the name hint -->
+              <span slot="hint" class="vm-id-hint" aria-live="polite"
+                >${this._vmIdError ??
+                localize(
+                  "views.proxmox.proxmox_configure_view.unique_identifier_for_the_virtual_machine"
+                )}</span
+              >
+            </wa-input>
           </div>
         </div>
 
-        <!-- CPU Cores -->
-        <div class="setting-row">
-          <div class="setting-icon">${this._renderCpuIcon()}</div>
-          <div class="setting-content">
-            <wa-slider
-              with-markers
-              with-tooltip
-              min="0"
-              max=${coreOptions.length - 1}
-              step="1"
-              .value=${coreIndex >= 0 ? coreIndex : 1}
-              @input=${this._onCoresChange}
-              .valueFormatter=${this._formatCoresAt}
-              ><div slot="label" class="setting-header">
-                <span class="setting-label"
-                  >${localize(
-                    "views.proxmox.proxmox_configure_view.cpu_cores"
-                  )}</span
-                ><span class="setting-value" aria-hidden="true"
-                  >${localize(
-                    "views.proxmox.proxmox_configure_view.value_cores",
-                    { value0: this._cpuCores }
-                  )}</span
-                >
-              </div></wa-slider
-            >
-            <p class="setting-description">${this._getCpuDescription()}</p>
-          </div>
-        </div>
-
-        <!-- Memory -->
-        <div class="setting-row">
-          <div class="setting-icon">${this._renderMemoryIcon()}</div>
-          <div class="setting-content">
-            <wa-slider
-              with-markers
-              with-tooltip
-              min="0"
-              max=${memoryOptions.length - 1}
-              step="1"
-              .value=${memoryIndex >= 0 ? memoryIndex : 1}
-              @input=${this._onMemoryChange}
-              .valueFormatter=${this._formatMemoryAt}
-              ><div slot="label" class="setting-header">
-                <span class="setting-label"
-                  >${localize(
-                    "views.proxmox.proxmox_configure_view.memory"
-                  )}</span
-                ><span class="setting-value" aria-hidden="true"
-                  >${this._formatMemory(this._memoryMb)}</span
-                >
-              </div></wa-slider
-            >
-            <p class="setting-description">${this._getMemoryDescription()}</p>
-          </div>
-        </div>
-
-        <!-- Disk Size -->
-        <div class="setting-row">
-          <div class="setting-icon">${this._renderDiskIcon()}</div>
-          <div class="setting-content">
-            <wa-slider
-              with-markers
-              with-tooltip
-              min="0"
-              max=${diskSizeOptions.length - 1}
-              step="1"
-              .value=${diskIndex >= 0 ? diskIndex : 0}
-              @input=${this._onDiskSizeChange}
-              .valueFormatter=${this._formatDiskSizeAt}
-              ><div slot="label" class="setting-header">
-                <span class="setting-label"
-                  >${localize(
-                    "views.proxmox.proxmox_configure_view.disk_size"
-                  )}</span
-                ><span class="setting-value" aria-hidden="true"
-                  >${this._formatDiskSize(this._diskSizeGb)}</span
-                >
-              </div></wa-slider
-            >
-            <p class="setting-description">${this._getDiskDescription()}</p>
-          </div>
-        </div>
+        <vm-resources
+          .coreOptions=${this._getCoreOptions()}
+          .memoryOptions=${this._getMemoryOptions()}
+          .diskOptions=${this._getDiskSizeOptions()}
+          .cpuCores=${this._cpuCores}
+          .memoryMb=${this._memoryMb}
+          .diskSizeGb=${this._diskSizeGb}
+          @resources-change=${this._onResourcesChange}
+        ></vm-resources>
       </div>
       <wa-details
         appearance="plain"
         summary=${localize("views.proxmox.proxmox_configure_view.advanced")}
-        ?open=${this._advancedOpen}
+        ?open=${!!this._vlanTag || noChange}
+        @wa-hide=${this._keepVlanTagShown}
       >
         <wa-input
           id="vlan-tag"

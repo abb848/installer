@@ -24,7 +24,8 @@ describe("live-usb-success-view", () => {
     const layout = view.shadowRoot!.querySelector("install-success")!;
     await layout.updateComplete;
 
-    const notice = layout.shadowRoot!.querySelector<HTMLElement>(".notice")!;
+    const notice =
+      layout.shadowRoot!.querySelector<HTMLElement>("inline-notice")!;
     expect(notice.scrollWidth).to.be.at.most(notice.clientWidth);
     const row = notice.querySelector<HTMLElement>(".saved-row")!;
     expect(getComputedStyle(row).display).to.equal("flex");

@@ -51,13 +51,6 @@ export class WifiView extends LitElement {
       max-width: 500px;
     }
 
-    @media (prefers-color-scheme: dark) {
-      .wifi-card {
-        background-color: var(--ha-card-background, #1e1e1e);
-        border-color: var(--ha-border-color, #333333);
-      }
-    }
-
     .note {
       max-width: 500px;
       margin: 1rem 0 0 0;

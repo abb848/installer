@@ -12,6 +12,7 @@ import {
   renderCasitaSad,
 } from "./install-mascot.js";
 import "./progress-bar.js";
+import "./inline-notice.js";
 import { renderErrorHelp } from "../utils/installer-error.js";
 import { openExternalLink } from "../utils/external-url.js";
 import {
@@ -19,6 +20,7 @@ import {
   ReducedSvgMotion,
   ViewAccessibility,
   reducedMotionStyles,
+  srOnlyStyles,
 } from "../utils/view-accessibility.js";
 
 export interface InstallStage {
@@ -33,6 +35,7 @@ export class InstallProgress extends LitElement {
   private readonly _status = new LiveStatus(this);
 
   static styles = [
+    srOnlyStyles,
     reducedMotionStyles,
     css`
       :host {
@@ -157,29 +160,14 @@ export class InstallProgress extends LitElement {
         font-weight: 600;
       }
 
-      .stage-status {
-        position: absolute;
-        width: 1px;
-        height: 1px;
-        overflow: hidden;
-        clip-path: inset(50%);
-        white-space: nowrap;
-      }
-
       .stage-dot {
         /* A pending stage's color, which the current stage pulses to */
-        --stage-dot-idle: var(--ha-border-color, #e0e0e0);
+        --stage-dot-idle: var(--ha-inactive-color, #e0e0e0);
         width: 8px;
         height: 8px;
         border-radius: 50%;
         background-color: var(--stage-dot-idle);
         transition: background-color 0.3s ease;
-      }
-
-      @media (prefers-color-scheme: dark) {
-        .stage-dot {
-          --stage-dot-idle: #444444;
-        }
       }
 
       .stage-dot.active {
@@ -320,6 +308,16 @@ export class InstallProgress extends LitElement {
         left: 30px;
       }
 
+      /* Always there, as a live region, but takes no room while empty */
+      .warning {
+        width: 100%;
+        max-width: 400px;
+      }
+
+      .warning inline-notice {
+        margin-bottom: 1rem;
+      }
+
       .address {
         font-size: 0.9375rem;
         color: var(--ha-secondary-text-color, #727272);
@@ -350,6 +348,7 @@ export class InstallProgress extends LitElement {
 
   @property({ attribute: false }) stages: InstallStage[] = [];
   @property() stage = "downloading";
+  /** A bare stage name, as the thinking cloud adds its own ellipsis */
   @property({ attribute: "stage-title" }) stageTitle = localize(
     "views.proxmox.proxmox_progress_view.downloading"
   );
@@ -370,6 +369,8 @@ export class InstallProgress extends LitElement {
   @property({ type: Boolean, attribute: "hide-empty-details" })
   hideEmptyDetails = false;
   @property({ attribute: false }) error: string | null = null;
+  /** A problem holding up the stage, while the install goes on */
+  @property({ attribute: false }) warning: string | null = null;
   /** Where Home Assistant is being checked, once the VM has an address */
   @property({ attribute: false }) address: string | null = null;
   /** Leaving no longer stops anything, so the window may close */
@@ -399,6 +400,8 @@ export class InstallProgress extends LitElement {
       `;
     }
     const hasBubble = this.stage !== "complete" && this.stage !== "error";
+    // Its live region is mounted empty first, so the first warning is announced
+    const warning = this._status.ready ? this.warning : null;
     const currentIndex = this.stages.findIndex(
       (stage) => stage.id === this.stage
     );
@@ -439,7 +442,7 @@ export class InstallProgress extends LitElement {
               <span class="stage-label"
                 >${stage.label}${this.stage === "complete" ||
                 index < currentIndex
-                  ? html`<span class="stage-status"
+                  ? html`<span class="sr-only"
                       >${` ${localize("components.install_progress.completed")}`}</span
                     >`
                   : nothing}</span
@@ -501,6 +504,11 @@ export class InstallProgress extends LitElement {
             `
           : ""}
       </div>
+      <div class="warning" role="status">
+        ${warning
+          ? html`<inline-notice><p>${warning}</p></inline-notice>`
+          : nothing}
+      </div>
       ${this.address
         ? html`<p class="address">
             ${localizeContent("components.install_progress.checking_address", {
@@ -543,20 +551,20 @@ export class InstallProgress extends LitElement {
       return localize(
         "views.proxmox.proxmox_progress_view.less_than_a_minute_remaining"
       );
-    } else if (remainingSeconds < 3600) {
-      const minutes = Math.ceil(remainingSeconds / 60);
+    }
+    // Rounded up once, before splitting: 59m 50s left is "1h 0m", never
+    // "60 minutes", and 1h 59m 50s is "2h 0m", never "1h 60m"
+    const totalMinutes = Math.ceil(remainingSeconds / 60);
+    if (totalMinutes < 60) {
       return localize(
         "views.proxmox.proxmox_progress_view.about_value_minutevalue_remaining",
-        { value0: minutes }
-      );
-    } else {
-      const hours = Math.floor(remainingSeconds / 3600);
-      const minutes = Math.ceil((remainingSeconds % 3600) / 60);
-      return localize(
-        "views.proxmox.proxmox_progress_view.about_valueh_valuem_remaining",
-        { value0: hours, value1: minutes }
+        { value0: totalMinutes }
       );
     }
+    return localize(
+      "views.proxmox.proxmox_progress_view.about_valueh_valuem_remaining",
+      { value0: Math.floor(totalMinutes / 60), value1: totalMinutes % 60 }
+    );
   }
 
   private _calculateSpeed(): string {

@@ -1,6 +1,6 @@
 //! `HostBackend` mock: a generous fake host and an always-ready Home Assistant.
 
-use crate::types::SystemInfo;
+use crate::types::{HaSetupStatus, SystemInfo};
 use crate::{HostBackend, Result};
 
 use super::BackendMock;
@@ -19,5 +19,10 @@ impl HostBackend for BackendMock {
 
     async fn check_ha_updated(&self, _ip: &str) -> bool {
         true
+    }
+
+    async fn ha_setup_status(&self, _ip: &str) -> Option<HaSetupStatus> {
+        // Home Assistant is always ready, so its landing page is gone
+        None
     }
 }

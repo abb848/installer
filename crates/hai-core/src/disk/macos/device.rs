@@ -1,7 +1,7 @@
 //! macOS block device enumeration via `diskutil`.
 
 use crate::disk::macos_safety::{self, DiskInfo as DiskUtilInfo};
-use crate::disk::{mentions_sd_card, normalize_serial};
+use crate::disk::{find_vendor, mentions_sd_card, normalize_serial};
 use crate::error::{Error, Result};
 use crate::types::{BlockDevice, DeviceType};
 use serde::Deserialize;
@@ -58,20 +58,20 @@ fn system_disks() -> Result<HashSet<String>> {
 
 /// This gate also runs in the writer, before unmounting or requesting access.
 pub(super) fn validate_flash_target(device_id: &str) -> Result<()> {
-    let disk_id = device_id.strip_prefix("/dev/disk").ok_or_else(|| {
-        Error::PermissionDenied("The flash target must be a whole /dev/diskN device".into())
-    })?;
+    let not_whole_disk =
+        || Error::PermissionDenied(crate::message!("backend.disk.not_whole_disk_device"));
+    let disk_id = device_id
+        .strip_prefix("/dev/disk")
+        .ok_or_else(not_whole_disk)?;
     if disk_id.is_empty() || !disk_id.bytes().all(|byte| byte.is_ascii_digit()) {
-        return Err(Error::PermissionDenied(
-            "The flash target must be a whole /dev/diskN device".into(),
-        ));
+        return Err(not_whole_disk());
     }
     let system_disks = system_disks()?;
     let disk: DiskUtilInfo = disk_info(device_id)?;
     if device_id != format!("/dev/{}", disk.device_identifier) {
-        return Err(Error::PermissionDenied(
-            "diskutil returned an inconsistent identity for the flash target".into(),
-        ));
+        return Err(Error::PermissionDenied(crate::message!(
+            "backend.disk.inconsistent_identity"
+        )));
     }
     disk.validate_target(&system_disks)
 }
@@ -291,12 +291,10 @@ pub(crate) fn parse_media_name(name: &str) -> (Option<String>, Option<String>) {
         "Micron",
     ];
 
-    let name_lower = name.to_lowercase();
-
     for vendor in vendors {
-        if let Some(pos) = name_lower.find(&vendor.to_lowercase()) {
+        if let Some(found) = find_vendor(name, vendor) {
             // Remove the vendor from the name (case-insensitive)
-            let model = format!("{}{}", &name[..pos], &name[pos + vendor.len()..])
+            let model = format!("{}{}", &name[..found.start], &name[found.end..])
                 .trim()
                 .trim_start_matches(&[' ', '-', '_'][..])
                 .to_string();
@@ -797,5 +795,23 @@ mod tests {
         let (vendor, model) = parse_media_name("");
         assert_eq!(vendor, None);
         assert_eq!(model, Some("".to_string()));
+    }
+
+    #[test]
+    fn test_parse_media_name_survives_text_that_grows_when_lowercased() {
+        // "İ" is 2 bytes but lowercases to 3, which used to shift the slice
+        // past the end of the original name and panic.
+        let (vendor, model) = parse_media_name("İSanDisk Ultra");
+        assert_eq!(vendor, Some("SanDisk".to_string()));
+        assert_eq!(model, Some("İ Ultra".to_string()));
+    }
+
+    #[test]
+    fn test_parse_media_name_ignores_the_kelvin_sign() {
+        // The Kelvin sign lowercases to an ASCII "k", but it is not a "K".
+        // Matching it used to cut the model to "on DataTraveler".
+        let (vendor, model) = parse_media_name("\u{212A}ingston DataTraveler");
+        assert_eq!(vendor, None);
+        assert_eq!(model, Some("\u{212A}ingston DataTraveler".to_string()));
     }
 }

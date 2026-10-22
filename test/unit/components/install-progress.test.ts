@@ -1,4 +1,10 @@
-import { expect, fixture, fixtureSync, html } from "@open-wc/testing";
+import {
+  expect,
+  fixture,
+  fixtureSync,
+  html,
+  waitUntil,
+} from "@open-wc/testing";
 import type { InstallProgress } from "../../../src/components/install-progress.js";
 import "../../../src/components/install-progress.js";
 import { captureOpenedUrls, restoreTauriIpc, settle } from "../tauri-ipc.js";
@@ -56,6 +62,53 @@ describe("install-progress", () => {
     }
   });
 
+  it("announces a problem in a warning region that is mounted empty first", async () => {
+    // Set from the start, as a view could
+    const el = fixtureSync<InstallProgress>(
+      html`<install-progress
+        stage="updating"
+        .warning=${"Home Assistant can't reach the internet."}
+      ></install-progress>`
+    );
+    await el.updateComplete;
+    const region = el.shadowRoot!.querySelector(".warning")!;
+    expect(region.getAttribute("role")).to.equal("status");
+    expect(region.textContent?.trim()).to.equal("");
+    expect(region.querySelector("inline-notice")).to.be.null;
+    // Empty, it takes no room between the progress and the address
+    expect(region.getBoundingClientRect().height).to.equal(0);
+
+    // The same region gets the text, once screen readers watch it
+    await waitUntil(
+      () => region.textContent?.trim() !== "",
+      "the warning never showed",
+      { timeout: 3000 }
+    );
+    expect(el.shadowRoot!.querySelector(".warning")).to.equal(region);
+    expect(region.textContent?.trim()).to.equal(
+      "Home Assistant can't reach the internet."
+    );
+    // In the notice every warning uses
+    expect(region.querySelector("inline-notice")).to.exist;
+
+    el.warning = "Home Assistant couldn't download an update.";
+    await el.updateComplete;
+    expect(el.shadowRoot!.querySelector(".warning")).to.equal(region);
+    expect(region.textContent?.trim()).to.equal(
+      "Home Assistant couldn't download an update."
+    );
+
+    el.warning = null;
+    await el.updateComplete;
+    expect(region.textContent?.trim()).to.equal("");
+    expect(region.querySelector("inline-notice")).to.be.null;
+
+    // An error replaces the progress, warning included
+    el.error = "The installation made no progress for 10 minutes.";
+    await el.updateComplete;
+    expect(el.shadowRoot!.querySelector(".warning")).to.be.null;
+  });
+
   it("asks to keep the window open only while leaving would stop something", async () => {
     const el = await fixture<InstallProgress>(
       html`<install-progress stage="creating_vm"></install-progress>`
@@ -111,7 +164,7 @@ describe("install-progress", () => {
     expect(
       el.shadowRoot!.querySelectorAll(".stage-dot.complete").length
     ).to.equal(3);
-    expect(el.shadowRoot!.querySelectorAll(".stage-status").length).to.equal(3);
+    expect(el.shadowRoot!.querySelectorAll("li .sr-only").length).to.equal(3);
     expect(el.shadowRoot!.querySelector("[aria-current]")).to.not.exist;
     expect(el.shadowRoot!.querySelector(".thinking-cloud")).to.not.exist;
   });
@@ -139,6 +192,24 @@ describe("install-progress", () => {
     expect(el.shadowRoot!.querySelector(".eta")!.textContent).to.equal(
       "Calculating..."
     );
+  });
+
+  it("rounds the ETA up to whole minutes before splitting off the hours", async () => {
+    // 100 bytes a second over the last 100 seconds
+    const eta = async (remainingSeconds: number) => {
+      const el = await fixture<InstallProgress>(
+        html`<install-progress
+          .bytesProcessed=${10_000}
+          .totalBytes=${10_000 + remainingSeconds * 100}
+          .stageStartTime=${Date.now() - 100_000}
+        ></install-progress>`
+      );
+      return el.shadowRoot!.querySelector(".eta")!.textContent;
+    };
+    expect(await eta(30 * 60 - 10)).to.equal("About 30 minutes remaining");
+    expect(await eta(60 * 60 - 10)).to.equal("About 1h 0m remaining");
+    expect(await eta(90 * 60 + 10)).to.equal("About 1h 31m remaining");
+    expect(await eta(120 * 60 - 10)).to.equal("About 2h 0m remaining");
   });
 
   it("shows error text safely while leaving retry to the owning flow's footer", async () => {

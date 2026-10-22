@@ -1,5 +1,5 @@
 import { localize } from "../localization/localize.js";
-import { LitElement, html, css } from "lit";
+import { LitElement, html, css, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import {
   wizardState,
@@ -24,12 +24,6 @@ export class WizardShell extends LitElement {
       .header {
         justify-content: space-between;
         border-bottom: 1px solid var(--ha-border-color, #e0e0e0);
-      }
-
-      @media (prefers-color-scheme: dark) {
-        .header {
-          border-bottom-color: var(--ha-border-color, #333333);
-        }
       }
 
       .header-center {
@@ -79,12 +73,6 @@ export class WizardShell extends LitElement {
         display: flex;
         gap: 1rem;
       }
-
-      @media (prefers-color-scheme: dark) {
-        .footer {
-          border-top-color: var(--ha-border-color, #333333);
-        }
-      }
     `,
   ];
 
@@ -102,6 +90,9 @@ export class WizardShell extends LitElement {
 
   @property({ type: Boolean, attribute: "hide-next" })
   hideNext = false;
+
+  @property({ type: Boolean, attribute: "hide-cancel" })
+  hideCancel = false;
 
   @property({ type: Boolean, attribute: "hide-footer" })
   hideFooter = false;
@@ -166,9 +157,11 @@ export class WizardShell extends LitElement {
         ? html`
             <div class="footer">
               <div class="footer-left">
-                <wa-button appearance="plain" @click=${this._onCancel}>
-                  ${localize("common.cancel")}
-                </wa-button>
+                ${this.hideCancel
+                  ? nothing
+                  : html`<wa-button appearance="plain" @click=${this._onCancel}>
+                      ${localize("common.cancel")}
+                    </wa-button>`}
               </div>
               <div class="footer-right">
                 ${!this.hideNext

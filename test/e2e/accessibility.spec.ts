@@ -3,8 +3,8 @@ import { approveProxmoxImport, skipWifiStep } from "./fixtures.js";
 
 for (const [flow, tag, flag] of [
   ["sbc", "progress-view", "_flashError"],
-  ["proxmox", "proxmox-progress-view", "_proxmoxInstallError"],
-  ["vm", "utm-progress-view", "_utmInstallError"],
+  ["proxmox", "proxmox-progress-view", "_vmInstallError"],
+  ["vm", "utm-progress-view", "_vmInstallError"],
 ] as const) {
   test(`${flow} footer retry restores the installation heading focus`, async ({
     page,
@@ -319,7 +319,11 @@ for (const tag of [
         .textContent?.trim();
     }, tag);
     expect(initialStatus).toBe("");
-    await expect(page.getByRole("status")).toHaveText("Downloading");
+    // The stage's live region, then the warning's, which waits empty for a
+    // problem so its first one is announced too
+    await expect(page.getByRole("status")).toHaveCount(2);
+    await expect(page.getByRole("status").first()).toHaveText("Downloading");
+    await expect(page.getByRole("status").nth(1)).toHaveText("");
     await expect(
       page.getByRole("list", { name: "Installation stages" })
     ).toBeVisible();

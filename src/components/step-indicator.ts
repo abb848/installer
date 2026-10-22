@@ -3,11 +3,15 @@ import { customElement, property, queryAll } from "lit/decorators.js";
 import type { WizardStep } from "../state/wizard-state.js";
 import { ifDefined } from "lit/directives/if-defined.js";
 import { localize } from "../localization/localize.js";
-import { reducedMotionStyles } from "../utils/view-accessibility.js";
+import {
+  reducedMotionStyles,
+  srOnlyStyles,
+} from "../utils/view-accessibility.js";
 
 @customElement("step-indicator")
 export class StepIndicator extends LitElement {
   static styles = [
+    srOnlyStyles,
     reducedMotionStyles,
     css`
       :host {
@@ -32,7 +36,7 @@ export class StepIndicator extends LitElement {
         width: 10px;
         height: 10px;
         border-radius: 50%;
-        background-color: var(--ha-border-color, #e0e0e0);
+        background-color: var(--ha-inactive-color, #e0e0e0);
         transition: all 0.2s ease;
       }
 
@@ -59,22 +63,12 @@ export class StepIndicator extends LitElement {
       .step-connector {
         width: 24px;
         height: 2px;
-        background-color: var(--ha-border-color, #e0e0e0);
+        background-color: var(--ha-inactive-color, #e0e0e0);
         transition: background-color 0.2s ease;
       }
 
       .step-connector.completed {
         background-color: var(--ha-primary-color, #03a9f4);
-      }
-
-      @media (prefers-color-scheme: dark) {
-        .step-dot {
-          background-color: #444444;
-        }
-
-        .step-connector {
-          background-color: #444444;
-        }
       }
 
       /* Keep the other names in the accessibility tree when only the current
@@ -148,10 +142,10 @@ export class StepIndicator extends LitElement {
    */
   private _fit() {
     const steps = this._steps;
-    if (steps.length < 2) return;
-    this.removeAttribute("compact");
     const first = steps[0];
     const last = steps[steps.length - 1];
+    if (!first || !last || first === last) return;
+    this.removeAttribute("compact");
     const wraps = last.offsetTop >= first.offsetTop + first.offsetHeight;
     this.toggleAttribute("compact", wraps);
   }

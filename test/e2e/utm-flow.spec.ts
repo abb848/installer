@@ -46,7 +46,7 @@ test.describe("UTM Installation Flow", () => {
 
   test("step 1: shows warning about testing/evaluation", async ({ page }) => {
     const checkView = page.locator("utm-check-view");
-    const warningCard = checkView.locator(".warning-card");
+    const warningCard = checkView.locator("inline-notice");
     await expect(warningCard).toBeVisible();
     await expect(warningCard).toContainText("Best for testing");
     await expect(warningCard).toContainText("Mac needs to be running");

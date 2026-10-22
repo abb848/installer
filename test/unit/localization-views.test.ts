@@ -1,6 +1,10 @@
 import { expect } from "@open-wc/testing";
 import { render } from "lit";
 import "../../src/components/app-shell.js";
+import {
+  formatDiskSize,
+  formatMemory,
+} from "../../src/components/vm-resources.js";
 import messages from "../../src/localization/en.json";
 import {
   setLanguage,
@@ -208,8 +212,11 @@ describe("localized view contracts", () => {
   for (const [seconds, phrase] of [
     [59, "Less than a minute remaining"],
     [60, "About 1 minute remaining"],
-    [3599, "About 60 minutes remaining"],
+    [3540, "About 59 minutes remaining"],
+    // Rounded up to whole minutes first, so never "60 minutes" or "1h 60m"
+    [3599, "About 1h 0m remaining"],
     [3600, "About 1h 0m remaining"],
+    [7199, "About 2h 0m remaining"],
   ] as const) {
     it(`install-progress preserves the ${seconds}-second ETA boundary`, () => {
       Date.now = () => 10000;
@@ -233,19 +240,15 @@ describe("localized view contracts", () => {
       _formatSize(bytes: number): string;
     };
     expect(confirmation._formatSize(1.25 * 1000 ** 4)).to.equal("1.2 TB");
-    for (const tag of [
-      "utm-configure-view",
-      "proxmox-configure-view",
-      "utm-confirm-view",
-      "proxmox-confirm-view",
-    ]) {
+    expect(formatMemory(123456 * 1024)).to.equal("1,23,456 GB");
+    expect(formatDiskSize(1.5 * 1024)).to.equal("1.5 TB");
+    expect(formatDiskSize(1234 * 1024)).to.equal("1,234 TB");
+    for (const tag of ["utm-confirm-view", "proxmox-confirm-view"]) {
       const element = view(tag) as unknown as {
         _formatMemory(mb: number): string;
         _formatDiskSize(gb: number): string;
       };
-      expect(element._formatMemory(123456 * 1024)).to.equal(
-        "1,23,456 GB" + (tag.includes("confirm-view") ? " RAM" : "")
-      );
+      expect(element._formatMemory(123456 * 1024)).to.equal("1,23,456 GB RAM");
       if (tag.startsWith("utm-")) {
         expect(element._formatDiskSize(1.5 * 1024)).to.equal("1.5 TB");
       } else {

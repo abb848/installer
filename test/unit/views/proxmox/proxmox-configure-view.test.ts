@@ -25,6 +25,13 @@ import {
 } from "../../tauri-ipc.js";
 
 /** Mount the view and wait for the node and storage lookups to settle */
+/** The cores, memory and disk sliders, in the shared resources component */
+async function resourcesOf(el: HTMLElement): Promise<ShadowRoot> {
+  const resources = el.shadowRoot!.querySelector("vm-resources")!;
+  await resources.updateComplete;
+  return resources.shadowRoot!;
+}
+
 async function mount(): Promise<ProxmoxConfigureView> {
   const el = await fixture<ProxmoxConfigureView>(html`
     <proxmox-configure-view></proxmox-configure-view>
@@ -68,7 +75,7 @@ describe("proxmox-configure-view", () => {
             {
               name: "pve",
               status: "online",
-              cpu_usage: 12.5,
+              cpu_usage: 0.125,
               cpu_count: null,
             },
             {
@@ -103,9 +110,52 @@ describe("proxmox-configure-view", () => {
     expect(select.displayInput.value).to.equal("pve (CPU: 12.5%)");
   });
 
+  // Proxmox reports CPU usage as a fraction, so 0.153 is 15.3%
+  it("shows each node's CPU usage as a percentage", async () => {
+    mockTauriIpc((cmd) => {
+      switch (cmd) {
+        case "proxmox_list_bridges":
+          return [{ name: "vmbr0", network_type: "bridge", comments: null }];
+        case "proxmox_list_nodes":
+          return [
+            {
+              name: "pve",
+              status: "online",
+              cpu_usage: 0.153,
+              cpu_count: null,
+            },
+            {
+              name: "pve2",
+              status: "online",
+              cpu_usage: 0.5,
+              cpu_count: null,
+            },
+          ];
+        case "proxmox_get_next_vm_id":
+          return 100;
+        case "proxmox_list_storage":
+          return [];
+      }
+      throw new Error(`Unexpected IPC command: ${cmd}`);
+    });
+
+    const el = fixtureSync<ProxmoxConfigureView>(html`
+      <proxmox-configure-view></proxmox-configure-view>
+    `);
+    await waitUntil(
+      () => el.shadowRoot!.querySelectorAll("wa-select wa-option").length,
+      "the node dropdown never rendered"
+    );
+
+    const options = [
+      ...el.shadowRoot!.querySelectorAll("wa-select wa-option"),
+    ].map((option) => option.textContent!.trim());
+    expect(options).to.include.members(["pve (CPU: 15.3%)", "pve2 (CPU: 50%)"]);
+  });
+
   it("exposes named controls and announces actual slider sizes", async () => {
     const el = await mount();
-    const sliders = [...el.shadowRoot!.querySelectorAll("wa-slider")];
+    const sliders = [...(await resourcesOf(el)).querySelectorAll("wa-slider")];
     await Promise.all(sliders.map((slider) => slider.updateComplete));
     const snapshot = await fullA11ySnapshot();
     expect(findByRole(snapshot, "textbox").map((node) => node.name)).to.include(
@@ -164,6 +214,70 @@ describe("proxmox-configure-view", () => {
     expect(wizardState.getState().selections.proxmoxConfigureReady).to.be.true;
   });
 
+  it("keeps the VM ID as typed and only saves one Proxmox accepts", async () => {
+    const el = await mount();
+    const vmId = el.shadowRoot!.querySelector<WaInput>(
+      'wa-input[type="number"]'
+    )!;
+    const type = async (value: string) => {
+      vmId.value = value;
+      vmId.dispatchEvent(new Event("input"));
+      await el.updateComplete;
+      await vmId.updateComplete;
+    };
+
+    // None of these may turn into 100, or into what was there before
+    vmId.focus();
+    for (const rejected of ["", "99", "1e5", "1000000000"]) {
+      await type(rejected);
+      expect(vmId.value).to.equal(rejected);
+      expect(wizardState.getState().selections.proxmoxVmId, rejected).to.be
+        .undefined;
+      expect(vmId.checkValidity(), rejected).to.be.false;
+      expect(wizardState.getState().selections.proxmoxConfigureReady).to.be
+        .false;
+      expect(
+        el.shadowRoot!.querySelector(".vm-id-hint")!.textContent
+      ).to.contain("Enter a whole number from 100 to 999,999,999.");
+      // In the input's hint slot, so it is the field's accessible description
+      expect(el.shadowRoot!.querySelector(".vm-id-hint")!.slot).to.equal(
+        "hint"
+      );
+      // The error must not take focus from someone still typing
+      expect(el.shadowRoot!.activeElement).to.equal(vmId);
+    }
+
+    // What is typed after clearing is the whole ID, without a default
+    await type("");
+    await type("250");
+    expect(vmId.value).to.equal("250");
+    expect(vmId.checkValidity()).to.be.true;
+    const selections = wizardState.getState().selections;
+    expect(selections.proxmoxVmId).to.equal(250);
+    expect(selections.proxmoxConfigureReady).to.be.true;
+  });
+
+  it("suggests a free VM ID again after leaving with a cleared one", async () => {
+    wizardState.setSelection("proxmoxVmId", 250);
+    const first = await mount();
+    const vmId = first.shadowRoot!.querySelector<WaInput>(
+      'wa-input[type="number"]'
+    )!;
+    vmId.value = "";
+    vmId.dispatchEvent(new Event("input"));
+    await first.updateComplete;
+    first.remove();
+
+    // The cleared field is not a choice, so 250 doesn't come back either
+    const el = await mount();
+
+    const restored = el.shadowRoot!.querySelector<WaInput>(
+      'wa-input[type="number"]'
+    )!;
+    expect(restored.value).to.equal("100");
+    expect(wizardState.getState().selections.proxmoxVmId).to.equal(100);
+  });
+
   it("offers no more cores than the selected node has", async () => {
     // The mocked pve2 has 8 CPUs
     wizardState.setSelection("proxmoxNode", "pve2");
@@ -172,7 +286,7 @@ describe("proxmox-configure-view", () => {
     const el = await mount();
 
     expect(wizardState.getState().selections.cpuCores).to.equal(8);
-    const cores = el.shadowRoot!.querySelector("wa-slider")!;
+    const cores = (await resourcesOf(el)).querySelector("wa-slider")!;
     expect(cores.max).to.equal(3); // 2, 4, 6 and 8 cores
     expect(cores.value).to.equal(3);
   });
@@ -226,7 +340,7 @@ describe("proxmox-configure-view", () => {
     ) as NodeListOf<WaSelect>;
     expect(nodeSelect.value).to.equal("pve2");
     expect(storageSelect.value).to.equal("local-lvm");
-    const text = el.shadowRoot!.textContent!;
+    const text = (await resourcesOf(el)).textContent!;
     expect(text).to.contain("8 cores");
     expect(text).to.contain("8 GB");
     expect(text).to.contain("64 GB");

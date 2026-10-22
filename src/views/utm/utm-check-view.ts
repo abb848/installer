@@ -18,6 +18,7 @@ import { openExternalUrl } from "../../utils/external-url.js";
 import "@home-assistant/webawesome/dist/components/button/button.js";
 import "../../components/ha-svg-icon.js";
 import "../../components/casita-mascot.js";
+import "../../components/inline-notice.js";
 
 // mdi:download
 const mdiDownload = "M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z";
@@ -65,13 +66,6 @@ export class UtmCheckView extends LitElement {
         width: 100%;
         box-sizing: border-box;
         max-width: 500px;
-      }
-
-      @media (prefers-color-scheme: dark) {
-        .status-card {
-          background-color: var(--ha-card-background, #1e1e1e);
-          border-color: var(--ha-border-color, #333333);
-        }
       }
 
       casita-mascot {
@@ -158,38 +152,15 @@ export class UtmCheckView extends LitElement {
         margin: 0;
       }
 
-      .warning-card {
-        display: flex;
-        flex-direction: column;
-        gap: 0.5rem;
-        padding: 1rem 1.25rem;
-        background-color: rgba(255, 152, 0, 0.1);
-        border: 1px solid rgba(255, 152, 0, 0.3);
-        border-radius: 12px;
-        width: 100%;
-        box-sizing: border-box;
-        max-width: 500px;
+      inline-notice {
         margin-bottom: 1rem;
-      }
-
-      @media (prefers-color-scheme: dark) {
-        .warning-card {
-          background-color: rgba(255, 152, 0, 0.15);
-          border-color: rgba(255, 152, 0, 0.4);
-        }
       }
 
       .warning-title {
         font-size: 0.875rem;
         font-weight: 500;
-        color: var(--ha-text-color, #212121);
+        color: var(--ha-warning-heading-color, #212121);
         margin: 0;
-      }
-
-      @media (prefers-color-scheme: dark) {
-        .warning-title {
-          color: #ffb74d;
-        }
       }
 
       .warning-description {
@@ -339,7 +310,7 @@ export class UtmCheckView extends LitElement {
 
   private _renderTestingWarning() {
     return html`
-      <div class="warning-card">
+      <inline-notice>
         <p class="warning-title">
           ${localize("views.utm.utm_check_view.best_for_testing_evaluation")}
         </p>
@@ -365,7 +336,7 @@ export class UtmCheckView extends LitElement {
             )}
           </li>
         </ul>
-      </div>
+      </inline-notice>
     `;
   }
 

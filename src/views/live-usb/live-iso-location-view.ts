@@ -60,15 +60,20 @@ export class LiveIsoLocationView extends LitElement {
    */
   async check(): Promise<boolean> {
     this._problem = "";
+    const folder = this._folder;
+    const name = this._name;
     let exists: boolean;
     try {
-      ({ exists } = await checkIsoLocation(this._folder, this._name));
+      ({ exists } = await checkIsoLocation(folder, name));
     } catch (error) {
       this._problem = installerError(error).message;
       return false;
     }
-    // Back or Cancel while checking: nobody is left to answer a prompt
-    if (!this.isConnected) return false;
+    // Back or Cancel while checking: nobody is left to answer a prompt.
+    // An edit meanwhile was not checked, so it waits for the next press.
+    if (!this.isConnected || this._folder !== folder || this._name !== name) {
+      return false;
+    }
     if (!exists) {
       wizardState.setSelection("liveIsoOverwrite", false);
       return true;

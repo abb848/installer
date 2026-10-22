@@ -71,22 +71,14 @@ export class OptionCard extends LitElement {
 
       .card:hover {
         border-color: var(--ha-primary-color, #03a9f4);
-        box-shadow: 0 4px 12px rgba(3, 169, 244, 0.15);
+        box-shadow: var(
+          --ha-card-hover-shadow,
+          0 4px 12px rgba(3, 169, 244, 0.15)
+        );
       }
 
       .card:active {
         transform: scale(0.98);
-      }
-
-      @media (prefers-color-scheme: dark) {
-        .card {
-          background-color: var(--ha-card-background, #1e1e1e);
-          border-color: var(--ha-border-color, #333333);
-        }
-
-        .card:hover {
-          box-shadow: 0 4px 12px rgba(3, 169, 244, 0.25);
-        }
       }
 
       :host([horizontal]) .card {

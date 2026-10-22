@@ -53,6 +53,10 @@ windows-sys = { workspace = true, features = [
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = { workspace = true }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { workspace = true }
+objc2-app-kit = { workspace = true }
+
 [dev-dependencies]
 tauri = { workspace = true, features = ["test"] }
 mockito = { workspace = true }

@@ -12,8 +12,6 @@ import { customElement, state } from "lit/decorators.js";
 import { wizardState, type WizardState } from "../../state/wizard-state.js";
 import {
   cancelVmInstall,
-  checkHaReady,
-  checkHaUpdated,
   proxmoxCreateVm,
   proxmoxGetVmStatus,
 } from "../../api/commands.js";
@@ -25,12 +23,23 @@ import type {
   ProxmoxVmResult,
 } from "../../api/types.js";
 import { proxmoxVmConfig } from "../../state/vm-defaults.js";
+import { isCancelled, throwIfCancelled } from "../../utils/polling.js";
 import {
-  PollTimeoutError,
-  isCancelled,
-  pollUntil,
-  throwIfCancelled,
-} from "../../utils/polling.js";
+  checkedAddress,
+  isWaitStage,
+  waitError,
+  waitForHomeAssistant,
+  type WaitStage,
+} from "../../utils/vm-wait.js";
+import {
+  haSetupProblemMessage,
+  type HaSetupProgress,
+} from "../../utils/ha-setup.js";
+import {
+  SESSION_EXPIRED,
+  forgetProxmoxSession,
+  needsReconnect,
+} from "./proxmox-session.js";
 import "../../components/install-progress.js";
 
 /** The stages `proxmoxCreateVm` reports, in order */
@@ -51,17 +60,8 @@ const STOPPABLE_STAGES: InstallStage[] = [
   "uploading",
 ];
 
-/** The VM runs and only Home Assistant is awaited, so leaving loses nothing */
-const LEAVABLE_STAGES: InstallStage[] = ["waiting", "ready", "updating"];
-
 /** The backend's stages, then the waits for the VM and Home Assistant run from here */
-type InstallStage =
-  | BackendStage
-  | "waiting"
-  | "ready"
-  | "updating"
-  | "complete"
-  | "error";
+type InstallStage = BackendStage | WaitStage | "complete" | "error";
 
 function isBackendStage(stage: FlashStage): stage is BackendStage {
   return (BACKEND_STAGES as readonly FlashStage[]).includes(stage);
@@ -84,18 +84,6 @@ const INDETERMINATE_STAGES: InstallStage[] = [
   "ready",
   "updating",
 ];
-
-/** Delay between polls while waiting for the VM and Home Assistant */
-const POLL_INTERVAL_MS = 2000;
-
-/** How long to wait for the VM to report an IP address */
-const VM_IP_TIMEOUT_MS = 5 * 60 * 1000;
-
-/** How long to wait for the Home Assistant webserver to answer */
-const HA_READY_TIMEOUT_MS = 5 * 60 * 1000;
-
-/** How long to wait for Home Assistant to finish updating itself */
-const HA_UPDATED_TIMEOUT_MS = 60 * 60 * 1000;
 
 /**
  * Whether a failed VM status request cannot succeed by asking again.
@@ -142,6 +130,10 @@ export class ProxmoxProgressView extends LitElement {
   @state()
   private _error: InstallerError | null = null;
 
+  /** What Supervisor reports while it installs Home Assistant */
+  @state()
+  private _setup: HaSetupProgress = { progress: null, problem: null };
+
   @state()
   private _isInstalling = false;
 
@@ -174,7 +166,8 @@ export class ProxmoxProgressView extends LitElement {
 
   /** Whether the user can leave with the VM running and nothing left to start */
   get leavable(): boolean {
-    return this._error === null && LEAVABLE_STAGES.includes(this._stage);
+    // The VM runs and only Home Assistant is awaited, so leaving loses nothing
+    return this._error === null && isWaitStage(this._stage);
   }
 
   /** Whether `stop` can still end the install without leaving anything behind */
@@ -278,7 +271,9 @@ export class ProxmoxProgressView extends LitElement {
     const session = selections.proxmoxSession;
 
     if (!session) {
+      // Answered like an expired one: by logging in again
       this._setError(
+        { code: SESSION_EXPIRED, message: "", retryable: false, details: {} },
         localize(
           "views.proxmox.proxmox_progress_view.no_proxmox_session_available"
         )
@@ -306,23 +301,32 @@ export class ProxmoxProgressView extends LitElement {
         wizardState.setSelection("proxmoxVmResult", result);
       }
 
-      // Wait for the VM to get an IP address. Asked again on a retry rather
-      // than reusing the last one: a restarted VM can get a new DHCP lease.
-      this._startStage("waiting");
-      wizardState.setSelection("ipAddress", undefined);
-      const ipAddress = await this._waitForVmIp(session, result, signal);
-      throwIfCancelled(signal);
-      wizardState.setSelection("ipAddress", ipAddress);
-
-      // Wait for the Home Assistant webserver to be ready
-      this._startStage("ready");
-      await this._waitForHaReady(ipAddress, signal);
-      throwIfCancelled(signal);
-
-      // Wait for Home Assistant to finish updating
-      this._startStage("updating");
-      await this._waitForHaUpdated(ipAddress, signal);
-      throwIfCancelled(signal);
+      const { node, vm_id } = result;
+      await waitForHomeAssistant({
+        vmAddress: async () =>
+          (await proxmoxGetVmStatus(session, node, vm_id)).ip_address,
+        stopOn: needsUserAction,
+        onStage: (stage) => this._startStage(stage),
+        onSetup: (setup) => {
+          this._setup = setup;
+          this._progress = Math.round(setup.progress ?? 0);
+        },
+        messages: {
+          noAddress: localize(
+            "views.proxmox.proxmox_progress_view.the_virtual_machine_did_not_report_an_ip_address"
+          ),
+          notResponding: (ipAddress) =>
+            localize(
+              "views.proxmox.proxmox_progress_view.home_assistant_did_not_respond_at_value_within_5_minutes",
+              { value0: ipAddress }
+            ),
+          notUpdated: (address) =>
+            localize("views.proxmox.proxmox_progress_view.update_timeout", {
+              address,
+            }),
+        },
+        signal,
+      });
 
       // Complete
       this._stage = "complete";
@@ -347,14 +351,7 @@ export class ProxmoxProgressView extends LitElement {
       const stopped =
         this._stopping && installerError(error).code === "cancelled";
       this._setError(
-        error instanceof PollTimeoutError
-          ? {
-              code: "timeout",
-              message: error.message,
-              retryable: true,
-              details: {},
-            }
-          : error,
+        waitError(error),
         stopped
           ? localize(
               "views.proxmox.proxmox_progress_view.stopped_nothing_created"
@@ -439,75 +436,27 @@ export class ProxmoxProgressView extends LitElement {
     this._stageStartTime = null;
     this._bytesProcessed = 0;
     this._totalBytes = 0;
+    this._setup = { progress: null, problem: null };
   }
 
   /**
-   * Wait for the VM to get an IP address from its guest agent, polling every
-   * 2 seconds for up to 5 minutes.
-   *
-   * A status request that fails for a reason asking again cannot fix, like an
-   * expired session, ends the wait right away with that error.
+   * Show an error and tell the shell whether a retry is safe, or whether
+   * only logging in again can get past it.
    */
-  private async _waitForVmIp(
-    session: ProxmoxSession,
-    { node, vm_id }: ProxmoxVmResult,
-    signal: AbortSignal
-  ): Promise<string> {
-    return pollUntil(
-      async () => (await proxmoxGetVmStatus(session, node, vm_id)).ip_address,
-      {
-        interval: POLL_INTERVAL_MS,
-        timeout: VM_IP_TIMEOUT_MS,
-        signal,
-        timeoutMessage: localize(
-          "views.proxmox.proxmox_progress_view.the_virtual_machine_did_not_report_an_ip_address"
-        ),
-        stopOn: needsUserAction,
-      }
-    );
-  }
-
-  /**
-   * Wait for the Home Assistant webserver to be ready on port 80, polling
-   * every 2 seconds for up to 5 minutes.
-   */
-  private async _waitForHaReady(
-    ipAddress: string,
-    signal: AbortSignal
-  ): Promise<void> {
-    await pollUntil(async () => (await checkHaReady(ipAddress)) || null, {
-      interval: POLL_INTERVAL_MS,
-      timeout: HA_READY_TIMEOUT_MS,
-      signal,
-      timeoutMessage: localize(
-        "views.proxmox.proxmox_progress_view.home_assistant_did_not_respond_at_value_within_5_minutes",
-        { value0: ipAddress }
-      ),
-    });
-  }
-
-  /**
-   * Wait for Home Assistant to finish updating to the latest version, which
-   * is when it starts serving `manifest.json`. Polls every 2 seconds for up
-   * to 1 hour.
-   */
-  private async _waitForHaUpdated(
-    ipAddress: string,
-    signal: AbortSignal
-  ): Promise<void> {
-    await pollUntil(async () => (await checkHaUpdated(ipAddress)) || null, {
-      interval: POLL_INTERVAL_MS,
-      timeout: HA_UPDATED_TIMEOUT_MS,
-      signal,
-      timeoutMessage: localize(
-        "views.proxmox.proxmox_progress_view.update_timeout",
-        { address: `http://${ipAddress}` }
-      ),
-    });
-  }
-
-  /** Show an error and tell the shell whether a retry is safe. */
   private _setError(error: unknown, message?: string) {
+    // Reconnecting resumes a VM made in full, or starts one not made yet. A
+    // VM that failed while being made may exist half way, unknown to the
+    // installer: a new install would find its VM ID taken, or leave it
+    // behind under another one.
+    const halfMade =
+      !STOPPABLE_STAGES.includes(this._stage) &&
+      !wizardState.getState().selections.proxmoxVmResult;
+    const reconnect = needsReconnect(error) && !halfMade;
+    if (needsReconnect(error) && halfMade) {
+      message = localize(
+        "views.proxmox.proxmox_progress_view.connection_lost_while_creating"
+      );
+    }
     this._diagnostics?.fail(error);
     this._stage = "error";
     const installer = installerError(
@@ -517,9 +466,10 @@ export class ProxmoxProgressView extends LitElement {
       )
     );
     this._error = message ? { ...installer, message } : installer;
+    if (reconnect) forgetProxmoxSession();
     this.dispatchEvent(
       new CustomEvent("install-error", {
-        detail: { retryable: this._error.retryable },
+        detail: { retryable: this._error.retryable, reconnect },
         bubbles: true,
         composed: true,
       })
@@ -561,7 +511,13 @@ export class ProxmoxProgressView extends LitElement {
         .indeterminate=${this._isIndeterminate(stage)}
         .measurable=${this._hasMeasurableProgress(stage)}
         .error=${this._error?.message ?? null}
-        .address=${this._checkedAddress(stage)}
+        .warning=${stage === "updating" && this._setup.problem
+          ? haSetupProblemMessage(this._setup.problem)
+          : null}
+        .address=${checkedAddress(
+          stage,
+          this._wizardState.selections.ipAddress
+        )}
         .leavable=${this.leavable}
       ></install-progress>
     `;
@@ -577,18 +533,12 @@ export class ProxmoxProgressView extends LitElement {
 
   /** Check if the current stage has measurable progress */
   private _hasMeasurableProgress(stage: InstallStage): boolean {
+    // Once Supervisor reports downloading Core
+    if (stage === "updating") return this._setup.progress !== null;
     return (
       MEASURABLE_STAGES.includes(stage) &&
       (stage === "downloading" || this._totalBytes > 0)
     );
-  }
-
-  /** The address Home Assistant is checked at, to open it meanwhile */
-  private _checkedAddress(stage: string): string | null {
-    const ip = this._wizardState.selections.ipAddress;
-    return ip && (stage === "ready" || stage === "updating")
-      ? `http://${ip}`
-      : null;
   }
 
   private _getStageTitle(stage: string): string {

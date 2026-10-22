@@ -30,13 +30,6 @@ export class HaHardwareConnectInstructions extends LitElement {
       color: var(--ha-text-color, #212121);
     }
 
-    @media (prefers-color-scheme: dark) {
-      .instructions {
-        background-color: var(--ha-card-background, #1e1e1e);
-        border-color: var(--ha-border-color, #333333);
-      }
-    }
-
     h3 {
       font-size: 1rem;
       font-weight: 500;

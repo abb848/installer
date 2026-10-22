@@ -469,10 +469,12 @@ async fn fetch_release_from_api(api_base_url: &str, version: &str) -> Result<Hao
                     .as_secs();
                 let seconds = rate_limit_wait(&headers, now);
                 let minutes = seconds.div_ceil(60).max(1);
-                let unit = if minutes == 1 { "minute" } else { "minutes" };
-                return Err(Error::RateLimited(format!(
-                    "GitHub's request limit has been reached for this network. Wait at least {minutes} {unit}, then try again."
-                )));
+                // Backend messages can't use plurals, so one minute has its own
+                return Err(Error::RateLimited(if minutes == 1 {
+                    crate::message!("backend.download.github_rate_limited_one_minute")
+                } else {
+                    crate::message!("backend.download.github_rate_limited", minutes = minutes)
+                }));
             }
             return Err(Error::ServiceUnavailable(crate::message!(
                 "backend.download.github_refused",
@@ -1026,6 +1028,13 @@ async fn extract_xz_owned<P: ProgressCallback>(
     extract_handle
         .await
         .map_err(|e| Error::ExtractionFailed(e.to_string()))??;
+
+    // Past 99% and during the final sync nothing is sent, so a late cancel
+    // never reaches the extraction. Honor it here, or the caller carries on
+    // with an image the user already gave up on.
+    if progress_callback.is_cancelled() {
+        return Err(Error::Cancelled);
+    }
 
     progress_callback.on_progress(FlashProgress {
         stage: FlashStage::Extracting,
@@ -2249,6 +2258,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancel_after_the_last_progress_update_still_cancels() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        // Cancels on the 99% update, after which extraction sends nothing more
+        #[derive(Default)]
+        struct CancelAtTheEnd {
+            cancelled: AtomicBool,
+            completed: AtomicBool,
+        }
+        impl ProgressCallback for CancelAtTheEnd {
+            fn on_progress(&self, progress: FlashProgress) {
+                if progress.progress == 99 {
+                    self.cancelled.store(true, Ordering::SeqCst);
+                }
+                if progress.progress == 100 {
+                    self.completed.store(true, Ordering::SeqCst);
+                }
+            }
+
+            fn is_cancelled(&self) -> bool {
+                self.cancelled.load(Ordering::SeqCst)
+            }
+        }
+
+        let cache = tempfile::tempdir().unwrap();
+        let image = TemporaryImage::new(cache.path(), ImageFormat::Raw).unwrap();
+        std::fs::write(image.archive_path(), compressed(b"1234567890")).unwrap();
+        let callback = CancelAtTheEnd::default();
+
+        let error = Backend
+            .extract_temporary_image(&image, &callback)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, Error::Cancelled), "{error:?}");
+        assert!(!callback.completed.load(Ordering::SeqCst));
+        drop(image);
+        assert_eq!(std::fs::read_dir(cache.path()).unwrap().count(), 0);
+    }
+
+    #[tokio::test]
     async fn cancelled_attempt_removes_owned_files() {
         let cache = tempfile::tempdir().unwrap();
         let image = TemporaryImage::new(cache.path(), ImageFormat::Raw).unwrap();
@@ -2786,14 +2836,7 @@ mod tests {
         assert!(result.is_ok());
         mock.assert_async().await;
 
-        // Check that we got progress callbacks
-        let progress_calls = calls.lock().unwrap();
-        assert!(!progress_calls.is_empty());
-        assert!(progress_calls.iter().any(|p| p.progress == 0)); // Start
-        assert!(progress_calls.iter().any(|p| p.progress == 100)); // End
-        assert!(progress_calls
-            .iter()
-            .all(|p| p.stage == FlashStage::Downloading));
+        crate::types::assert_progress_shape(&calls.lock().unwrap(), &[FlashStage::Downloading]);
 
         std::fs::remove_file(&dest).unwrap();
     }
@@ -2951,19 +2994,9 @@ mod tests {
                 .unwrap();
 
             let calls = callback.calls.lock().unwrap();
-            assert_eq!(calls.first().unwrap().progress, 0);
-            assert_eq!(calls.last().unwrap().progress, 100);
-            assert_eq!(calls.last().unwrap().bytes_processed, archive.len() as u64);
+            crate::types::assert_progress_shape(&calls, &[FlashStage::Extracting]);
             assert!(calls[..calls.len() - 1].iter().all(|p| p.progress < 100));
-            assert!(calls.iter().all(|p| {
-                p.stage == FlashStage::Extracting
-                    && p.total_bytes == archive.len() as u64
-                    && p.bytes_processed <= p.total_bytes
-            }));
-            assert!(calls.windows(2).all(|pair| {
-                pair[0].progress <= pair[1].progress
-                    && pair[0].bytes_processed <= pair[1].bytes_processed
-            }));
+            assert!(calls.iter().all(|p| p.total_bytes == archive.len() as u64));
             if callback.expected.len() > 64 * 1024 {
                 assert!(calls.iter().any(|p| p.progress > 0 && p.progress < 99));
             }

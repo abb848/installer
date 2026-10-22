@@ -28,12 +28,12 @@ interface WizardShell extends HTMLElement {
   nextDisabled: boolean;
   hideFooter: boolean;
   hideNext: boolean;
+  hideCancel: boolean;
 }
 
 interface ErrorFlags {
   _flashError: boolean;
-  _utmInstallError: boolean;
-  _proxmoxInstallError: boolean;
+  _vmInstallError: boolean;
 }
 
 function fire(target: Element, type: string, detail?: unknown) {
@@ -377,6 +377,15 @@ describe("app-shell", () => {
     expect(shellOf(el)).to.equal(null);
     expect(wizardState.getState().currentFlow).to.equal(null);
     expect(wizardState.getState().selections).to.deep.equal({});
+  });
+
+  it("offers only Done once the installation succeeded", async () => {
+    await enterSbcFlow(el);
+    expect(shellOf(el).hideCancel).to.be.false;
+
+    await goToStep(el, "success");
+    expect(shellOf(el).hideCancel).to.be.true;
+    expect(shellOf(el).nextLabel).to.equal("Done");
   });
 
   it("does not hold up a new flow with a Proxmox connect left behind", async () => {
@@ -752,6 +761,72 @@ describe("app-shell", () => {
       expect(wizardState.getState().selections.proxmoxVmResult).to.be.undefined;
     });
 
+    it("logs in again after the session expired, then waits for the VM it made", async () => {
+      const calls: string[] = [];
+      let expired = true;
+      await enterProxmoxInstall(() => {
+        wizardState.setSelection("proxmoxVmResult", {
+          vm_id: 100,
+          node: "pve",
+        });
+        mockTauriIpc((cmd) => {
+          calls.push(cmd);
+          if (cmd === "proxmox_get_vm_status") {
+            if (expired) {
+              return Promise.reject(
+                ipcError(
+                  "proxmox_session_expired",
+                  "Proxmox session expired or invalid."
+                )
+              );
+            }
+            return { status: "running", ip_address: "192.0.2.50" };
+          }
+          if (cmd === "proxmox_certificate_fingerprint") return null;
+          if (cmd === "proxmox_connect")
+            return {
+              server_url: "https://pve:8006",
+              ticket: "renewed",
+              csrf_token: "renewed",
+            };
+          if (cmd === "check_ha_ready") return new Promise(() => {});
+          throw new Error(`Unexpected IPC command: ${cmd}`);
+        });
+      });
+
+      // Not a dead end with only Cancel: Next logs in again
+      await waitUntil(() => shellOf(el).nextLabel === "Reconnect");
+      expect(shellOf(el).hideNext).to.be.false;
+      expect(shellOf(el).hideFooter).to.be.false;
+      const selections = wizardState.getState().selections;
+      expect(selections.proxmoxSession).to.be.undefined;
+      expect(selections.proxmoxPreviousServer?.server_url).to.equal(
+        "https://pve:8006"
+      );
+
+      fire(shellOf(el), "wizard-next");
+      await waitUntil(
+        () => !!shellOf(el).querySelector("proxmox-connect-view"),
+        "Reconnect did not open the connect step"
+      );
+      expect((el as unknown as ErrorFlags)._vmInstallError).to.be.false;
+
+      expired = false;
+      Object.assign(shellOf(el).querySelector("proxmox-connect-view")!, {
+        _password: "test",
+      });
+      fire(shellOf(el), "wizard-next");
+
+      // The VM exists: past its settings, straight back to waiting for it
+      await waitUntil(
+        () => calls.includes("check_ha_ready"),
+        "The install did not resume"
+      );
+      expect(wizardState.currentStep?.id).to.equal("install");
+      expect(calls).to.not.include("proxmox_create_vm");
+      expect(calls).to.not.include("proxmox_check_vm_config");
+    });
+
     it("hides Cancel once the VM is being created", async () => {
       let report!: (stage: string) => void;
       await enterProxmoxInstall(() =>
@@ -816,14 +891,12 @@ describe("app-shell", () => {
     it("is cleared for every flow when a new path is chosen", async () => {
       const flags = el as unknown as ErrorFlags;
       flags._flashError = true;
-      flags._utmInstallError = true;
-      flags._proxmoxInstallError = true;
+      flags._vmInstallError = true;
 
       await enterSbcFlow(el);
 
       expect(flags._flashError).to.be.false;
-      expect(flags._utmInstallError).to.be.false;
-      expect(flags._proxmoxInstallError).to.be.false;
+      expect(flags._vmInstallError).to.be.false;
     });
   });
 

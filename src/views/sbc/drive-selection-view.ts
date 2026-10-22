@@ -5,6 +5,7 @@ import {
   type InstallerError,
 } from "../../utils/installer-error.js";
 import { LitElement, html, css } from "lit";
+import { repeat } from "lit/directives/repeat.js";
 import {
   ViewAccessibility,
   reducedMotionStyles,
@@ -29,6 +30,7 @@ import "@home-assistant/webawesome/dist/components/button/button.js";
 import "@home-assistant/webawesome/dist/components/radio-group/radio-group.js";
 import "../../components/drive-card.js";
 import "../../components/casita-mascot.js";
+import "../../components/inline-notice.js";
 import "../ha-hardware/connect-instructions.js";
 
 @customElement("drive-selection-view")
@@ -59,70 +61,8 @@ export class DriveSelectionView extends LitElement {
         text-align: center;
       }
 
-      .warning {
-        display: flex;
-        align-items: flex-start;
-        gap: 0.75rem;
-        padding: 1rem;
-        background-color: rgba(255, 152, 0, 0.1);
-        border: 1px solid rgba(255, 152, 0, 0.3);
-        border-radius: 8px;
+      inline-notice {
         margin-bottom: 1.5rem;
-        max-width: 500px;
-        width: 100%;
-        box-sizing: border-box;
-      }
-
-      .warning-icon {
-        font-size: 1.25rem;
-        flex-shrink: 0;
-      }
-
-      .warning-text {
-        font-size: 0.875rem;
-        color: var(--ha-text-color, #212121);
-        margin: 0;
-        line-height: 1.5;
-      }
-
-      @media (prefers-color-scheme: dark) {
-        .warning {
-          background-color: rgba(255, 152, 0, 0.15);
-          border-color: rgba(255, 152, 0, 0.4);
-        }
-      }
-
-      .notice {
-        display: flex;
-        align-items: flex-start;
-        gap: 0.75rem;
-        padding: 1rem;
-        background-color: rgba(219, 68, 55, 0.1);
-        border: 1px solid rgba(219, 68, 55, 0.3);
-        border-radius: 8px;
-        margin-bottom: 1.5rem;
-        max-width: 500px;
-        width: 100%;
-        box-sizing: border-box;
-      }
-
-      .notice-icon {
-        font-size: 1.25rem;
-        flex-shrink: 0;
-      }
-
-      .notice-text {
-        font-size: 0.875rem;
-        color: var(--ha-text-color, #212121);
-        margin: 0;
-        line-height: 1.5;
-      }
-
-      @media (prefers-color-scheme: dark) {
-        .notice {
-          background-color: rgba(219, 68, 55, 0.15);
-          border-color: rgba(219, 68, 55, 0.4);
-        }
       }
 
       .drives-header {
@@ -349,9 +289,8 @@ export class DriveSelectionView extends LitElement {
           ></ha-hardware-connect-instructions>`
         : ""}
 
-      <div class="warning">
-        <span class="warning-icon">⚠️</span>
-        <p class="warning-text">
+      <inline-notice>
+        <p>
           ${localizeContent(
             "views.sbc.drive_selection_view.value_all_data_on_the_selected_drive_will_be_permanently_erased_make_sure_y",
             {
@@ -361,7 +300,7 @@ export class DriveSelectionView extends LitElement {
             }
           )}
         </p>
-      </div>
+      </inline-notice>
 
       <!-- The live region stays in the DOM so that inserting the notice into
            it is announced; a region added together with its content often
@@ -369,14 +308,13 @@ export class DriveSelectionView extends LitElement {
       <div class="notice-region" role="status">
         ${this._selectionLost
           ? html`
-              <div class="notice">
-                <span class="notice-icon" aria-hidden="true">🔌</span>
-                <p class="notice-text">
+              <inline-notice variant="error" icon="🔌">
+                <p>
                   ${localize(
                     "views.sbc.drive_selection_view.the_drive_you_selected_is_no_longer_available_so_the_selection_was_cleared_"
                   )}
                 </p>
-              </div>
+              </inline-notice>
             `
           : ""}
       </div>
@@ -482,15 +420,19 @@ export class DriveSelectionView extends LitElement {
         .value=${this._selectedDriveId ?? ""}
         @change=${this._onDriveChange}
       >
-        ${[...this._drives]
-          .sort((a, b) => {
+        ${repeat(
+          [...this._drives].sort((a, b) => {
             const aTooSmall = !isEligibleFlashTarget(a, config);
             const bTooSmall = !isEligibleFlashTarget(b, config);
             // Sort selectable drives first, then by size descending
             if (aTooSmall !== bTooSmall) return aTooSmall ? 1 : -1;
             return b.size - a.size;
-          })
-          .map((drive) => {
+          }),
+          // Keyed, so a card stays with its drive. The radio group only
+          // re-syncs `checked` when its own value changes: reused by position,
+          // a card would keep the check while showing a newly listed drive.
+          (drive) => drive.id,
+          (drive) => {
             const fit = getDriveFit(drive.size, config);
             const disabled = !isEligibleFlashTarget(drive, config);
             const reason =
@@ -523,7 +465,8 @@ export class DriveSelectionView extends LitElement {
                   : ""}
               ></drive-card>
             `;
-          })}
+          }
+        )}
       </wa-radio-group>
     `;
   }

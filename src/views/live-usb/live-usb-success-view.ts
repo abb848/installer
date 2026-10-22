@@ -80,7 +80,7 @@ export class LiveUsbSuccessView extends LitElement {
               >
               ${path
                 ? html`<wa-button
-                    size="small"
+                    size="s"
                     appearance="outlined"
                     @click=${this._reveal}
                     >${localize(

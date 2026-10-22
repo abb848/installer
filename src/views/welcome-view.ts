@@ -80,19 +80,6 @@ export class WelcomeView extends LitElement {
         animation: soft-pulse 3s ease-in-out infinite;
       }
 
-      .logo-dark {
-        display: none;
-      }
-
-      @media (prefers-color-scheme: dark) {
-        .logo-light {
-          display: none;
-        }
-        .logo-dark {
-          display: block;
-        }
-      }
-
       .welcome-text {
         max-width: 520px;
         color: var(--ha-secondary-text-color, #727272);
@@ -138,14 +125,18 @@ export class WelcomeView extends LitElement {
         opacity: 1;
       }
 
+      /* Both logos come as artwork for each theme */
+      .logo-dark,
       .ohf-logo-dark {
         display: none;
       }
 
       @media (prefers-color-scheme: dark) {
+        .logo-light,
         .ohf-logo-light {
           display: none;
         }
+        .logo-dark,
         .ohf-logo-dark {
           display: block;
         }
@@ -244,7 +235,7 @@ export class WelcomeView extends LitElement {
   }
 
   private _playEasterEgg() {
-    const audio = new Audio("/assets/audio/home-assistant.wav");
+    const audio = new Audio("/assets/audio/home-assistant.mp3");
     audio.play().catch((error) => {
       logFrontendError(error);
     });

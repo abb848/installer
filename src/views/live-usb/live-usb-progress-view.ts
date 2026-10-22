@@ -186,8 +186,12 @@ export class LiveUsbProgressView extends LitElement {
       return localize("views.live_usb.live_usb_progress_view.stopped_no_iso");
     }
     return this._reachedDrive
-      ? localize("views.live_usb.live_usb_progress_view.stopped_stick_not_ready")
-      : localize("views.live_usb.live_usb_progress_view.stopped_nothing_written");
+      ? localize(
+          "views.live_usb.live_usb_progress_view.stopped_stick_not_ready"
+        )
+      : localize(
+          "views.live_usb.live_usb_progress_view.stopped_nothing_written"
+        );
   }
 
   render() {
@@ -249,14 +253,24 @@ export class LiveUsbProgressView extends LitElement {
           : localize("views.live_usb.live_usb_progress_view.downloading_iso");
       case "extracting":
         return this._usb
-          ? localize("views.live_usb.live_usb_progress_view.preparing_description")
-          : localize("views.live_usb.live_usb_progress_view.building_description");
+          ? localize(
+              "views.live_usb.live_usb_progress_view.preparing_description"
+            )
+          : localize(
+              "views.live_usb.live_usb_progress_view.building_description"
+            );
       case "writing":
-        return localize("views.live_usb.live_usb_progress_view.writing_description");
+        return localize(
+          "views.live_usb.live_usb_progress_view.writing_description"
+        );
       case "verifying":
-        return localize("views.live_usb.live_usb_progress_view.verifying_the_written_data");
+        return localize(
+          "views.live_usb.live_usb_progress_view.verifying_the_written_data"
+        );
       case "finalizing":
-        return localize("views.live_usb.live_usb_progress_view.finalizing_description");
+        return localize(
+          "views.live_usb.live_usb_progress_view.finalizing_description"
+        );
       default:
         return localize("views.live_usb.live_usb_progress_view.creating");
     }

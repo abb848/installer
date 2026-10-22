@@ -67,7 +67,9 @@ export class LiveUsbSummaryView extends LitElement {
       .join(" ");
 
     return html`
-      <h2>${localize("views.live_usb.live_usb_summary_view.ready_to_create")}</h2>
+      <h2>
+        ${localize("views.live_usb.live_usb_summary_view.ready_to_create")}
+      </h2>
       <p class="subtitle">
         ${usb
           ? localize("views.live_usb.live_usb_summary_view.what_happens_usb")
@@ -75,12 +77,20 @@ export class LiveUsbSummaryView extends LitElement {
       </p>
       <div class="card">
         <dl>
-          <dt>${localize("views.live_usb.live_usb_summary_view.home_assistant_os")}</dt>
+          <dt>
+            ${localize(
+              "views.live_usb.live_usb_summary_view.home_assistant_os"
+            )}
+          </dt>
           <dd>${version}</dd>
           ${usb
-            ? html`<dt>${localize("views.live_usb.live_usb_summary_view.usb_stick")}</dt>
+            ? html`<dt>
+                  ${localize("views.live_usb.live_usb_summary_view.usb_stick")}
+                </dt>
                 <dd>${stick}</dd>`
-            : html`<dt>${localize("views.live_usb.live_usb_summary_view.save_as")}</dt>
+            : html`<dt>
+                  ${localize("views.live_usb.live_usb_summary_view.save_as")}
+                </dt>
                 <dd>
                   ${isoTargetPath(
                     selections.liveIsoFolder ?? "",
@@ -95,9 +105,12 @@ export class LiveUsbSummaryView extends LitElement {
         </dl>
         ${usb
           ? html`<div class="notice">
-              ${localizeContent("views.live_usb.live_usb_summary_view.erase_warning", {
-                stick: html`<strong>${stick}</strong>`,
-              })}
+              ${localizeContent(
+                "views.live_usb.live_usb_summary_view.erase_warning",
+                {
+                  stick: html`<strong>${stick}</strong>`,
+                }
+              )}
             </div>`
           : ""}
       </div>

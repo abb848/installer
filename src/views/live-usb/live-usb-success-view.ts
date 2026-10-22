@@ -47,7 +47,9 @@ export class LiveUsbSuccessView extends LitElement {
         : localize("views.live_usb.live_usb_success_view.boot_from_usb"),
       localize("views.live_usb.live_usb_success_view.pick_drive_and_erase"),
       iso
-        ? localize("views.live_usb.live_usb_success_view.iso_remove_and_restart")
+        ? localize(
+            "views.live_usb.live_usb_success_view.iso_remove_and_restart"
+          )
         : localize("views.live_usb.live_usb_success_view.remove_and_restart"),
       html`${localizeContent(
         "views.live_usb.live_usb_success_view.open_home_assistant",
@@ -98,10 +100,15 @@ export class LiveUsbSuccessView extends LitElement {
             </span>`
           : localize("views.live_usb.live_usb_success_view.do_not_format")}
         .steps=${iso
-          ? [localize("views.live_usb.live_usb_success_view.write_the_iso"), ...boot]
+          ? [
+              localize("views.live_usb.live_usb_success_view.write_the_iso"),
+              ...boot,
+            ]
           : [
               localize("common.success.step_eject"),
-              localize("views.live_usb.live_usb_success_view.plug_in_the_stick"),
+              localize(
+                "views.live_usb.live_usb_success_view.plug_in_the_stick"
+              ),
               ...boot,
             ]}
         .footer=${html`<a
@@ -109,7 +116,9 @@ export class LiveUsbSuccessView extends LitElement {
           target="_blank"
           rel="noopener noreferrer"
           @click=${openExternalLink}
-          >${localize("views.live_usb.live_usb_success_view.installation_guide")}</a
+          >${localize(
+            "views.live_usb.live_usb_success_view.installation_guide"
+          )}</a
         >`}
       ></install-success>
     `;

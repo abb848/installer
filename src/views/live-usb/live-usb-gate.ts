@@ -140,7 +140,9 @@ export class LiveUsbGate extends LitElement {
     }
     if (!this._status.hai_live_found) {
       return html`
-        <h2>${localize("views.live_usb.live_usb_gate.hai_live_missing_title")}</h2>
+        <h2>
+          ${localize("views.live_usb.live_usb_gate.hai_live_missing_title")}
+        </h2>
         <div class="notice error" role="alert">
           <p>${localize("views.live_usb.live_usb_gate.hai_live_missing")}</p>
           <p>
@@ -149,7 +151,9 @@ export class LiveUsbGate extends LitElement {
               x86_64-unknown-linux-musl</code
             >
           </p>
-          <p>${localize("views.live_usb.live_usb_gate.hai_live_missing_env")}</p>
+          <p>
+            ${localize("views.live_usb.live_usb_gate.hai_live_missing_env")}
+          </p>
         </div>
       `;
     }
@@ -164,7 +168,9 @@ export class LiveUsbGate extends LitElement {
             : ""}
           <div class="actions">
             <wa-button variant="brand" @click=${this._relaunch}>
-              ${localize("views.live_usb.live_usb_gate.restart_as_administrator")}
+              ${localize(
+                "views.live_usb.live_usb_gate.restart_as_administrator"
+              )}
             </wa-button>
           </div>
         </div>

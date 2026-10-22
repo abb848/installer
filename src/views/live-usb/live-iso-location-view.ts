@@ -169,7 +169,9 @@ export class LiveIsoLocationView extends LitElement {
   render() {
     return html`
       <live-usb-gate>
-        <h2>${localize("views.live_usb.live_iso_location_view.where_to_save")}</h2>
+        <h2>
+          ${localize("views.live_usb.live_iso_location_view.where_to_save")}
+        </h2>
         <p class="subtitle">
           ${localize("views.live_usb.live_iso_location_view.subtitle")}
         </p>
@@ -186,7 +188,9 @@ export class LiveIsoLocationView extends LitElement {
           </div>
           ${this._browseFailed
             ? html`<p class="notice error" role="alert">
-                ${localize("views.live_usb.live_iso_location_view.browse_failed")}
+                ${localize(
+                  "views.live_usb.live_iso_location_view.browse_failed"
+                )}
               </p>`
             : ""}
           <wa-input
@@ -200,11 +204,18 @@ export class LiveIsoLocationView extends LitElement {
         </div>
         <info-dialog
           ?open=${this._askReplace}
-          heading=${localize("views.live_usb.live_iso_location_view.replace_title")}
-          message=${localize("views.live_usb.live_iso_location_view.replace_message", {
-            name: this._name.trim(),
-          })}
-          primary-label=${localize("views.live_usb.live_iso_location_view.replace")}
+          heading=${localize(
+            "views.live_usb.live_iso_location_view.replace_title"
+          )}
+          message=${localize(
+            "views.live_usb.live_iso_location_view.replace_message",
+            {
+              name: this._name.trim(),
+            }
+          )}
+          primary-label=${localize(
+            "views.live_usb.live_iso_location_view.replace"
+          )}
           secondary-label=${localize("common.cancel")}
           @dialog-primary=${this._onReplace}
           @dialog-secondary=${this._onKeep}

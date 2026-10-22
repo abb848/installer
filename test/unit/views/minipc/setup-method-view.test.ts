@@ -62,4 +62,22 @@ describe("minipc-setup-method-view", () => {
     expect(wizardState.currentStep!.id).to.equal("architecture");
     expect(stepIds()).to.deep.equal(MINIPC_STEPS.direct.map((step) => step.id));
   });
+
+  it("keeps the Wi-Fi step after going back and connecting the drive again", async () => {
+    const { connectDrive } = await renderMethod();
+    connectDrive.click();
+    // The architecture step picked a board with Wi-Fi
+    wizardState.setSelection("device", "generic-x86-64");
+    wizardState.setSelection("deviceConfig", {
+      board: "generic-x86-64",
+      minimum_storage_bytes: 0,
+      recommended_storage_bytes: 0,
+    });
+    expect(stepIds()).to.include("wifi");
+
+    wizardState.previousStep();
+    connectDrive.click();
+    expect(wizardState.currentStep!.id).to.equal("architecture");
+    expect(stepIds()).to.include("wifi");
+  });
 });

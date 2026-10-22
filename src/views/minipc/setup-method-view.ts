@@ -5,7 +5,11 @@ import {
   reducedMotionStyles,
 } from "../../utils/view-accessibility.js";
 import { customElement } from "lit/decorators.js";
-import { MINIPC_STEPS, wizardState } from "../../state/wizard-state.js";
+import {
+  MINIPC_STEPS,
+  minipcDirectSteps,
+  wizardState,
+} from "../../state/wizard-state.js";
 import "../../components/option-card.js";
 
 @customElement("minipc-setup-method-view")
@@ -86,7 +90,7 @@ export class MiniPCSetupMethodView extends LitElement {
   }
 
   private _onConnectDrive() {
-    wizardState.setSteps(MINIPC_STEPS.direct);
+    wizardState.setSteps(minipcDirectSteps(wizardState.getState().selections));
     wizardState.setSelection("installMethod", "direct");
     wizardState.nextStep();
   }

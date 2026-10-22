@@ -23,6 +23,9 @@ export class LiveUsbSuccessView extends LitElement {
   @state()
   private _revealFailed = false;
 
+  // install-success renders the button, so a plain method would get its `this`
+  private _onReveal = () => void this._reveal();
+
   private async _reveal() {
     const path = wizardState.getState().selections.liveIsoPath;
     if (!path) return;
@@ -84,7 +87,7 @@ export class LiveUsbSuccessView extends LitElement {
                 ? html`<wa-button
                     size="s"
                     appearance="outlined"
-                    @click=${this._reveal}
+                    @click=${this._onReveal}
                     >${localize(
                       "views.live_usb.live_usb_success_view.show_in_folder"
                     )}</wa-button

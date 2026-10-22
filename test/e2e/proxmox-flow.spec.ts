@@ -74,9 +74,13 @@ test.describe("Proxmox Installation Flow", () => {
     // Click next - should trigger validation
     await nextButton.click();
 
-    // Should show error message and stay on connect view
-    await expect(connectView.locator(".status-row")).toBeVisible();
-    await expect(connectView).toContainText("Please fill in all fields");
+    // Should say on each empty field what is missing and stay on connect view
+    await expect(connectView.locator("wa-input[custom-error]")).toHaveCount(3);
+    await expect(connectView).toContainText("Enter the server URL");
+    await expect(connectView).toContainText("Enter the username");
+    await expect(connectView).toContainText("Enter the password");
+    await expect(connectView.locator("#server-url")).toBeFocused();
+    await expect(connectView.locator(".status-row")).toHaveCount(0);
     await expect(connectView).toBeVisible();
   });
 
@@ -97,9 +101,12 @@ test.describe("Proxmox Installation Flow", () => {
     // Click next - should trigger validation
     await nextButton.click();
 
-    // Should show error message about HTTPS and stay on connect view
-    await expect(connectView.locator(".status-row")).toBeVisible();
-    await expect(connectView).toContainText("HTTPS");
+    // Should say on the URL field that it needs HTTPS and stay on connect view
+    const url = connectView.locator("#server-url");
+    await expect(url).toBeFocused();
+    await expect(url).toHaveAttribute("aria-invalid", "true");
+    await expect(url).toHaveAccessibleDescription(/HTTPS/);
+    await expect(connectView.locator(".status-row")).toHaveCount(0);
     await expect(connectView).toBeVisible();
   });
 
@@ -364,10 +371,12 @@ test.describe("Proxmox Installation Flow", () => {
     );
     await expect(wizardShell.locator(".footer-right wa-button")).toHaveCount(0);
 
-    // Past this, the VM exists, and the install runs to the end
-    await expect(wizardShell.locator(".footer")).not.toBeVisible({
+    // Past this, the VM exists, and the install runs to the end. Cancel
+    // goes, but the footer stays in place
+    await expect(wizardShell.locator(".footer-left wa-button")).toBeHidden({
       timeout: 15000,
     });
+    await expect(wizardShell.locator(".footer-left")).toBeVisible();
   });
 
   test("step 4: Cancel asks first, then stops before anything is created", async ({

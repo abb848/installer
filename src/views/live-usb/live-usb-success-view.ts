@@ -40,17 +40,17 @@ export class LiveUsbSuccessView extends LitElement {
     const path = selections.liveIsoPath ?? "";
     const boot = [
       iso
-        ? localize("views.live_usb.success_view.iso_bios_settings")
-        : localize("views.live_usb.success_view.bios_settings"),
+        ? localize("views.live_usb.live_usb_success_view.iso_bios_settings")
+        : localize("views.live_usb.live_usb_success_view.bios_settings"),
       iso
-        ? localize("views.live_usb.success_view.boot_from_media")
-        : localize("views.live_usb.success_view.boot_from_usb"),
-      localize("views.live_usb.success_view.pick_drive_and_erase"),
+        ? localize("views.live_usb.live_usb_success_view.boot_from_media")
+        : localize("views.live_usb.live_usb_success_view.boot_from_usb"),
+      localize("views.live_usb.live_usb_success_view.pick_drive_and_erase"),
       iso
-        ? localize("views.live_usb.success_view.iso_remove_and_restart")
-        : localize("views.live_usb.success_view.remove_and_restart"),
+        ? localize("views.live_usb.live_usb_success_view.iso_remove_and_restart")
+        : localize("views.live_usb.live_usb_success_view.remove_and_restart"),
       html`${localizeContent(
-        "views.live_usb.success_view.open_home_assistant",
+        "views.live_usb.live_usb_success_view.open_home_assistant",
         {
           address: html`<a
             href=${HOME_ASSISTANT}
@@ -66,15 +66,15 @@ export class LiveUsbSuccessView extends LitElement {
     return html`
       <install-success
         .subtitle=${iso
-          ? localize("views.live_usb.success_view.iso_saved")
-          : localize("views.live_usb.success_view.usb_ready")}
+          ? localize("views.live_usb.live_usb_success_view.iso_saved")
+          : localize("views.live_usb.live_usb_success_view.usb_ready")}
         .notice=${iso
           ? html`<span
               class="saved-row"
               style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem"
             >
               <span class="saved"
-                >${localize("views.live_usb.success_view.saved_to", {
+                >${localize("views.live_usb.live_usb_success_view.saved_to", {
                   path,
                 })}</span
               >
@@ -84,26 +84,24 @@ export class LiveUsbSuccessView extends LitElement {
                     appearance="outlined"
                     @click=${this._reveal}
                     >${localize(
-                      "views.live_usb.success_view.show_in_folder"
+                      "views.live_usb.live_usb_success_view.show_in_folder"
                     )}</wa-button
                   >`
                 : ""}
               ${this._revealFailed
                 ? html`<span role="alert"
                     >${localize(
-                      "views.live_usb.success_view.show_failed"
+                      "views.live_usb.live_usb_success_view.show_failed"
                     )}</span
                   >`
                 : ""}
             </span>`
-          : localize("views.live_usb.success_view.do_not_format")}
+          : localize("views.live_usb.live_usb_success_view.do_not_format")}
         .steps=${iso
-          ? [localize("views.live_usb.success_view.write_the_iso"), ...boot]
+          ? [localize("views.live_usb.live_usb_success_view.write_the_iso"), ...boot]
           : [
-              localize(
-                "views.sbc.success_view.eject_the_drive_before_disconnecting"
-              ),
-              localize("views.live_usb.success_view.plug_in_the_stick"),
+              localize("common.success.step_eject"),
+              localize("views.live_usb.live_usb_success_view.plug_in_the_stick"),
               ...boot,
             ]}
         .footer=${html`<a
@@ -111,7 +109,7 @@ export class LiveUsbSuccessView extends LitElement {
           target="_blank"
           rel="noopener noreferrer"
           @click=${openExternalLink}
-          >${localize("views.sbc.success_view.installation_guide")}</a
+          >${localize("views.live_usb.live_usb_success_view.installation_guide")}</a
         >`}
       ></install-success>
     `;

@@ -130,7 +130,7 @@ export class LiveUsbGate extends LitElement {
         <div class="notice error" role="alert">
           <p>${this._error.message}</p>
           <wa-button appearance="outlined" @click=${this._check}>
-            ${localize("components.app_shell.try_again")}
+            ${localize("common.try_again")}
           </wa-button>
         </div>
       `;
@@ -140,31 +140,31 @@ export class LiveUsbGate extends LitElement {
     }
     if (!this._status.hai_live_found) {
       return html`
-        <h2>${localize("views.live_usb.gate.hai_live_missing_title")}</h2>
+        <h2>${localize("views.live_usb.live_usb_gate.hai_live_missing_title")}</h2>
         <div class="notice error" role="alert">
-          <p>${localize("views.live_usb.gate.hai_live_missing")}</p>
+          <p>${localize("views.live_usb.live_usb_gate.hai_live_missing")}</p>
           <p>
             <code
               >cargo build --release -p hai-live --target
               x86_64-unknown-linux-musl</code
             >
           </p>
-          <p>${localize("views.live_usb.gate.hai_live_missing_env")}</p>
+          <p>${localize("views.live_usb.live_usb_gate.hai_live_missing_env")}</p>
         </div>
       `;
     }
     if (this.admin && this._status.needs_admin) {
       return html`
-        <h2>${localize("views.live_usb.gate.admin_title")}</h2>
+        <h2>${localize("views.live_usb.live_usb_gate.admin_title")}</h2>
         <div class="notice">
-          <p>${localize("views.live_usb.gate.admin_needed")}</p>
-          <p>${localize("views.live_usb.gate.admin_restart_note")}</p>
+          <p>${localize("views.live_usb.live_usb_gate.admin_needed")}</p>
+          <p>${localize("views.live_usb.live_usb_gate.admin_restart_note")}</p>
           ${this._relaunchError
             ? html`<p role="alert">${this._relaunchError}</p>`
             : ""}
           <div class="actions">
             <wa-button variant="brand" @click=${this._relaunch}>
-              ${localize("views.live_usb.gate.restart_as_administrator")}
+              ${localize("views.live_usb.live_usb_gate.restart_as_administrator")}
             </wa-button>
           </div>
         </div>

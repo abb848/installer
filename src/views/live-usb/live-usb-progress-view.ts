@@ -129,7 +129,7 @@ export class LiveUsbProgressView extends LitElement {
         const drive = readDriveSelection(selections);
         if (!drive) {
           throw new Error(
-            localize("views.live_usb.progress_view.no_stick_selected")
+            localize("views.live_usb.live_usb_progress_view.no_stick_selected")
           );
         }
         await createLiveUsb(
@@ -183,11 +183,11 @@ export class LiveUsbProgressView extends LitElement {
       return undefined;
     }
     if (!this._usb) {
-      return localize("views.live_usb.progress_view.stopped_no_iso");
+      return localize("views.live_usb.live_usb_progress_view.stopped_no_iso");
     }
     return this._reachedDrive
-      ? localize("views.live_usb.progress_view.stopped_stick_not_ready")
-      : localize("views.live_usb.progress_view.stopped_nothing_written");
+      ? localize("views.live_usb.live_usb_progress_view.stopped_stick_not_ready")
+      : localize("views.live_usb.live_usb_progress_view.stopped_nothing_written");
   }
 
   render() {
@@ -213,7 +213,7 @@ export class LiveUsbProgressView extends LitElement {
       >
         ${this._usb && !this._error
           ? html`<p class="keep-plugged-in">
-              ${localize("views.live_usb.progress_view.do_not_remove")}
+              ${localize("views.live_usb.live_usb_progress_view.do_not_remove")}
             </p>`
           : ""}
       </install-progress>
@@ -223,19 +223,19 @@ export class LiveUsbProgressView extends LitElement {
   private _title(stage: string): string {
     switch (stage) {
       case "downloading":
-        return localize("views.proxmox.proxmox_progress_view.downloading");
+        return localize("common.install.downloading");
       case "extracting":
         return this._usb
-          ? localize("views.live_usb.progress_view.preparing")
-          : localize("views.live_usb.progress_view.building");
+          ? localize("views.live_usb.live_usb_progress_view.preparing")
+          : localize("views.live_usb.live_usb_progress_view.building");
       case "writing":
-        return localize("views.sbc.progress_view.writing");
+        return localize("views.live_usb.live_usb_progress_view.writing");
       case "verifying":
-        return localize("views.sbc.progress_view.verifying");
+        return localize("views.live_usb.live_usb_progress_view.verifying");
       case "finalizing":
-        return localize("views.sbc.progress_view.finalizing");
+        return localize("views.live_usb.live_usb_progress_view.finalizing");
       case "complete":
-        return localize("views.proxmox.proxmox_progress_view.complete");
+        return localize("common.install.complete");
       default:
         return localize("common.error");
     }
@@ -245,20 +245,20 @@ export class LiveUsbProgressView extends LitElement {
     switch (stage) {
       case "downloading":
         return this._usb
-          ? localize("views.live_usb.progress_view.downloading_usb")
-          : localize("views.live_usb.progress_view.downloading_iso");
+          ? localize("views.live_usb.live_usb_progress_view.downloading_usb")
+          : localize("views.live_usb.live_usb_progress_view.downloading_iso");
       case "extracting":
         return this._usb
-          ? localize("views.live_usb.progress_view.preparing_description")
-          : localize("views.live_usb.progress_view.building_description");
+          ? localize("views.live_usb.live_usb_progress_view.preparing_description")
+          : localize("views.live_usb.live_usb_progress_view.building_description");
       case "writing":
-        return localize("views.live_usb.progress_view.writing_description");
+        return localize("views.live_usb.live_usb_progress_view.writing_description");
       case "verifying":
-        return localize("views.sbc.progress_view.verifying_the_written_data");
+        return localize("views.live_usb.live_usb_progress_view.verifying_the_written_data");
       case "finalizing":
-        return localize("views.live_usb.progress_view.finalizing_description");
+        return localize("views.live_usb.live_usb_progress_view.finalizing_description");
       default:
-        return localize("views.live_usb.progress_view.creating");
+        return localize("views.live_usb.live_usb_progress_view.creating");
     }
   }
 }

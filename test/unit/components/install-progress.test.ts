@@ -8,6 +8,7 @@ import {
 import type { InstallProgress } from "../../../src/components/install-progress.js";
 import "../../../src/components/install-progress.js";
 import { captureOpenedUrls, restoreTauriIpc, settle } from "../tauri-ipc.js";
+import { expectThemeLink } from "../helpers/link-style.js";
 
 describe("install-progress", () => {
   it("keeps the thought bubble inside a short scroll container", async () => {
@@ -49,6 +50,7 @@ describe("install-progress", () => {
       );
       const link = address.querySelector("a")!;
       expect(link.textContent).to.equal("http://192.0.2.50");
+      expectThemeLink(link);
       link.click();
       await settle();
       expect(opened).to.deep.equal(["http://192.0.2.50"]);
@@ -57,6 +59,7 @@ describe("install-progress", () => {
       el.error = "Home Assistant did not respond";
       await el.updateComplete;
       expect(el.shadowRoot!.querySelector(".address")).to.be.null;
+      expectThemeLink(el.shadowRoot!.querySelector(".error-help a")!);
     } finally {
       restoreTauriIpc();
     }
@@ -169,6 +172,35 @@ describe("install-progress", () => {
     expect(el.shadowRoot!.querySelector(".thinking-cloud")).to.not.exist;
   });
 
+  it("draws each stage state as its own shape, not only its own color", async () => {
+    const el = await fixture<InstallProgress>(
+      html`<install-progress
+        .stages=${[
+          { id: "downloading", label: "Download image" },
+          { id: "writing", label: "Write image" },
+          { id: "verifying", label: "Verify image" },
+        ]}
+        stage="writing"
+      ></install-progress>`
+    );
+    const [complete, current, pending] = [
+      ...el.shadowRoot!.querySelectorAll(".stage-dot"),
+    ].map((dot) => getComputedStyle(dot));
+    const empty = "rgba(0, 0, 0, 0)";
+
+    // Pending: an empty ring
+    expect(pending.backgroundColor).to.equal(empty);
+    expect(pending.borderTopStyle).to.equal("solid");
+    expect(pending.borderTopWidth).to.equal("2px");
+    expect(pending.outlineStyle).to.equal("none");
+    // Complete: a filled dot
+    expect(complete.backgroundColor).to.not.equal(empty);
+    expect(complete.outlineStyle).to.equal("none");
+    // Current: a dot in a ring, which stays while the dot pulses
+    expect(current.outlineStyle).to.equal("solid");
+    expect(current.outlineWidth).to.equal("2px");
+  });
+
   it("calculates speed and ETA from the owning view's stage baseline", async () => {
     const el = await fixture<InstallProgress>(
       html`<install-progress
@@ -224,6 +256,28 @@ describe("install-progress", () => {
     expect(el.shadowRoot!.querySelector(".error-message b")).to.not.exist;
     expect(el.shadowRoot!.querySelector("progress-bar")).to.not.exist;
     expect(el.shadowRoot!.querySelector("button")).to.not.exist;
+  });
+
+  it("names the progress bar after the current stage", async () => {
+    const el = await fixture<InstallProgress>(
+      html`<install-progress stage-title="Writing"></install-progress>`
+    );
+    const bar = el.shadowRoot!.querySelector("progress-bar")!;
+    const progressbar = async () => {
+      await bar.updateComplete;
+      const inner = bar.shadowRoot!.querySelector("wa-progress-bar")!;
+      await inner.updateComplete;
+      return inner.shadowRoot!.querySelector('[role="progressbar"]')!;
+    };
+    expect((await progressbar()).getAttribute("aria-label")).to.equal(
+      "Writing"
+    );
+
+    el.stageTitle = "Waiting for Home Assistant";
+    await el.updateComplete;
+    expect((await progressbar()).getAttribute("aria-label")).to.equal(
+      "Waiting for Home Assistant"
+    );
   });
 
   it("places the keep-window-open notice after the progress bar", async () => {

@@ -15,6 +15,7 @@ import "./progress-bar.js";
 import "./inline-notice.js";
 import { renderErrorHelp } from "../utils/installer-error.js";
 import { openExternalLink } from "../utils/external-url.js";
+import { linkStyles } from "../utils/link-styles.js";
 import {
   LiveStatus,
   ReducedSvgMotion,
@@ -37,6 +38,7 @@ export class InstallProgress extends LitElement {
   static styles = [
     srOnlyStyles,
     reducedMotionStyles,
+    linkStyles,
     css`
       :host {
         display: flex;
@@ -160,33 +162,53 @@ export class InstallProgress extends LitElement {
         font-weight: 600;
       }
 
+      /* Shaped like the step indicator's dots: pending is an empty ring,
+         complete a filled dot, the current stage a filled dot in a ring */
       .stage-dot {
-        /* A pending stage's color, which the current stage pulses to */
-        --stage-dot-idle: var(--ha-inactive-color, #e0e0e0);
+        box-sizing: border-box;
         width: 8px;
         height: 8px;
         border-radius: 50%;
-        background-color: var(--stage-dot-idle);
+        border: 2px solid var(--ha-inactive-color, #8c8c8c);
         transition: background-color 0.3s ease;
       }
 
-      .stage-dot.active {
+      .stage-dot.active,
+      .stage-dot.complete {
+        border-color: var(--ha-primary-color, #03a9f4);
         background-color: var(--ha-primary-color, #03a9f4);
+      }
+
+      /* The ring stays while the dot pulses empty and back */
+      .stage-dot.active {
+        outline: 2px solid var(--ha-primary-color, #03a9f4);
+        outline-offset: 2px;
         animation: pulse-dot 1s ease-in-out infinite;
       }
 
       @keyframes pulse-dot {
-        0%,
-        100% {
-          background-color: var(--ha-primary-color, #03a9f4);
-        }
         50% {
-          background-color: var(--stage-dot-idle);
+          background-color: transparent;
         }
       }
 
-      .stage-dot.complete {
-        background-color: var(--ha-primary-color, #03a9f4);
+      /* Forced colors would paint the fills like the page, and the pulse too */
+      @media (forced-colors: active) {
+        .stage-dot {
+          border-color: GrayText;
+        }
+
+        .stage-dot.complete {
+          border-color: CanvasText;
+          background-color: CanvasText;
+        }
+
+        .stage-dot.active {
+          border-color: Highlight;
+          background-color: Highlight;
+          outline-color: Highlight;
+          animation: none;
+        }
       }
 
       .thinking-cloud {
@@ -326,16 +348,6 @@ export class InstallProgress extends LitElement {
         overflow-wrap: anywhere;
       }
 
-      .address a {
-        color: var(--ha-primary-color, #03a9f4);
-        text-decoration: none;
-        font-weight: 500;
-      }
-
-      .address a:hover {
-        text-decoration: underline;
-      }
-
       .stage-description {
         font-size: 0.9375rem;
         font-weight: 400;
@@ -350,10 +362,10 @@ export class InstallProgress extends LitElement {
   @property() stage = "downloading";
   /** A bare stage name, as the thinking cloud adds its own ellipsis */
   @property({ attribute: "stage-title" }) stageTitle = localize(
-    "views.proxmox.proxmox_progress_view.downloading"
+    "common.install.downloading"
   );
   @property() description = localize(
-    "views.proxmox.proxmox_progress_view.installing_home_assistant"
+    "common.install.installing_home_assistant"
   );
   @property({ type: Number }) progress = 0;
   @property({ type: Number, attribute: "bytes-processed" }) bytesProcessed = 0;
@@ -392,9 +404,7 @@ export class InstallProgress extends LitElement {
         <div class="mascot-container" aria-hidden="true">
           ${renderCasitaSad()}
         </div>
-        <h2>
-          ${localize("views.proxmox.proxmox_progress_view.installation_failed")}
-        </h2>
+        <h2>${localize("components.install_progress.installation_failed")}</h2>
         <p class="error-message" role="alert">${this.error}</p>
         ${renderErrorHelp()}
       `;
@@ -455,6 +465,7 @@ export class InstallProgress extends LitElement {
         <progress-bar
           .progress=${this.progress}
           ?indeterminate=${this.indeterminate}
+          .label=${this.stageTitle}
         ></progress-bar>
         ${this.measurable || !this.hideEmptyDetails
           ? html`
@@ -496,7 +507,7 @@ export class InstallProgress extends LitElement {
                   <span class="eta"
                     >${this.measurable && this.totalBytes > 0
                       ? this._calculateEta() ||
-                        localize("views.sbc.progress_view.calculating")
+                        localize("components.install_progress.calculating")
                       : ""}</span
                   >
                 </div>
@@ -521,9 +532,7 @@ export class InstallProgress extends LitElement {
       ${this.leavable
         ? nothing
         : html`<p class="stage-description">
-            ${localize(
-              "views.proxmox.proxmox_progress_view.please_keep_this_window_open_during_installation"
-            )}
+            ${localize("components.install_progress.keep_window_open")}
           </p>`}
     `;
   }
@@ -549,22 +558,21 @@ export class InstallProgress extends LitElement {
 
     if (remainingSeconds < 60) {
       return localize(
-        "views.proxmox.proxmox_progress_view.less_than_a_minute_remaining"
+        "components.install_progress.less_than_a_minute_remaining"
       );
     }
     // Rounded up once, before splitting: 59m 50s left is "1h 0m", never
     // "60 minutes", and 1h 59m 50s is "2h 0m", never "1h 60m"
     const totalMinutes = Math.ceil(remainingSeconds / 60);
     if (totalMinutes < 60) {
-      return localize(
-        "views.proxmox.proxmox_progress_view.about_value_minutevalue_remaining",
-        { value0: totalMinutes }
-      );
+      return localize("components.install_progress.minutes_remaining", {
+        minutes: totalMinutes,
+      });
     }
-    return localize(
-      "views.proxmox.proxmox_progress_view.about_valueh_valuem_remaining",
-      { value0: Math.floor(totalMinutes / 60), value1: totalMinutes % 60 }
-    );
+    return localize("components.install_progress.hours_minutes_remaining", {
+      hours: Math.floor(totalMinutes / 60),
+      minutes: totalMinutes % 60,
+    });
   }
 
   private _calculateSpeed(): string {
@@ -581,8 +589,8 @@ export class InstallProgress extends LitElement {
     const bytesPerSecond = bytesInStage / elapsed;
     if (bytesPerSecond <= 0 || !isFinite(bytesPerSecond)) return "";
 
-    return localize("views.proxmox.proxmox_progress_view.value_s", {
-      value0: formatBytes(bytesPerSecond),
+    return localize("components.install_progress.speed", {
+      speed: formatBytes(bytesPerSecond),
     });
   }
 }

@@ -131,6 +131,25 @@ fn entry(
             reason: "no media",
         };
     }
+    // The Home Assistant OS image has a partition table for 512-byte sectors, written as is.
+    // On a disk with larger logical sectors it lands in the wrong place and nothing boots.
+    let sector_size = read_trimmed(&dir.join("queue").join("logical_block_size"))
+        .and_then(|s| s.parse::<u64>().ok());
+    match sector_size {
+        Some(512) => {}
+        Some(_) => {
+            return Entry::Skipped {
+                name,
+                reason: "not 512-byte sectors",
+            };
+        }
+        None => {
+            return Entry::Skipped {
+                name,
+                reason: "sector size unknown",
+            };
+        }
+    }
     Entry::Disk(Disk {
         model: model(&dir, kind),
         serial: serial(&dir),
@@ -234,11 +253,13 @@ fn read_trimmed(path: &Path) -> Option<String> {
 pub(crate) mod tests {
     use super::*;
 
-    /// Adds `/sys/block/<name>` with a size in bytes and optional device files.
+    /// Adds `/sys/block/<name>` with a size in bytes, 512-byte sectors and optional device files.
     pub(crate) fn add_block(sys: &Path, name: &str, bytes: u64, device: &[(&str, &str)]) {
         let dir = sys.join(name);
         fs::create_dir_all(dir.join("device")).unwrap();
+        fs::create_dir_all(dir.join("queue")).unwrap();
         fs::write(dir.join("size"), format!("{}\n", bytes / 512)).unwrap();
+        fs::write(dir.join("queue").join("logical_block_size"), "512\n").unwrap();
         for (file, text) in device {
             fs::write(dir.join("device").join(file), format!("{text}\n")).unwrap();
         }
@@ -420,12 +441,37 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn offers_only_disks_with_512_byte_sectors() {
+        let dir = tempfile::tempdir().unwrap();
+        let sys = dir.path();
+        for name in ["sda", "sdb", "sdc", "sdd"] {
+            add_block(sys, name, 64_000_000_000, &[]);
+        }
+        let sector_size = |name: &str| sys.join(name).join("queue").join("logical_block_size");
+        fs::write(sector_size("sdb"), "4096\n").unwrap();
+        fs::remove_file(sector_size("sdc")).unwrap();
+        fs::write(sector_size("sdd"), "not a number\n").unwrap();
+
+        let entries = list_with(sys, &fake_link).unwrap();
+        assert!(matches!(&entries[0], Entry::Disk(d) if d.name == "sda"));
+        for (entry, expected) in entries[1..].iter().zip([
+            "not 512-byte sectors",
+            "sector size unknown",
+            "sector size unknown",
+        ]) {
+            assert!(
+                matches!(entry, Entry::Skipped { reason, .. } if *reason == expected),
+                "{entry:?}"
+            );
+        }
+    }
+
+    #[test]
     fn finds_partitions() {
         let dir = tempfile::tempdir().unwrap();
         add_block(dir.path(), "sda", 1 << 30, &[]);
         add_partition(dir.path(), "sda", "sda2");
         add_partition(dir.path(), "sda", "sda1");
-        fs::create_dir(dir.path().join("sda").join("queue")).unwrap();
         assert_eq!(partitions(dir.path(), "sda").unwrap(), ["sda1", "sda2"]);
         assert!(partitions(dir.path(), "sdb").is_err());
     }

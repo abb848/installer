@@ -2,7 +2,7 @@ import { test, expect, type Page } from "@playwright/test";
 
 async function openMediaChoice(page: Page) {
   await page.goto("/");
-  await page.locator("welcome-view").locator("wa-button").click();
+  await page.getByRole("button", { name: "Let's go" }).click();
   await page.locator('option-card[heading="Generic (mini) PC"]').click();
   await page
     .locator("minipc-setup-method-view")
@@ -50,7 +50,7 @@ test("writes a bootable USB stick", async ({ page }) => {
     "type erase to confirm"
   );
   await expect(page.locator("live-usb-success-view")).toContainText(
-    "use your operating system's eject option"
+    "eject it before you disconnect it"
   );
 });
 

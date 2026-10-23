@@ -27,10 +27,12 @@ describe("live-usb-success-view", () => {
     const layout = view.shadowRoot!.querySelector("install-success")!;
     await layout.updateComplete;
 
-    const notice =
-      layout.shadowRoot!.querySelector<HTMLElement>("inline-notice")!;
-    expect(notice.scrollWidth).to.be.at.most(notice.clientWidth);
-    const row = notice.querySelector<HTMLElement>(".saved-row")!;
+    // Where it was saved goes under the steps, in the success layout's slot
+    const row = view.shadowRoot!.querySelector<HTMLElement>(
+      "install-success > .saved-row"
+    )!;
+    expect(row.assignedSlot).to.exist;
+    expect(row.scrollWidth).to.be.at.most(row.clientWidth);
     expect(getComputedStyle(row).display).to.equal("flex");
   });
 
@@ -51,16 +53,15 @@ describe("live-usb-success-view", () => {
     const layout = view.shadowRoot!.querySelector("install-success")!;
     await layout.updateComplete;
 
-    layout
-      .shadowRoot!.querySelector<HTMLElement>("inline-notice wa-button")!
+    view
+      .shadowRoot!.querySelector<HTMLElement>(".saved-row wa-button")!
       .click();
     await settle();
     await layout.updateComplete;
 
     expect(shown).to.deep.equal([{ path: "/home/me/haos.iso" }]);
     expect(
-      layout.shadowRoot!.querySelector('inline-notice [role="alert"]')
-        ?.textContent
+      view.shadowRoot!.querySelector('.saved-row [role="alert"]')?.textContent
     ).to.contain("The folder couldn't be opened.");
   });
 });

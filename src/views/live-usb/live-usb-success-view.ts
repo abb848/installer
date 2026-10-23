@@ -73,10 +73,32 @@ export class LiveUsbSuccessView extends LitElement {
         .subtitle=${iso
           ? localize("views.live_usb.live_usb_success_view.iso_saved")
           : localize("views.live_usb.live_usb_success_view.usb_ready")}
-        .notice=${iso
+        .steps=${iso
+          ? [
+              localize("views.live_usb.live_usb_success_view.write_the_iso"),
+              ...boot,
+            ]
+          : [
+              localize("common.success.step_eject"),
+              localize(
+                "views.live_usb.live_usb_success_view.plug_in_the_stick"
+              ),
+              ...boot,
+            ]}
+        .footer=${html`<a
+          href=${GUIDE}
+          target="_blank"
+          rel="noopener noreferrer"
+          @click=${openExternalLink}
+          >${localize(
+            "views.live_usb.live_usb_success_view.installation_guide"
+          )}</a
+        >`}
+      >
+        ${iso
           ? html`<span
               class="saved-row"
-              style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem"
+              style="display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem 1rem; margin-bottom: 1.5rem; overflow-wrap: anywhere"
             >
               <span class="saved"
                 >${localize("views.live_usb.live_usb_success_view.saved_to", {
@@ -101,29 +123,8 @@ export class LiveUsbSuccessView extends LitElement {
                   >`
                 : ""}
             </span>`
-          : localize("views.live_usb.live_usb_success_view.do_not_format")}
-        .steps=${iso
-          ? [
-              localize("views.live_usb.live_usb_success_view.write_the_iso"),
-              ...boot,
-            ]
-          : [
-              localize("common.success.step_eject"),
-              localize(
-                "views.live_usb.live_usb_success_view.plug_in_the_stick"
-              ),
-              ...boot,
-            ]}
-        .footer=${html`<a
-          href=${GUIDE}
-          target="_blank"
-          rel="noopener noreferrer"
-          @click=${openExternalLink}
-          >${localize(
-            "views.live_usb.live_usb_success_view.installation_guide"
-          )}</a
-        >`}
-      ></install-success>
+          : ""}
+      </install-success>
     `;
   }
 }

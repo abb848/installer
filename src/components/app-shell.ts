@@ -1,7 +1,6 @@
 import { localize } from "../localization/localize.js";
 import { LitElement, html, css, nothing } from "lit";
 import { customElement, query, state } from "lit/decorators.js";
-import "./fab-button.js";
 
 // Import views
 import "../views/welcome-view.js";
@@ -15,6 +14,7 @@ import "../views/sbc/wifi-view.js";
 import "../views/sbc/progress-view.js";
 import "../views/sbc/success-view.js";
 import "../views/ha-hardware/device-selection-view.js";
+import "../views/ha-hardware/module-selection-view.js";
 import "../views/ha-hardware/success-view.js";
 import "../views/minipc/setup-method-view.js";
 import "../views/minipc/architecture-selection-view.js";
@@ -46,7 +46,6 @@ import {
 import type { ConfirmDialog } from "./confirm-dialog.js";
 import "./confirm-dialog.js";
 import "./info-dialog.js";
-import "./diagnostics-actions.js";
 
 // Import state
 import {
@@ -61,7 +60,6 @@ import {
   readDriveSelection,
 } from "../utils/drive-selection.js";
 import { logFrontendError } from "../utils/diagnostics.js";
-import { openExternalUrl } from "../utils/external-url.js";
 
 export type ViewName =
   | "welcome"
@@ -69,10 +67,6 @@ export type ViewName =
   | "other-options"
   | "connection-check"
   | "wizard";
-
-// mdi:toolbox-outline
-const mdiToolboxOutline =
-  "M18 16H16V15H8V16H6V15H2V20H22V15H18V16M20 8H17V6C17 4.9 16.1 4 15 4H9C7.9 4 7 4.9 7 6V8H4C2.9 8 2 8.9 2 10V14H6V12H8V14H16V12H18V14H22V10C22 8.9 21.1 8 20 8M15 8H9V6H15V8Z";
 
 @customElement("app-shell")
 export class AppShell extends LitElement {
@@ -88,13 +82,6 @@ export class AppShell extends LitElement {
 
     :host > * {
       flex: 1;
-    }
-
-    diagnostics-actions {
-      position: absolute;
-      bottom: 1rem;
-      left: 1rem;
-      z-index: 1;
     }
   `;
 
@@ -194,10 +181,6 @@ export class AppShell extends LitElement {
 
     return html`
       ${this._renderView()}
-      ${this._currentView === "welcome" ? this._renderToolboxButton() : ""}
-      ${this._currentView === "welcome"
-        ? html`<diagnostics-actions about></diagnostics-actions>`
-        : ""}
       <confirm-dialog
         ?open=${this._showConfirmDialog}
         .driveName=${selections.driveName || ""}
@@ -806,20 +789,6 @@ export class AppShell extends LitElement {
     this._installRetryable = event.detail?.retryable === true;
     this._installReconnect = event.detail?.reconnect === true;
     this._vmInstallError = true;
-  }
-
-  private _renderToolboxButton() {
-    return html`
-      <fab-button
-        .path=${mdiToolboxOutline}
-        label=${localize("components.app_shell.open_home_toolbox")}
-        @click=${this._onToolboxOpen}
-      ></fab-button>
-    `;
-  }
-
-  private async _onToolboxOpen() {
-    await openExternalUrl("https://toolbox.openhomefoundation.org/");
   }
 }
 

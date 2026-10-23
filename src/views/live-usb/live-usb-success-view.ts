@@ -73,6 +73,7 @@ export class LiveUsbSuccessView extends LitElement {
         .subtitle=${iso
           ? localize("views.live_usb.live_usb_success_view.iso_saved")
           : localize("views.live_usb.live_usb_success_view.usb_ready")}
+        .formatWarning=${!iso}
         .steps=${iso
           ? [
               localize("views.live_usb.live_usb_success_view.write_the_iso"),

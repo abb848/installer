@@ -36,6 +36,26 @@ describe("live-usb-success-view", () => {
     expect(getComputedStyle(row).display).to.equal("flex");
   });
 
+  it("warns not to format a written stick, not a saved ISO", async () => {
+    for (const [media, warns] of [
+      ["usb", true],
+      ["iso", false],
+    ] as const) {
+      wizardState.startFlow("minipc");
+      wizardState.setSelection("liveMedia", media);
+      wizardState.setSelection("liveIsoPath", "/home/me/haos.iso");
+      const view = fixtureSync<LiveUsbSuccessView>(
+        html`<live-usb-success-view></live-usb-success-view>`
+      );
+      await view.updateComplete;
+
+      expect(
+        view.shadowRoot!.querySelector("install-success")!.formatWarning
+      ).to.equal(warns);
+      wizardState.reset();
+    }
+  });
+
   it("says so when the folder can't be shown", async () => {
     wizardState.startFlow("minipc");
     wizardState.setSelection("liveMedia", "iso");
